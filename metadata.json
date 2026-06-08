@@ -1,0 +1,6 @@
+{
+  "name": "个人AI助手 - 多AGENT助手",
+  "description": "基于多智能体（Multi-Agent）架构的个人 AI 工作空间，涵盖全场景助手。A unified personal AI workspace powered by multi-agent architecture.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

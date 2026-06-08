@@ -1,0 +1,593 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Send, Upload, Sparkles, Settings2, Download, Copy, Play, Check, ChevronRight, Wand2, MessageSquare, LayoutTemplate, Mic, Volume2, AlignLeft, User, Bot, StopCircle, RefreshCw, AudioLines, Camera } from 'lucide-react';
+
+interface FeatureViewProps {
+  title: string;
+  type: 'text' | 'image' | 'video' | 'audio' | 'mixed';
+  models: string[];
+}
+
+export function FeatureView({ title, type, models }: FeatureViewProps) {
+  const [activeModel, setActiveModel] = useState(models[0]);
+  const [prompt, setPrompt] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState<string | null>(null);
+
+  // Chat specifics
+  const [messages, setMessages] = useState<{role: 'user' | 'assistant', content: string}[]>([
+    { role: 'assistant', content: `你好！我是强大的的 AI 智能伴侣。你可以向我输入任何指令、问题或诉求，我将为你生成高质量的洞察与回复。` }
+  ]);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (type === 'text') {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, type]);
+
+  const handleGenerate = () => {
+    if (!prompt.trim() || isGenerating) return;
+    setIsGenerating(true);
+    setProgress(0);
+    setResult(null);
+
+    const userPrompt = prompt;
+    setPrompt('');
+
+    if (type === 'text') {
+      setMessages(p => [...p, { role: 'user', content: userPrompt }]);
+    }
+
+    // Mock progress
+    const interval = setInterval(() => {
+      setProgress(prev => {
+        if (prev >= 100) {
+          clearInterval(interval);
+          setIsGenerating(false);
+          setResult('Generated Content Preview');
+          
+          if (type === 'text') {
+            setMessages(p => [...p, { role: 'assistant', content: `这是一个模拟的 ${activeModel} 回复结果。基于您刚才输入的：“${userPrompt}”，在实际应用中，这里会通过流式输出快速呈现高质量的推理结果、代码分析或是多语言文案。` }]);
+          }
+          return 100;
+        }
+        return prev + 5;
+      });
+    }, type === 'text' ? 50 : 150);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleGenerate();
+    }
+  };
+
+  // ----- RENDER HEADERS -----
+  const renderHeader = () => (
+    <div className="px-6 py-4 flex items-center justify-between border-b border-[var(--border-color)] bg-[var(--bg-panel)] z-10 shrink-0">
+      <div className="flex items-center space-x-2">
+        <span className="text-[13px] font-bold text-[var(--text-muted)]">渲染算力引擎:</span>
+        <div className="flex space-x-1 bg-[#F1F3F4] p-1 rounded-full border border-[var(--border-color)]/50">
+          {models.map(model => (
+            <button
+              key={model}
+              onClick={() => setActiveModel(model)}
+              className={`px-4 py-1.5 text-xs font-bold rounded-full transition-all duration-200 ${
+                activeModel === model 
+                ? 'bg-[var(--bg-panel)] text-blue-700 shadow-sm ring-1 ring-black/5' 
+                : 'text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-gray-200'
+              }`}
+            >
+              {model}
+            </button>
+          ))}
+        </div>
+      </div>
+      
+      <div className="flex items-center space-x-2">
+        <button className="flex items-center space-x-1.5 text-sm font-bold text-[var(--text-muted)] hover:bg-gray-100 hover:text-[var(--text-main)] px-3 py-1.5 rounded-full transition-colors">
+          <Sparkles className="icon-sm text-blue-500" />
+          <span>预设提示词库</span>
+        </button>
+        <button className="flex items-center space-x-1.5 text-sm font-bold text-[var(--text-muted)] hover:bg-gray-100 hover:text-[var(--text-main)] px-3 py-1.5 rounded-full transition-colors">
+          <Settings2 className="icon-sm" />
+          <span>更多组件设置</span>
+        </button>
+      </div>
+    </div>
+  );
+
+  // ----- RENDER RIGHT PANEL -----
+  const renderRightPanel = () => {
+    if (type === 'text') {
+      return (
+        <div className="w-[340px] bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] shadow-sm h-full overflow-y-auto hidden lg:block flex-shrink-0 animate-in fade-in slide-in-from-right-4">
+          <div className="p-5 border-b border-[var(--border-color)] font-bold text-[var(--text-main)] sticky top-0 bg-[var(--bg-panel)]/90 backdrop-blur-sm z-10">
+            模型参数配置
+          </div>
+          <div className="p-[var(--spacing-lg)] space-y-8">
+            <div>
+              <label className="text-sm font-bold text-gray-700 block mb-3">系统提示词 (System Prompt)</label>
+              <textarea 
+                className="w-full text-sm font-medium border-[var(--border-color)] rounded-[var(--radius-lg)] shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-[var(--bg-app)] py-3 px-4 resize-none h-28 leading-relaxed outline-none focus:bg-[var(--bg-panel)] transition-colors" 
+                placeholder="设定助手的角色和行为..." 
+                defaultValue="你是一个有用的、严谨且专业的 AI 智能工作流助手。你需要竭尽全力回答用户的需求，确保代码、文字无误。" 
+              />
+            </div>
+            <div>
+              <div className="flex justify-between text-sm mb-2 font-bold text-gray-700">
+                <span>温度值 (Temperature)</span>
+                <span className="text-[var(--color-primary)]">0.7</span>
+              </div>
+              <input type="range" className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer" min="0" max="20" defaultValue="7" />
+              <div className="flex justify-between text-[10px] text-gray-400 mt-1.5 font-bold"><span>更精确</span><span>更有创意</span></div>
+            </div>
+            <div>
+              <div className="flex justify-between text-sm mb-2 font-bold text-gray-700">
+                <span>上下文记忆 Token</span>
+                <span className="text-[var(--color-primary)]">4096</span>
+              </div>
+              <input type="range" className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer" min="0" max="8192" defaultValue="4096" />
+            </div>
+            <div className="pt-6 border-t border-[var(--border-color)]">
+              <label className="flex items-center cursor-pointer group">
+                <div className="relative">
+                  <input type="checkbox" className="sr-only" defaultChecked />
+                  <div className="block bg-blue-500 w-11 h-6 rounded-full transition-colors"></div>
+                  <div className="dot absolute left-1 top-1 bg-[var(--bg-panel)] icon-sm rounded-full transition transform translate-x-5 shadow-sm"></div>
+                </div>
+                <div className="ml-4 flex flex-col">
+                   <span className="text-sm font-bold text-[var(--text-main)]">开启多轮连贯记忆</span>
+                   <span className="text-[11px] text-[var(--text-muted)] mt-0.5">跨越对话层级的长文本缓存连通</span>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    
+    if (type === 'audio') {
+      return (
+        <div className="w-[340px] bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] shadow-sm h-full overflow-y-auto hidden lg:block flex-shrink-0 animate-in fade-in slide-in-from-right-4">
+          <div className="p-5 border-b border-[var(--border-color)] font-bold text-[var(--text-main)] sticky top-0 bg-[var(--bg-panel)]/90 backdrop-blur-sm z-10">
+            TTS 合成选项 (Voice Params)
+          </div>
+          <div className="p-[var(--spacing-lg)] space-y-8">
+            <div>
+               <label className="text-sm font-bold text-gray-700 block mb-3">发音人 / 声纹克隆</label>
+               <div className="space-y-3">
+                 <button className="w-full flex items-center justify-between p-3.5 border-2 border-blue-500 bg-blue-50/50 rounded-[var(--radius-xl)] shadow-sm transition-transform hover:-translate-y-0.5">
+                   <div className="flex items-center space-x-3">
+                     <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-black shrink-0 border-2 border-white shadow-sm">W</div>
+                     <div className="flex flex-col items-start translate-y-[-1px]">
+                       <span className="text-sm font-black text-blue-900 tracking-tight">温暖治愈女声 (Xiaoxiao)</span>
+                       <span className="text-[10px] text-[var(--color-primary)]/80 font-bold">2.1k 使用 · 极高保真度</span>
+                     </div>
+                   </div>
+                   <Volume2 className="icon-md text-[var(--color-primary)]" />
+                 </button>
+                 <button className="w-full flex items-center justify-between p-3.5 border border-[var(--border-color)] hover:border-gray-300 hover:bg-gray-50 rounded-[var(--radius-xl)] transition-transform hover:-translate-y-0.5">
+                   <div className="flex items-center space-x-3">
+                     <div className="w-10 h-10 rounded-full bg-gray-100 border border-[var(--border-color)] flex items-center justify-center text-gray-700 font-black shrink-0">B</div>
+                     <div className="flex flex-col items-start translate-y-[-1px]">
+                       <span className="text-sm font-bold text-[var(--text-main)]">沉稳男声 (Yunxi)</span>
+                       <span className="text-[10px] text-[var(--text-muted)] font-bold">适合有声剧与影视解说</span>
+                     </div>
+                   </div>
+                 </button>
+               </div>
+            </div>
+            <div>
+              <div className="flex justify-between text-sm mb-2 font-bold text-gray-700">
+                <span>全局语速调制 (Speed)</span>
+                <span className="text-[var(--color-primary)]">1.0x</span>
+              </div>
+              <input type="range" className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer" min="5" max="20" defaultValue="10" />
+            </div>
+            <div>
+              <div className="flex justify-between text-sm mb-2 font-bold text-gray-700">
+                <span>情感饱满度 (Emotion)</span>
+                <span className="text-[var(--color-primary)]">中等偏高</span>
+              </div>
+              <input type="range" className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer" min="0" max="100" defaultValue="70" />
+            </div>
+            <div className="pt-6 border-t border-[var(--border-color)]">
+               <button className="w-full flex justify-center py-3 bg-[var(--color-primary)] hover:bg-blue-700 text-white rounded-[var(--radius-lg)] text-sm font-bold transition-all shadow-md mt-2">
+                  <Mic className="icon-sm mr-2" /> 录制与提纯全新声纹
+               </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+       <div className="w-[340px] bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] shadow-sm h-full overflow-y-auto hidden lg:block flex-shrink-0 animate-in fade-in slide-in-from-right-4">
+        <div className="p-5 border-b border-[var(--border-color)] font-bold text-[var(--text-main)] sticky top-0 bg-[var(--bg-panel)]/90 backdrop-blur-sm z-10 flex justify-between items-center">
+          <span>{type === 'video' ? '视频创作偏好' : '图像生成属性'}</span>
+          {type === 'video' && <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-black tracking-widest rounded border border-blue-200 shadow-sm">PRO</span>}
+        </div>
+        <div className="p-[var(--spacing-lg)] space-y-8">
+           <div className="space-y-[var(--spacing-lg)]">
+             {type === 'video' ? (
+                <div className="space-y-[var(--spacing-lg)]">
+                  <div className="bg-gray-100 p-1 flex rounded-[var(--radius-lg)] border border-[var(--border-color)] shadow-inner">
+                     <button className="flex-1 py-2 text-xs font-black rounded-lg bg-[var(--bg-panel)] shadow-[0_1px_3px_rgba(0,0,0,0.1)] text-blue-900 ring-1 ring-black/5 transition-all">文生视频模式</button>
+                     <button className="flex-1 py-2 text-xs font-bold rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors">图生视频扩展</button>
+                  </div>
+                  <div>
+                    <label className="text-sm font-bold text-gray-700 block mb-3">原生画面比例 (Aspect Ratio)</label>
+                    <div className="grid grid-cols-2 gap-3">
+                       <button className="py-3 border-2 border-blue-600 bg-blue-50/50 text-blue-700 rounded-[var(--radius-lg)] text-xs font-bold transition-all shadow-sm">16:9 电影横屏</button>
+                       <button className="py-3 border-2 border-transparent bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-[var(--radius-lg)] text-xs font-bold transition-all">9:16 短剧竖屏</button>
+                       <button className="py-3 border-2 border-transparent bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-[var(--radius-lg)] text-xs font-bold transition-all col-span-2">1:1 通用方形画幅</button>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="text-sm font-bold text-gray-700">引擎推演时长</label>
+                      <span className="text-[10px] text-[var(--color-primary)] bg-blue-50 font-bold border border-blue-100 px-2 py-1 rounded-md shadow-sm">VIP 最大 10s</span>
+                    </div>
+                    <select className="w-full text-sm font-bold text-[var(--text-main)] border-[1.5px] border-[var(--border-color)] rounded-[var(--radius-lg)] focus:ring-0 focus:border-blue-500 bg-[var(--bg-panel)] py-3 px-4 cursor-pointer outline-none transition-colors">
+                      <option>5 秒 (标准生成消耗 5 算力)</option>
+                      <option>10 秒 (超常景深消耗 12 算力)</option>
+                    </select>
+                  </div>
+                  <div className="border-t border-[var(--border-color)] pt-6">
+                    <label className="text-sm font-bold text-gray-700 block mb-4 flex items-center"><Camera className="icon-sm mr-1.5 text-gray-400" /> 镜头运镜动态配置</label>
+                    <div className="space-y-[var(--spacing-md)]">
+                       <div>
+                          <div className="flex justify-between text-xs font-bold text-[var(--text-muted)] mb-2"><span>推拉 (Zoom)</span><span className="text-[var(--color-primary)]">0</span></div>
+                          <input type="range" className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer" min="-10" max="10" defaultValue="0" />
+                       </div>
+                       <div>
+                          <div className="flex justify-between text-xs font-bold text-[var(--text-muted)] mb-2"><span>横摇 (Pan)</span><span className="text-[var(--color-primary)]">右移 5</span></div>
+                          <input type="range" className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer" min="-10" max="10" defaultValue="5" />
+                       </div>
+                    </div>
+                  </div>
+                </div>
+             ) : (
+                <div className="space-y-[var(--spacing-lg)]">
+                  <div>
+                    <label className="text-sm font-bold text-gray-700 block mb-3">画面比例</label>
+                    <select className="w-full text-sm font-bold text-[var(--text-main)] border-[1.5px] border-[var(--border-color)] rounded-[var(--radius-lg)] focus:ring-0 focus:border-blue-500 bg-[var(--bg-panel)] py-3 px-4 cursor-pointer outline-none transition-colors">
+                      <option>16:9 宽画幅 (多用于封面/海报)</option>
+                      <option>9:16 修长竖屏 (多用于朋友圈/短视频)</option>
+                      <option>1:1 正方形 (多用于基础配图/头像)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-sm font-bold text-gray-700 block mb-3">基调风格渲染器</label>
+                    <select className="w-full text-sm font-bold text-[var(--text-main)] border-[1.5px] border-[var(--border-color)] rounded-[var(--radius-lg)] focus:ring-0 focus:border-blue-500 bg-[var(--bg-panel)] py-3 px-4 cursor-pointer outline-none transition-colors">
+                      <option>Cinematic V6 (极致照片级真实光影)</option>
+                      <option>Niji Anime (原版日式二次元手绘画风)</option>
+                      <option>RAW Unfiltered (去除滤镜质感的纯粹模式)</option>
+                    </select>
+                  </div>
+                  <div className="pt-2">
+                    <label className="flex items-center cursor-pointer group">
+                      <div className="relative">
+                        <input type="checkbox" className="sr-only" />
+                        <div className="block bg-gray-200 w-11 h-6 rounded-full group-hover:bg-gray-300 transition-colors"></div>
+                        <div className="dot absolute left-1 top-1 bg-[var(--bg-panel)] icon-sm rounded-full transition transform shadow-sm"></div>
+                      </div>
+                      <div className="ml-4 flex flex-col">
+                         <span className="text-sm font-bold text-[var(--text-main)]">开启种子固定引擎</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+             )}
+           </div>
+
+           <hr className="border-[var(--border-color)]" />
+
+           <div className="space-y-[var(--spacing-md)]">
+             <div className="flex items-center justify-between">
+                <h4 className="text-[11px] font-black text-gray-400 uppercase tracking-widest">近期云端渲染资产</h4>
+                <button className="text-[11px] text-[var(--color-primary)] font-bold hover:underline">查看全部资产库</button>
+             </div>
+             <div className="grid grid-cols-2 gap-3">
+                {[1,2,3,4].map(i => (
+                  <div key={i} className="aspect-square bg-gray-100 rounded-[var(--radius-lg)] border border-[var(--border-color)] relative group overflow-hidden cursor-pointer shadow-sm">
+                    {type === 'video' && <img src={`https://images.unsplash.com/photo-${i===1?'1574717024653-61fd2cf6d44d':i===2?'1550745165-9bc0b252726f':i===3?'1581456495146-65a71b2c8e52':'1611162617474-5b21e879e113'}?auto=format&fit=crop&q=80&w=200`} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt="video thumb" />}
+                    {type === 'image' && <img src={`https://images.unsplash.com/photo-${i===1?'1506744031587-f27eb672d56a':i===2?'1470071131384-001b85755536':i===3?'1497436073860-845778a48b0a':'1438283173167-1c19bcca8fe1'}?auto=format&fit=crop&q=80&w=200`} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt="image thumb" />}
+                    <div className={`absolute inset-0 ${type === 'video' || type === 'image' ? 'bg-black/40 opacity-0 group-hover:opacity-100' : 'bg-gray-100 opacity-100 group-hover:bg-gray-200'} flex items-center justify-center transition-all duration-300`}>
+                      {type === 'video' ? <Play className="icon-xl text-white drop-shadow-md scale-75 group-hover:scale-100 transition-transform" /> : <Download className={`icon-md ${type === 'image' ? 'text-white' : 'text-[var(--text-muted)]'} scale-75 group-hover:scale-100 transition-transform`} />}
+                    </div>
+                    {type === 'video' && <span className="absolute bottom-2 right-2 text-[10px] font-black text-white bg-black/70 backdrop-blur-md px-1.5 py-0.5 rounded shadow-sm border border-white/10">0:05</span>}
+                  </div>
+                ))}
+             </div>
+           </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ----- RENDER CHAT INTERFACE -----
+  if (type === 'text') {
+    return (
+      <div className="h-[calc(100vh-4rem)] flex flex-col md:flex-row bg-[var(--bg-app)] p-[var(--spacing-lg)] gap-[var(--spacing-md)] selection:bg-blue-500/20">
+        <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm animate-in fade-in slide-in-from-bottom-2">
+          {renderHeader()}
+          
+          <div className="flex-1 overflow-y-auto p-4 md:p-[var(--spacing-xl)] bg-[var(--bg-app)] custom-scrollbar flex flex-col gap-[var(--spacing-md)]">
+            <div className="text-center mt-2 mb-4">
+               <span className="bg-[var(--bg-panel)] border border-[var(--border-color)] shadow-sm text-[var(--text-muted)] text-xs font-bold px-4 py-1.5 rounded-full inline-flex items-center">
+                  <span className="w-1.5 h-1.5 bg-green-500 rounded-full mr-2"></span> 与 {activeModel} 的智能主频会话已开启
+               </span>
+            </div>
+            
+            {messages.map((msg, idx) => (
+              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+                <div className={`flex max-w-[85%] ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'} gap-4`}>
+                  <div className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center shadow-sm border-[2px] ${msg.role === 'user' ? 'bg-[var(--color-primary)] text-white border-black' : 'bg-[var(--bg-panel)] border-[var(--border-color)] text-[var(--text-main)]'}`}>
+                    {msg.role === 'user' ? <User className="icon-md" /> : <Sparkles className="icon-md" />}
+                  </div>
+                  <div className={`p-5 rounded-[var(--radius-xl)] shadow-sm text-[15px] leading-relaxed ${
+                    msg.role === 'user' 
+                      ? 'bg-[var(--color-primary)] text-white rounded-tr-sm border border-black' 
+                      : 'bg-[var(--bg-app)] border border-[var(--border-color)] text-[var(--text-main)] rounded-tl-sm shadow-[0_2px_10px_rgba(0,0,0,0.02)]'
+                  }`}>
+                    {msg.content}
+                  </div>
+                </div>
+              </div>
+            ))}
+            
+            {isGenerating && (
+              <div className="flex justify-start animate-in fade-in">
+                <div className="flex max-w-[80%] flex-row gap-[var(--spacing-md)]">
+                  <div className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center shadow-sm bg-[var(--bg-panel)] border-[2px] border-[var(--border-color)] text-[var(--color-primary)]">
+                    <Sparkles className="icon-md" />
+                  </div>
+                  <div className="px-5 py-4 rounded-[var(--radius-xl)] bg-[var(--bg-app)] border border-[var(--border-color)] shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[var(--text-main)] rounded-tl-sm flex items-center space-x-2">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" ></div>
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" ></div>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={chatEndRef} className="h-4" />
+          </div>
+
+          <div className="p-5 bg-[var(--bg-panel)] border-t border-[var(--border-color)] flex justify-center z-10 shrink-0 shadow-[0_-4px_20px_rgba(0,0,0,0.02)]">
+            <div className="w-full max-w-4xl relative bg-[var(--bg-panel)] rounded-[var(--radius-xl)] shadow-sm border-[1.5px] border-gray-300 focus-within:ring-4 focus-within:ring-blue-500/10 focus-within:border-blue-500 transition-all flex flex-col">
+              <textarea 
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={`向 ${activeModel} 发送高阶指令... (Shift+Enter 组合键换行)`}
+                className="w-full bg-transparent border-none rounded-t-2xl px-5 py-5 text-[var(--text-main)] placeholder-gray-400 focus:ring-0 resize-none min-h-[70px] max-h-48 custom-scrollbar text-[15px] leading-relaxed block outline-none"
+              />
+              <div className="flex items-center justify-between px-3 pb-3">
+                <div className="flex items-center space-x-1">
+                  <button className="p-2 text-[var(--text-muted)] hover:bg-gray-100 hover:text-[var(--text-main)] rounded-full transition-colors tooltip flex items-center" title="极速上传结构化文档">
+                    <Upload className="w-[18px] h-[18px] mr-1" />
+                    <span className="text-xs font-bold">附件池</span>
+                  </button>
+                  <div className="w-px h-4 bg-gray-200 mx-2"></div>
+                  <button className="p-2 text-[var(--text-muted)] hover:bg-gray-100 hover:text-[var(--text-main)] rounded-full transition-colors tooltip flex items-center" title="接入外部实时插件">
+                    <LayoutTemplate className="w-[18px] h-[18px] mr-1" />
+                    <span className="text-xs font-bold">调用组件</span>
+                  </button>
+                </div>
+                <button 
+                  onClick={handleGenerate}
+                  className={`px-5 py-2.5 rounded-full transition-all flex items-center justify-center font-bold text-sm ${
+                    prompt.trim() && !isGenerating 
+                      ? 'bg-[var(--color-primary)] text-white shadow-md hover:bg-black hover:-translate-y-0.5' 
+                      : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  }`}
+                  disabled={!prompt.trim() || isGenerating}
+                >
+                  {isGenerating ? '处理中...' : '深度对话'}
+                  {!isGenerating && <Send className="icon-sm ml-2" />}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        {renderRightPanel()}
+      </div>
+    );
+  }
+
+  // ----- RENDER MEDIA / AUDIO INTERFACE -----
+  return (
+    <div className="h-[calc(100vh-4rem)] flex flex-col md:flex-row bg-[var(--bg-app)] p-[var(--spacing-lg)] gap-[var(--spacing-md)] selection:bg-blue-500/20">
+      <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm animate-in fade-in slide-in-from-bottom-2">
+        {renderHeader()}
+
+         <div className="flex-1 overflow-y-auto p-[var(--spacing-lg)] md:p-10 bg-[#F4F6F8] flex flex-col items-center justify-center relative inner-shadow-sm">
+           {!isGenerating && !result ? (
+             <div className="text-center max-w-lg animate-in fade-in zoom-in duration-300 py-12">
+               <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-[#1557B0] text-white rounded-[32px] flex items-center justify-center mx-auto mb-[var(--spacing-xl)] shadow-xl shadow-blue-200 rotate-12 transform hover:rotate-0 transition-transform duration-500 border-4 border-white">
+                  {type === 'audio' ? <Mic className="w-10 h-10 drop-shadow-md" /> : <Wand2 className="w-10 h-10 drop-shadow-md" />}
+               </div>
+               <h3 className="text-[28px] font-black text-[var(--text-main)] mb-4 tracking-tight">开启您的 {title} 重塑之旅</h3>
+               <p className="text-[var(--text-muted)] text-[16px] leading-relaxed mb-10 font-medium">配置大核算力与海量素材池。在下方控制台输入目标描述语，强劲的 {activeModel} 将为您构建专属媒体切片。</p>
+               
+               <div className="grid grid-cols-2 gap-[var(--spacing-md)] text-left">
+                 <div className="bg-[var(--bg-panel)] p-[var(--spacing-lg)] rounded-[var(--radius-xl)] border border-[var(--border-color)] shadow-sm hover:shadow-lg transition-all cursor-pointer group hover:-translate-y-1.5 duration-300 relative overflow-hidden" 
+                      onClick={() => setPrompt(type === 'audio' ? '「深度资讯」今天我们要聊聊，如何在复杂的生成式底层架构下，寻找商业与人类审美的最佳平衡点。' : '一部好莱坞顶尖打光的电影慢动作特写镜头：一杯冒着细密热气的特浓黑咖啡被放置在一张纹理粗犷的实木桌面上，背景是清晨带有雨滴的城市落地窗。')}>
+                   <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 rounded-bl-full   transition-transform group-hover:scale-150 duration-500"></div>
+                   <div className="relative z-10">
+                     {type === 'audio' ? <Volume2 className="w-7 h-7 text-blue-500 mb-4 group-hover:scale-110 transition-transform duration-300" /> : <Sparkles className="w-7 h-7 text-blue-500 mb-4 group-hover:scale-110 transition-transform duration-300" />}
+                     <p className="text-[15px] font-bold text-[var(--text-main)] mb-1.5">加载最佳实践 (Preset)</p>
+                     <p className="text-xs text-[var(--text-muted)] font-medium leading-relaxed">一键填入经我们人工验证极高分数的经典{type==='audio'?'短剧式长口播':'提示词魔咒'}</p>
+                   </div>
+                 </div>
+                 <div className="bg-[var(--bg-panel)] p-[var(--spacing-lg)] rounded-[var(--radius-xl)] border border-[var(--border-color)] shadow-sm hover:shadow-lg transition-all cursor-pointer group hover:-translate-y-1.5 duration-300 relative overflow-hidden"
+                      onClick={() => setPrompt(type === 'audio' ? '<speak>\n   <p>可以通过 SSML 调节情感层次机制<break time="1s"/>并精确修饰每个停顿。</p>\n</speak>' : 'Cyberpunk megacity street level view, rain-slicked neon reflections, flying vehicles above, highly detailed, 8k resolution, photorealistic cinematic lighting --v 6.0 --ar 16:9')}>
+                   <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 rounded-bl-full   transition-transform group-hover:scale-150 duration-500"></div>
+                   <div className="relative z-10">
+                     <AlignLeft className="w-7 h-7 text-[var(--text-main)] mb-4 group-hover:scale-110 transition-transform duration-300" />
+                     <p className="text-[15px] font-bold text-[var(--text-main)] mb-1.5">指令语法参考库 (Docs)</p>
+                     <p className="text-xs text-[var(--text-muted)] font-medium leading-relaxed">查阅并直接应用更硬核的控制级{type==='audio'?' SSML 标记语言':'引擎专属参数 (如 --ar)'}</p>
+                   </div>
+                 </div>
+               </div>
+             </div>
+           ) : isGenerating ? (
+              <div className="w-full max-w-md mx-auto flex flex-col items-center justify-center text-center animate-in fade-in zoom-in-95 duration-500 py-10">
+                <div className="relative w-40 h-40 mb-10">
+                  <svg className="w-full h-full transform -rotate-90 drop-shadow-xl" viewBox="0 0 100 100">
+                    <circle className="text-gray-200 stroke-current" strokeWidth="8" cx="50" cy="50" r="40" fill="transparent"></circle>
+                    <circle className="text-[var(--color-primary)] stroke-current transition-all duration-300 ease-out" strokeWidth="8" strokeDasharray="251.2" strokeDashoffset={251.2 - (251.2 * progress) / 100} strokeLinecap="round" cx="50" cy="50" r="40" fill="transparent"></circle>
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-primary)] bg-[var(--bg-panel)]/50 backdrop-blur-sm rounded-full m-4 shadow-sm border border-white">
+                    <span className="text-[var(--text-main)]xl font-black">{progress}%</span>
+                  </div>
+                </div>
+                <h3 className="text-xl font-black text-[var(--text-main)] mb-3 tracking-tight">AI 引擎极速运算重塑中...</h3>
+                <p className="text-[var(--text-muted)] text-sm font-bold bg-[var(--bg-panel)] px-4 py-1.5 rounded-full border border-[var(--border-color)] shadow-sm inline-flex items-center">
+                  <span className="w-2 h-2 bg-blue-500 rounded-full mr-2 animate-pulse"></span>
+                  正在调度私有化渲染集群分发算力资源
+                </p>
+                
+                <button onClick={() => { setIsGenerating(false); setProgress(0); }} className="mt-12 px-6 py-2.5 rounded-full bg-[var(--bg-panel)] border border-[var(--border-color)] hover:bg-gray-50 text-gray-700 text-sm font-bold flex items-center transition-colors shadow-sm">
+                  <StopCircle className="icon-sm mr-2" /> 强制终止任务通道
+                </button>
+              </div>
+           ) : (
+             <div className="w-full max-w-4xl h-full py-6 animate-in fade-in slide-in-from-bottom-4 duration-500 flex flex-col">
+                <div className="bg-[var(--bg-panel)] rounded-t-2xl border-x border-t border-[var(--border-color)] p-5 flex justify-between items-center shadow-sm z-10 relative">
+                   <div className="flex items-center space-x-4">
+                      <div className="w-11 h-11 rounded-[var(--radius-lg)] bg-green-500 text-white flex items-center justify-center shadow-sm border-2 border-green-50">
+                         <Check className="icon-lg stroke-[3]" />
+                      </div>
+                      <div>
+                        <p className="text-[17px] font-black text-[var(--text-main)] tracking-tight">结构化资产生成完毕</p>
+                        <p className="text-xs font-bold text-[var(--text-muted)] mt-1 flex items-center">
+                          <span className="inline-block w-4 text-center">⏱</span> 耗时 2.4s<span className="mx-2 text-gray-300">|</span> 
+                          <span className="inline-block w-4 text-center">⚡</span> {activeModel}<span className="mx-2 text-gray-300">|</span> 
+                          <span className="inline-block w-4 text-center">✨</span> 高保真原生渲染
+                        </p>
+                      </div>
+                   </div>
+                   <div className="flex space-x-3">
+                     <button className="flex items-center px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 border border-[var(--border-color)] rounded-full text-sm font-bold transition-all shadow-sm">
+                       <RefreshCw className="icon-sm mr-2" /> 增加变体组
+                     </button>
+                     <button className="flex items-center px-5 py-2 bg-[var(--color-primary)] hover:bg-blue-700 text-white rounded-full text-sm font-bold transition-all shadow-md">
+                       <Download className="icon-sm mr-2" /> 原画导出工程包
+                     </button>
+                   </div>
+                </div>
+                <div className="flex-1 overflow-hidden bg-[var(--bg-app)] rounded-b-2xl border-x border-b border-[var(--border-color)] relative flex items-center justify-center">
+                   <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 pointer-events-none"></div>
+                   {type === 'video' && (
+                     <div className="w-[90%] max-w-4xl aspect-video bg-black relative group overflow-hidden shadow-2xl rounded-[var(--radius-lg)] border border-[var(--border-color)]">
+                        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?auto=format&fit=crop&q=80&w=1600')] bg-cover opacity-80 mix-blend-screen scale-105 group-hover:scale-100 transition-transform duration-1000"></div>
+                        <div className="absolute inset-0 flex items-center justify-center z-10 cursor-pointer">
+                          <div className="w-24 h-24 bg-[var(--bg-panel)]/20 backdrop-blur-md rounded-full flex items-center justify-center shadow-[0_0_40px_rgba(255,255,255,0.2)] group-hover:scale-110 transition-transform border-[1.5px] border-white/50 hover:bg-[var(--bg-panel)]/30 hover:border-white">
+                             <Play className="w-12 h-12 text-white ml-2 drop-shadow-lg" />
+                          </div>
+                        </div>
+                        <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 to-transparent pt-24 pb-6 px-8 z-10">
+                           <p className="text-white text-[15px] font-bold drop-shadow-lg leading-relaxed border-l-[3px] border-blue-500 pl-4">{prompt || '生成的专业渲染视频描述及配置参数...'}</p>
+                        </div>
+                     </div>
+                   )}
+                   {type === 'image' && (
+                      <div className="relative w-[90%] h-[90%] flex items-center justify-center">
+                        <img src="https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?auto=format&fit=crop&q=80&w=1600" alt="Generated visual" className="max-w-full max-h-full object-contain shadow-xl rounded-lg border border-[var(--border-color)] bg-[var(--bg-panel)]" />
+                        <div className="absolute top-4 right-4 bg-[var(--bg-panel)]/90 backdrop-blur-sm px-3 py-1.5 rounded-lg shadow-sm border border-[var(--border-color)] text-xs font-bold text-gray-700 flex items-center">
+                          <Check className="w-3.5 h-3.5 mr-1.5 text-green-500" />无损原图验证完毕
+                        </div>
+                      </div>
+                   )}
+                   {type === 'audio' && (
+                      <div className="w-full max-w-2xl bg-[var(--bg-panel)] rounded-[var(--radius-xl)] p-10 shadow-xl flex flex-col items-center border border-[var(--border-color)] z-10 relative overflow-hidden">
+                         <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-blue-400 via-blue-500 to-blue-500"></div>
+                         <div className="w-full h-32 flex items-center justify-center space-x-1.5 mb-10 px-4 bg-[var(--bg-app)] rounded-[var(--radius-xl)] border border-[var(--border-color)]">
+                            {Array.from({length: 45}).map((_, i) => (
+                              <div key={i} className="w-[6px] bg-blue-500 rounded-full" style={{
+                                height: `${Math.max(10, Math.random() * 100)}%`,
+                                opacity: Math.random() * 0.4 + 0.6
+                              }}></div>
+                            ))}
+                         </div>
+                         <div className="flex items-center space-x-6 w-full px-4">
+                            <button className="w-16 h-16 shrink-0 bg-[var(--color-primary)] border-2 border-blue-700 rounded-full flex items-center justify-center shadow-md hover:scale-105 transition-transform text-white">
+                               <Play className="icon-xl ml-1" />
+                            </button>
+                            <div className="flex-1">
+                               <p className="text-base font-black text-[var(--text-main)] mb-1 flex items-center">
+                                 master_voice_generation.wav <span className="ml-3 px-2 py-0.5 bg-green-50 text-green-600 text-[10px] uppercase tracking-widest rounded shadow-sm border border-green-100">无损音轨</span>
+                               </p>
+                               <p className="text-xs text-[var(--text-muted)] font-bold bg-gray-50 px-3 py-1.5 rounded-lg inline-block">包含 00:15 的深度学习发音阵列分析 · 情绪极高</p>
+                            </div>
+                         </div>
+                      </div>
+                   )}
+                </div>
+             </div>
+           )}
+        </div>
+
+        {/* Input Area */}
+        <div className="px-6 py-6 bg-[var(--bg-panel)] border-t border-[var(--border-color)] z-20 flex flex-col items-center shrink-0 shadow-[0_-4px_20px_rgba(0,0,0,0.02)] relative">
+          <div className="w-full max-w-5xl mb-4 flex gap-3 text-xs text-[var(--text-muted)] font-bold overflow-x-auto hide-scrollbar">
+              <span className="whitespace-nowrap px-4 py-2.5 rounded-[var(--radius-lg)] bg-gray-50 border border-[var(--border-color)] hover:bg-blue-50 hover:text-blue-700 hover:border-blue-100 transition-colors flex items-center cursor-pointer shadow-sm group">
+                <Sparkles className="icon-sm mr-2 text-blue-400 group-hover:text-[var(--color-primary)] transition-colors" /> {type === 'audio' ? '测试条：科技类干货解说' : '灵感：未来城市的电影级无人机航拍'}
+              </span>
+              <span className="whitespace-nowrap px-4 py-2.5 rounded-[var(--radius-lg)] bg-gray-50 border border-[var(--border-color)] hover:bg-blue-50 hover:text-blue-700 hover:border-blue-100 transition-colors flex items-center cursor-pointer shadow-sm group">
+                <Sparkles className="icon-sm mr-2 text-blue-400 group-hover:text-[var(--color-primary)] transition-colors" /> {type === 'audio' ? '测试条：高燃混剪式旁白解读' : '灵感：专业的人像照明与赛博朋克光影'}
+              </span>
+              <span className="whitespace-nowrap px-4 py-2.5 rounded-[var(--radius-lg)] bg-gray-50 border border-[var(--border-color)] hover:bg-blue-50 hover:text-blue-700 hover:border-blue-100 transition-colors flex items-center cursor-pointer shadow-sm group">
+                <Sparkles className="icon-sm mr-2 text-blue-400 group-hover:text-[var(--color-primary)] transition-colors" /> {type === 'audio' ? '测试条：午夜治愈系私人电台' : '灵感：8位复古像素风游戏角色设计'}
+              </span>
+          </div>
+
+          <div className="w-full max-w-5xl relative bg-[var(--bg-panel)] rounded-[24px] shadow-sm border-[1.5px] border-gray-300 focus-within:ring-4 focus-within:ring-blue-500/10 focus-within:border-blue-500 transition-all flex flex-col mt-1">
+             <textarea 
+               value={prompt}
+               onChange={(e) => setPrompt(e.target.value)}
+               placeholder={`用你最得心应手的方式在此输入${title}生成指令，或拖拽参照资源池至此...`}
+               className="w-full bg-transparent border-none rounded-t-[24px] px-6 py-6 text-[var(--text-main)] placeholder-gray-400 focus:ring-0 resize-none min-h-[140px] max-h-64 custom-scrollbar text-[15px] font-medium leading-relaxed block outline-none"
+             />
+             
+             <div className="flex items-center justify-between px-4 pb-4 pt-2">
+               <div className="flex items-center space-x-1">
+                 <button className="px-4 py-2.5 text-[var(--text-muted)] hover:bg-gray-100 hover:text-[var(--color-primary)] rounded-full transition-colors tooltip font-bold flex items-center text-sm" title="上传附件内容 (支持视频、图片、音频源文件)">
+                   <Upload className="icon-md mr-2" /> 多媒体源文件池
+                 </button>
+                 <div className="w-px h-5 bg-gray-200 mx-2"></div>
+                 <button className="p-2.5 text-gray-400 hover:bg-gray-100 hover:text-[var(--color-primary)] rounded-full transition-colors tooltip" title="调整格式和质量高级设定">
+                   <Settings2 className="icon-md" />
+                 </button>
+               </div>
+               
+               <button 
+                 onClick={handleGenerate}
+                 className={`pl-5 pr-4 py-3 rounded-full font-black flex items-center transition-all ${
+                   prompt.trim() && !isGenerating 
+                     ? 'bg-[var(--color-primary)] text-white shadow-lg hover:bg-black hover:-translate-y-0.5' 
+                     : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                 }`}
+                 disabled={!prompt.trim() || isGenerating}
+               >
+                 <span className="mr-2">{isGenerating ? 'AI 解析中...' : '提交执行算力'}</span>
+                 <div className="icon-xl rounded-full bg-[var(--bg-panel)]/20 flex items-center justify-center">
+                    <Wand2 className="icon-sm ml-0.5" />
+                 </div>
+               </button>
+             </div>
+          </div>
+          
+          <div className="absolute right-8 top-[var(--spacing-xl)] opacity-0 pointer-events-none"></div>
+        </div>
+      </div>
+
+      {renderRightPanel()}
+    </div>
+  );
+}
