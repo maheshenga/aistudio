@@ -5,11 +5,12 @@ import { WorkspaceModule } from './workspace/workspace.module';
 import { ProjectModule } from './project/project.module';
 import { MemberModule } from './member/member.module';
 import { GenerationJobModule } from './generation-job/generation-job.module';
+import { AssetModule } from './asset/asset.module';
 import { TenantGuard } from './common/tenant/tenant.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 @Module({
-  imports: [PrismaModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule],
+  imports: [PrismaModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule],
   providers: [
     { provide: APP_GUARD, useClass: TenantGuard },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
