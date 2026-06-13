@@ -10,6 +10,9 @@ export type DataBackendErrorCode =
   | 'network_error'
   | 'permission_denied'
   | 'parse_error'
+  | 'validation_error'
+  | 'not_found'
+  | 'conflict'
   | 'unknown_error';
 
 export interface DataBackendEnvironment {
