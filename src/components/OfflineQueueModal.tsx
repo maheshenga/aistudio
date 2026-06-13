@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { WifiOff, RotateCw, Trash2, X, AlertTriangle } from 'lucide-react';
 import { toast } from './Toast';
+import {
+  deleteOfflineQueueItem,
+  loadOfflineQueue,
+  type OfflineQueueItem,
+} from '../lib/data/offlineQueueRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
 export function OfflineQueueModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
-  const [queue, setQueue] = useState<any[]>([]);
+  const session = useSaasSession();
+  const [queue, setQueue] = useState<OfflineQueueItem[]>([]);
 
   const loadQueue = () => {
-    try {
-      const stored = localStorage.getItem('offline_queue');
-      if (stored) setQueue(JSON.parse(stored));
-    } catch (e) {}
+    setQueue(loadOfflineQueue({ workspaceId: session.workspace.id, userId: session.user.id }));
   };
 
   useEffect(() => {
@@ -19,27 +23,23 @@ export function OfflineQueueModal({ isOpen, onClose }: { isOpen: boolean, onClos
     };
     window.addEventListener('offlineQueueUpdated', handleUpdate);
     return () => window.removeEventListener('offlineQueueUpdated', handleUpdate);
-  }, [isOpen]);
+  }, [isOpen, session.user.id, session.workspace.id]);
 
-  const handleRetry = (id: string, key: string, value: any) => {
+  const handleRetry = (id: string, key: string, value: unknown) => {
     try {
       localStorage.setItem(key, JSON.stringify(value));
-      const newQueue = queue.filter(item => item.id !== id);
-      localStorage.setItem('offline_queue', JSON.stringify(newQueue));
+      const newQueue = deleteOfflineQueueItem(id, { workspaceId: session.workspace.id, userId: session.user.id });
       setQueue(newQueue);
       toast('Resolved offline action successfully', 'success');
-      window.dispatchEvent(new CustomEvent('offlineQueueUpdated'));
     } catch (e) {
       toast('Still failing to sync. Storage may be full.', 'error');
     }
   };
 
   const handleDiscard = (id: string) => {
-    const newQueue = queue.filter(item => item.id !== id);
-    localStorage.setItem('offline_queue', JSON.stringify(newQueue));
+    const newQueue = deleteOfflineQueueItem(id, { workspaceId: session.workspace.id, userId: session.user.id });
     setQueue(newQueue);
     toast('Discarded pending offline action', 'success');
-    window.dispatchEvent(new CustomEvent('offlineQueueUpdated'));
   };
 
   if (!isOpen) return null;

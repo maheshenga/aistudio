@@ -1,8 +1,20 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Video, Clapperboard, LayoutTemplate, Layers, MessageSquare, PlayCircle, Settings, Plus, Camera, Image as ImageIcon, Wand2, ArrowRight, X, Sparkles, SlidersHorizontal, RefreshCcw, CheckCircle2, Activity, AlertCircle, RotateCcw, Trash2, Undo2, SplitSquareHorizontal, GripVertical } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createWorkspaceAsset } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
+import { createWorkspaceTask } from '../lib/data/taskRepository';
+import { toast } from './Toast';
+import { GenerationFailureRecoveryPanel } from './GenerationFailureRecoveryPanel';
 
 export function DirectorDeskView() {
+  const session = useSaasSession();
+  const repositoryContext = React.useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [activeTab, setActiveTab] = useState<'script' | 'pipeline' | 'storyboard' | 'shots'>('pipeline');
   
   const tabs = [
@@ -64,6 +76,9 @@ export function DirectorDeskView() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-[var(--spacing-lg)] z-10 relative custom-scrollbar">
+         <div className="mb-[var(--spacing-lg)]">
+            <GenerationFailureRecoveryPanel moduleId="director_desk" session={session} context={repositoryContext} />
+         </div>
          <AnimatePresence mode="wait">
             {activeTab === 'pipeline' && (
               <PipelineView key="pipeline" />
@@ -84,6 +99,8 @@ export function DirectorDeskView() {
 }
 
 function PipelineView() {
+  const session = useSaasSession();
+  const assetContext = { workspaceId: session.workspace.id, userId: session.user.id };
   const [activeConfigId, setActiveConfigId] = useState<number | null>(null);
   const [boundAssets, setBoundAssets] = useState<Record<number, any>>({});
   const [showMonitor, setShowMonitor] = useState(false);
@@ -106,7 +123,67 @@ function PipelineView() {
 
   const updateLibraryAssetVersion = (id: string, e: React.MouseEvent) => {
      e.stopPropagation();
-     setLibraryAssets(prev => prev.map(a => a.id === id ? { ...a, version: a.version + 1, img: '1526304640581-d334cdbbf45e' } : a)); // also change img slightly to simulate edit
+     const currentAsset = libraryAssets.find((asset) => asset.id === id);
+     if (!currentAsset) return;
+
+     const nextVersion = currentAsset.version + 1;
+     const nextImageId = '1526304640581-d334cdbbf45e';
+     const imageUrl = `https://images.unsplash.com/photo-${nextImageId}?auto=format&fit=crop&q=80&w=400`;
+     const asset = createWorkspaceAsset({
+       name: `${currentAsset.title}-v${nextVersion}`,
+       type: 'image',
+       size: 'reference',
+       source: 'imported',
+       moduleId: 'director_desk',
+       url: imageUrl,
+       previewUrl: imageUrl,
+       tags: ['director_desk', currentAsset.id, `v${nextVersion}`],
+       metadata: {
+         referenceAssetId: currentAsset.id,
+         previousVersion: currentAsset.version,
+         version: nextVersion,
+         workflow: 'director_asset_version_update',
+       },
+     }, assetContext);
+     createPricedWorkspaceUsageEvent({
+       moduleId: 'director_desk',
+       pricingAction: 'automation',
+       kind: 'automation',
+       targetType: 'asset',
+       targetId: asset.id,
+       providerKind: 'mock',
+       runtimeMode: 'web',
+       metadata: {
+         workflow: 'director_asset_version_update',
+         referenceAssetId: currentAsset.id,
+         previousVersion: currentAsset.version,
+         version: nextVersion,
+       },
+     }, assetContext);
+     logAuditEvent({
+       action: 'asset_create',
+       moduleId: 'director_desk',
+       targetType: 'asset',
+       targetId: asset.id,
+       metadata: {
+         assetType: asset.type,
+         referenceAssetId: currentAsset.id,
+         version: nextVersion,
+       },
+     }, { session });
+     logAuditEvent({
+       action: 'director_asset_version_update',
+       moduleId: 'director_desk',
+       targetType: 'asset',
+       targetId: asset.id,
+       metadata: {
+         referenceAssetId: currentAsset.id,
+         previousVersion: currentAsset.version,
+         version: nextVersion,
+       },
+     }, { session });
+     setLibraryAssets(prev => prev.map(a => a.id === id ? { ...a, version: nextVersion, img: nextImageId } : a));
+     toast('Director reference asset version recorded.', 'success');
   };
 
   const updateBoundAssetVersion = (stepId: number, asset: any) => {
@@ -124,6 +201,24 @@ function PipelineView() {
      { id: 2, role: '痛点引入', content: '每天加班画图，老板催进度，甲方改需求，素材找不到...', prompt: 'Studio ghibli style, close up of a frustrated face, sweat on forehead, dramatic shadow, holding an empty cup of coffee, dark messy room background, masterpiece --ar 16:9 --v 6.0', duration: 4, temperature: 0.8 },
      { id: 3, role: '核心展示', content: '看看这个全自动 AI 工作流，只需输入一句提示词...', prompt: 'Studio ghibli style, magical glowing ai robot assisting designer, bright sunny room, vibrant colors, highly detailed, whimsical atmosphere --ar 16:9 --v 6.0', duration: 5, temperature: 0.75 }
   ]);
+
+  const handleResetShotParameters = () => {
+     const targetStepIds = activeConfigId ? [activeConfigId] : pipelineSteps.map((step) => step.id);
+     setPipelineSteps(prev => prev.map((step) => (
+       targetStepIds.includes(step.id) ? { ...step, temperature: 0.7 } : step
+     )));
+     logAuditEvent({
+       action: 'director_shot_parameter_reset',
+       moduleId: 'director_desk',
+       targetType: 'module',
+       targetId: activeConfigId ? `shot_${activeConfigId}` : 'all_shots',
+       metadata: {
+         stepIds: targetStepIds,
+         temperature: 0.7,
+       },
+     }, { session });
+     toast(`Reset ${targetStepIds.length} shot parameter set${targetStepIds.length === 1 ? '' : 's'}.`, 'success');
+  };
 
   return (
     <motion.div 
@@ -155,9 +250,9 @@ function PipelineView() {
                           <button 
                              onClick={(e) => updateLibraryAssetVersion(asset.id, e)}
                              className="text-[9px] text-[var(--color-primary)] bg-blue-50 hover:bg-blue-100 px-1.5 py-0.5 rounded shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
-                             title="模拟修改资产"
+                             title="登记资产新版本"
                           >
-                             模拟修改
+                             登记更新
                           </button>
                        </div>
                     </div>
@@ -247,7 +342,6 @@ function PipelineView() {
                          <button 
                             onClick={(e) => {
                                e.stopPropagation();
-                               // Simulate applying template to all pipeline steps
                                setPipelineSteps(prev => prev.map(p => ({
                                   ...p, 
                                   prompt: `${style.prompt} --ar 16:9 --v 6.0`
@@ -399,8 +493,8 @@ function PipelineView() {
                         <Activity className="icon-sm mr-2 text-green-400 animate-pulse" /> AI 节点执行监控
                      </div>
                      <div className="flex space-x-3 px-2 items-center">
-                        <button 
-                           onClick={() => alert('已选中分镜组，正将 Temperature 恢复为 0.7，Seed 恢复为随机...')}
+                         <button
+                           onClick={handleResetShotParameters}
                            className="bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 text-[10px] font-bold px-2.5 py-1 rounded transition-colors flex items-center shadow-sm tooltip"
                            title="强制重置并刷新选定分镜的稳定性数值"
                         >
@@ -510,6 +604,8 @@ function PipelineView() {
 }
 
 function StoryboardView() {
+  const session = useSaasSession();
+  const assetContext = { workspaceId: session.workspace.id, userId: session.user.id };
   const [activeVariantId, setActiveVariantId] = useState<number | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [consistencyResult, setConsistencyResult] = useState<any>(null);
@@ -543,33 +639,163 @@ function StoryboardView() {
      setIsChecking(true);
      setConsistencyResult(null);
      setFixingShotId(null);
-     setTimeout(() => {
-        setIsChecking(false);
-        setConsistencyResult({
-           score: 92,
-           issues: [
-             { shot: '03', message: '光影高对比度与其他镜头不一致，偏向硬光 (Hard Light)。', param: '--c 15 -> --c 5' },
-             { shot: '05', message: '人物面部特征稍有偏移 (结构差异)。', param: '--cref ID_329a' }
-           ],
-           suggestion: '建议在全局 Prompt 附加 --cref 参数并降低 Shot 03 的 chaos 值。'
-        });
-     }, 1500);
+     const result = {
+        score: 92,
+        issues: [
+          { shot: '03', message: '光影高对比度与其他镜头不一致，偏向硬光 (Hard Light)。', param: '--c 15 -> --c 5' },
+          { shot: '05', message: '人物面部特征稍有偏移 (结构差异)。', param: '--cref ID_329a' }
+        ],
+        suggestion: '建议在全局 Prompt 附加 --cref 参数并降低 Shot 03 的 chaos 值。'
+     };
+     setConsistencyResult(result);
+     setIsChecking(false);
+      createPricedWorkspaceUsageEvent({
+        moduleId: 'director_desk',
+        pricingAction: 'automation',
+        kind: 'automation',
+        targetType: 'system',
+        targetId: 'storyboard_consistency',
+        providerKind: 'mock',
+        runtimeMode: 'web',
+        unitCount: Math.max(1, Math.ceil(shots.length / 4)),
+        metadata: {
+         workflow: 'director_consistency_check',
+         score: result.score,
+         issueCount: result.issues.length,
+         shotCount: shots.length,
+       },
+     }, assetContext);
+     const reviewTask = createWorkspaceTask({
+       title: `Review ${result.issues.length} storyboard consistency issue${result.issues.length === 1 ? '' : 's'}`,
+       column: 'review',
+       priority: result.issues.length > 1 ? 'High' : 'Medium',
+       type: 'Director Desk',
+       date: new Date().toISOString().slice(0, 10),
+       isAuto: true,
+       status: 'queued',
+       metadata: {
+         workflow: 'director_consistency_check',
+         score: result.score,
+         issueCount: result.issues.length,
+         shotCount: shots.length,
+       },
+     }, assetContext);
+     logAuditEvent({
+       action: 'task_create',
+       moduleId: 'director_desk',
+       targetType: 'task',
+       targetId: reviewTask.id,
+       metadata: {
+         workflow: 'director_consistency_check',
+         score: result.score,
+         issueCount: result.issues.length,
+       },
+     }, { session });
+     logAuditEvent({
+       action: 'director_consistency_check',
+       moduleId: 'director_desk',
+       targetType: 'module',
+       targetId: 'storyboard_consistency',
+       metadata: {
+         score: result.score,
+         issueCount: result.issues.length,
+         shotCount: shots.length,
+       },
+     }, { session });
+     toast('Storyboard consistency check recorded.', 'success');
   };
 
   const applyFix = (shot: string) => {
      setFixingShotId(shot);
-     // Simulate realtime fix preview
-     setTimeout(() => {
-        setFixedImages(prev => ({
-           ...prev,
-           [shot]: `1600880292-2d6ebc-329a${shot}` // use a random different ID to show difference
-        }));
-        setFixingShotId(null);
-        setConsistencyResult((prev: any) => ({
-           ...prev,
-           issues: prev.issues.filter((i: any) => i.shot !== shot)
-        }));
-     }, 2000);
+     const fixedImageId = '1526304640581-d334cdbbf45e';
+     const imageUrl = `https://images.unsplash.com/photo-${fixedImageId}?auto=format&fit=crop&q=80&w=400&sat=-50`;
+     const asset = createWorkspaceAsset({
+       name: `storyboard-shot-${shot}-fix.png`,
+       type: 'image',
+       size: 'generated reference',
+       source: 'generated',
+       moduleId: 'director_desk',
+       url: imageUrl,
+       previewUrl: imageUrl,
+       tags: ['director_desk', 'storyboard_fix', `shot_${shot}`],
+       metadata: {
+         shot,
+         workflow: 'director_storyboard_fix_apply',
+         consistencyScore: consistencyResult?.score,
+       },
+     }, assetContext);
+      createPricedWorkspaceUsageEvent({
+        moduleId: 'director_desk',
+        pricingAction: 'generation',
+        kind: 'generation',
+        targetType: 'asset',
+        targetId: asset.id,
+        providerKind: 'mock',
+        runtimeMode: 'web',
+        metadata: {
+         workflow: 'director_storyboard_fix_apply',
+         shot,
+         assetId: asset.id,
+         consistencyScore: consistencyResult?.score,
+       },
+     }, assetContext);
+     const reviewTask = createWorkspaceTask({
+       title: `Review fixed storyboard shot ${shot}`,
+       column: 'review',
+       priority: 'Medium',
+       type: 'Director Desk',
+       date: new Date().toISOString().slice(0, 10),
+       isAuto: true,
+       status: 'queued',
+       metadata: {
+         workflow: 'director_storyboard_fix_apply',
+         shot,
+         assetId: asset.id,
+         consistencyScore: consistencyResult?.score,
+       },
+     }, assetContext);
+     logAuditEvent({
+       action: 'task_create',
+       moduleId: 'director_desk',
+       targetType: 'task',
+       targetId: reviewTask.id,
+       metadata: {
+         workflow: 'director_storyboard_fix_apply',
+         shot,
+         assetId: asset.id,
+       },
+     }, { session });
+     logAuditEvent({
+       action: 'asset_create',
+       moduleId: 'director_desk',
+       targetType: 'asset',
+       targetId: asset.id,
+       metadata: {
+         assetType: asset.type,
+         shot,
+         workflow: 'director_storyboard_fix_apply',
+       },
+     }, { session });
+     logAuditEvent({
+       action: 'director_storyboard_fix_apply',
+       moduleId: 'director_desk',
+       targetType: 'asset',
+       targetId: asset.id,
+       metadata: {
+         shot,
+         consistencyScore: consistencyResult?.score,
+       },
+     }, { session });
+     setFixedImages(prev => ({
+        ...prev,
+        [shot]: fixedImageId
+     }));
+     setFixingShotId(null);
+     setConsistencyResult((prev: any) => prev ? ({
+        ...prev,
+        issues: prev.issues.filter((i: any) => i.shot !== shot)
+     }) : prev);
+     toast(`Shot ${shot} fix asset recorded.`, 'success');
   };
 
   return (
@@ -735,10 +961,7 @@ function StoryboardView() {
                        ) : (
                           <>
                              {fixedImages[String(i).padStart(2, '0')] ? (
-                                <img src={`https://images.unsplash.com/photo-${[
-                                    '1518770660439-4636190af475',
-                                    '1526304640581-d334cdbbf45e',
-                                ][i % 2]}?auto=format&fit=crop&q=80&w=400&sat=-50`} alt="Fixed Scene" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out" />
+                                <img src={`https://images.unsplash.com/photo-${fixedImages[String(i).padStart(2, '0')]}?auto=format&fit=crop&q=80&w=400&sat=-50`} alt="Fixed Scene" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out" />
                              ) : (
                                 <img src={`https://images.unsplash.com/photo-${[
                                   '1518770660439-4636190af475',
@@ -896,6 +1119,8 @@ function StoryboardView() {
 }
 
 function ScriptView() {
+  const session = useSaasSession();
+  const assetContext = { workspaceId: session.workspace.id, userId: session.user.id };
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importText, setImportText] = useState("");
@@ -911,29 +1136,102 @@ function ScriptView() {
 
   const handleAutoSplit = () => {
     setIsAnalyzing(true);
-    // Simulate AI parsing delay
-    setTimeout(() => {
-      const parts = importText.split('\n').filter(p => p.trim() !== '');
-      const newLines = parts.map((part, index) => {
-        let role = '剧情过渡';
-        let type = '场景叙事';
-        if (index === 0) { role = '开场钩子'; type = '吸引注意'; }
-        else if (index === parts.length - 1) { role = '结尾动作'; type = '行动引导'; }
-        
-        return {
-          role,
-          content: part,
-          type,
-          duration: `${Math.max(minShotDuration, Math.floor(part.length / 5))}s`
-        };
-      });
-      if (newLines.length > 0) {
-        setScriptLines([...scriptLines, ...newLines]);
-      }
-      setIsAnalyzing(false);
-      setIsImporting(false);
-      setImportText("");
-    }, 1500);
+    const parts = importText.split('\n').filter(p => p.trim() !== '');
+    const newLines = parts.map((part, index) => {
+      let role = '剧情过渡';
+      let type = '场景叙事';
+      if (index === 0) { role = '开场钩子'; type = '吸引注意'; }
+      else if (index === parts.length - 1) { role = '结尾动作'; type = '行动引导'; }
+
+      return {
+        role,
+        content: part,
+        type,
+        duration: `${Math.max(minShotDuration, Math.floor(part.length / 5))}s`
+      };
+    });
+    if (newLines.length > 0) {
+      setScriptLines(prev => [...prev, ...newLines]);
+      const asset = createWorkspaceAsset({
+        name: `director-script-split-${Date.now()}.md`,
+        type: 'text',
+        size: `${importText.length} chars`,
+        source: 'generated',
+        moduleId: 'director_desk',
+        tags: ['director_desk', 'script_split'],
+        metadata: {
+          segmentCount: newLines.length,
+          minShotDuration,
+          preview: importText.slice(0, 160),
+        },
+      }, assetContext);
+      createPricedWorkspaceUsageEvent({
+        moduleId: 'director_desk',
+        pricingAction: 'generation',
+        kind: 'generation',
+        targetType: 'asset',
+        targetId: asset.id,
+        providerKind: 'mock',
+        runtimeMode: 'web',
+        unitCount: Math.max(1, Math.ceil(importText.length / 400)),
+        metadata: {
+          workflow: 'director_script_split',
+          assetId: asset.id,
+          segmentCount: newLines.length,
+          minShotDuration,
+        },
+      }, assetContext);
+      const productionTask = createWorkspaceTask({
+        title: `Produce ${newLines.length} director shots from script split`,
+        column: 'todo',
+        priority: newLines.length > 6 ? 'High' : 'Medium',
+        type: 'Director Desk',
+        date: new Date().toISOString().slice(0, 10),
+        isAuto: true,
+        status: 'queued',
+        metadata: {
+          workflow: 'director_script_split',
+          assetId: asset.id,
+          segmentCount: newLines.length,
+          minShotDuration,
+        },
+      }, assetContext);
+      logAuditEvent({
+        action: 'task_create',
+        moduleId: 'director_desk',
+        targetType: 'task',
+        targetId: productionTask.id,
+        metadata: {
+          workflow: 'director_script_split',
+          assetId: asset.id,
+          segmentCount: newLines.length,
+        },
+      }, { session });
+      logAuditEvent({
+        action: 'asset_create',
+        moduleId: 'director_desk',
+        targetType: 'asset',
+        targetId: asset.id,
+        metadata: {
+          assetType: asset.type,
+          segmentCount: newLines.length,
+        },
+      }, { session });
+      logAuditEvent({
+        action: 'director_script_split',
+        moduleId: 'director_desk',
+        targetType: 'asset',
+        targetId: asset.id,
+        metadata: {
+          segmentCount: newLines.length,
+          minShotDuration,
+        },
+      }, { session });
+      toast(`Imported ${newLines.length} director script segments.`, 'success');
+    }
+    setIsAnalyzing(false);
+    setIsImporting(false);
+    setImportText("");
   };
 
   return (

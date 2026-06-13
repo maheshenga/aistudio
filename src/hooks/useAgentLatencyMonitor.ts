@@ -1,18 +1,33 @@
-import React, { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { toast } from '../components/Toast';
+import { useAgentRuntimeStatus } from '../runtime/useAgentRuntimeStatus';
 
-// Simulation hook for global agent latency monitoring
 export function useAgentLatencyMonitor() {
+  const { status, error } = useAgentRuntimeStatus();
+  const lastAlertKeyRef = useRef<string | null>(null);
+
   useEffect(() => {
-    // Simulate complex task latency check
-    const checkInterval = setInterval(() => {
-      // 5% chance of latency spike
-      if (Math.random() < 0.05) {
-         toast('Agent 节点响应延迟超过 2000ms 阈值，链路已降级保障', 'error');
-         window.dispatchEvent(new CustomEvent('activity_logged', { detail: 'Agent 节点响应延迟报警' }));
-      }
-    }, 15000); // Check every 15s
-    
-    return () => clearInterval(checkInterval);
-  }, []);
+    const alertKey = error
+      ? `error:${error}`
+      : status && status.health !== 'available'
+        ? `${status.mode}:${status.providerKind}:${status.health}:${status.message ?? ''}`
+        : null;
+
+    if (!alertKey || lastAlertKeyRef.current === alertKey) return;
+    lastAlertKeyRef.current = alertKey;
+
+    const message = error
+      ? `Agent runtime status check failed: ${error}`
+      : `${status?.label ?? 'Agent runtime'} is ${status?.health ?? 'degraded'}. ${status?.message ?? ''}`.trim();
+
+    toast(message, status?.health === 'auth_expired' || error ? 'error' : 'warning');
+    window.dispatchEvent(new CustomEvent('activity_logged', {
+      detail: {
+        message,
+        runtimeMode: status?.mode,
+        providerKind: status?.providerKind,
+        health: status?.health,
+      },
+    }));
+  }, [error, status]);
 }

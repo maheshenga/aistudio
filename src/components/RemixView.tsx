@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { 
   Wand2, Layers, Type, LayoutTemplate, Plus, Search, Filter, Play, Check, Copy, 
   Download, Film, MoreHorizontal, FileVideo, Music, Image as ImageIcon,
@@ -6,10 +6,19 @@ import {
   Sliders, Clock, Calendar, Shield, CreditCard, Camera, Sparkles, AlertCircle, Zap, 
   Scissors, Heart, MessageCircle, Star, Forward, X, ScanLine
 } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createGenerationJob, failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { createWorkspaceAsset, recordWorkspaceAssetExport } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
+import { createWorkspaceTask } from '../lib/data/taskRepository';
+import { GenerationFailureRecoveryPanel } from './GenerationFailureRecoveryPanel';
 
 interface RemixViewProps {
   moduleId: string;
 }
+
+const REMIX_PREVIEW_VIDEO_URL = 'https://assets.mixkit.co/videos/preview/mixkit-futuristic-neon-light-tunnel-34686-large.mp4';
 
 export function RemixView({ moduleId }: RemixViewProps) {
   switch (moduleId) {
@@ -95,12 +104,148 @@ function RemixHome() {
 }
 
 function RemixSmart() {
+  const session = useSaasSession();
+  const repositoryContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [showSubtitleDrawer, setShowSubtitleDrawer] = useState(false);
   const [activeShotTitle, setActiveShotTitle] = useState('黄金三秒');
   const [subtitleText, setSubtitleText] = useState('');
+  const [previewStatus, setPreviewStatus] = useState<string | null>(null);
+
+  const handlePreviewRemix = () => {
+    const job = createGenerationJob({
+      title: 'Smart remix preview - short video',
+      prompt: `Smart remix preview for ${activeShotTitle}`,
+      status: 'running',
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      moduleId: 'remix_smart',
+      progress: 0,
+      metadata: {
+        activeShotTitle,
+        strategy: 'manual_sampling',
+        estimatedDurationSeconds: 9,
+      },
+    }, repositoryContext);
+    logAuditEvent({
+      action: 'generation_job_start',
+      moduleId: 'remix_smart',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        activeShotTitle,
+        strategy: 'manual_sampling',
+      },
+    }, { session });
+
+    try {
+      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
+      const asset = createWorkspaceAsset({
+      name: `smart-remix-preview-${Date.now()}.mp4`,
+      type: 'video',
+      size: '9s preview',
+      source: 'generated',
+      moduleId: 'remix_smart',
+      generationJobId: job.id,
+      url: REMIX_PREVIEW_VIDEO_URL,
+      previewUrl: REMIX_PREVIEW_VIDEO_URL,
+      tags: ['smart-remix', activeShotTitle, 'preview'],
+      metadata: {
+        activeShotTitle,
+        strategy: 'manual_sampling',
+        estimatedDurationSeconds: 9,
+      },
+    }, repositoryContext);
+    createPricedWorkspaceUsageEvent({
+      moduleId: 'remix_smart',
+      pricingAction: 'generation',
+      kind: 'generation',
+      targetType: 'generation_job',
+      targetId: job.id,
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      metadata: {
+        assetId: asset.id,
+        assetType: asset.type,
+        activeShotTitle,
+        estimatedDurationSeconds: 9,
+      },
+    }, repositoryContext);
+    recordWorkspaceAssetExport({
+      asset,
+      moduleId: 'remix_smart',
+      format: 'mp4',
+      fileName: asset.name,
+      sourceAction: 'export_preview_video',
+      metered: true,
+      unitCount: 1,
+      metadata: {
+        pricingAction: 'export',
+        kind: 'export',
+        activeShotTitle,
+        estimatedDurationSeconds: 9,
+      },
+    }, {
+      ...repositoryContext,
+      session,
+    });
+    logAuditEvent({
+      action: 'generation_job_complete',
+      moduleId: 'remix_smart',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        assetId: asset.id,
+        assetType: asset.type,
+        activeShotTitle,
+      },
+    }, { session });
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: 'remix_smart',
+      targetType: 'asset',
+      targetId: asset.id,
+      metadata: {
+        generationJobId: job.id,
+        assetType: asset.type,
+        activeShotTitle,
+      },
+    }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+      setPreviewStatus('Smart remix preview saved to workspace assets');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Remix provider failed before returning a preview.';
+      failGenerationJob(job.id, {
+        error: message,
+        metadata: {
+          activeShotTitle,
+          strategy: 'manual_sampling',
+          estimatedDurationSeconds: 9,
+        },
+      }, repositoryContext);
+      logAuditEvent({
+        action: 'generation_job_failed',
+        moduleId: 'remix_smart',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          activeShotTitle,
+          strategy: 'manual_sampling',
+          error: message,
+        },
+      }, { session });
+      window.dispatchEvent(new Event('activity_logged'));
+      setPreviewStatus('Remix preview failed. The job is saved for retry.');
+    }
+  };
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] bg-[#F5F6F8] font-sans">
+      <div className="bg-[#F5F6F8] px-6 pt-4">
+        <GenerationFailureRecoveryPanel moduleId="remix_smart" session={session} context={repositoryContext} />
+      </div>
       {/* Top Navbar */}
       <div className="h-14 bg-[var(--bg-panel)] flex items-center justify-between px-6 flex-shrink-0 shadow-sm z-20">
         <div className="w-1/3">
@@ -118,11 +263,19 @@ function RemixSmart() {
           <button className="flex items-center text-[13px] font-medium text-gray-700 hover:text-[var(--text-main)] bg-[var(--bg-panel)] border border-[var(--border-color)] px-3 py-1.5 rounded-lg shadow-sm">
             <Save className="icon-sm mr-1.5" /> 保存混剪项目
           </button>
-          <button className="flex items-center text-[13px] font-bold text-white bg-[var(--color-primary)] hover:bg-blue-700 px-4 py-1.5 rounded-lg shadow-sm transition-colors">
+          <button
+            onClick={handlePreviewRemix}
+            className="flex items-center text-[13px] font-bold text-white bg-[var(--color-primary)] hover:bg-blue-700 px-4 py-1.5 rounded-lg shadow-sm transition-colors"
+          >
             <PlayCircle className="icon-sm mr-1.5" /> 视频混剪预览
           </button>
         </div>
       </div>
+      {previewStatus && (
+        <div className="mx-6 mt-3 rounded-lg border border-blue-100 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-700 shadow-sm">
+          {previewStatus}
+        </div>
+      )}
 
       {/* Main Content Area */}
       <div className="flex flex-1 overflow-hidden">
@@ -648,6 +801,74 @@ function RemixSmart() {
 
 
 function RemixMaterials() {
+  const session = useSaasSession();
+  const repositoryContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const [materialStatus, setMaterialStatus] = useState<string | null>(null);
+
+  const handleUploadMaterial = () => {
+    const asset = createWorkspaceAsset({
+      name: `remix-material-upload-${Date.now()}.mp4`,
+      type: 'video',
+      size: '12s source clip',
+      source: 'uploaded',
+      moduleId: 'remix_materials',
+      url: 'https://assets.mixkit.co/videos/preview/mixkit-city-traffic-at-night-11-large.mp4',
+      previewUrl: 'https://assets.mixkit.co/videos/preview/mixkit-city-traffic-at-night-11-large.mp4',
+      tags: ['remix', 'material', 'source-video'],
+      metadata: {
+        workflow: 'remix_material_upload',
+        catalog: 'all_materials',
+        durationSeconds: 12,
+      },
+    }, repositoryContext);
+    createPricedWorkspaceUsageEvent({
+      moduleId: 'remix_materials',
+      pricingAction: 'automation',
+      kind: 'automation',
+      targetType: 'asset',
+      targetId: asset.id,
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      metadata: {
+        workflow: 'remix_material_upload',
+        assetId: asset.id,
+        assetType: asset.type,
+      },
+    }, repositoryContext);
+    recordWorkspaceAssetExport({
+      asset,
+      moduleId: 'remix_materials',
+      format: 'mp4',
+      fileName: asset.name,
+      sourceAction: 'export_material_record',
+      metered: true,
+      unitCount: 1,
+      metadata: {
+        pricingAction: 'export',
+        kind: 'export',
+        workflow: 'remix_material_upload',
+      },
+    }, {
+      ...repositoryContext,
+      session,
+    });
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: 'remix_materials',
+      targetType: 'asset',
+      targetId: asset.id,
+      metadata: {
+        workflow: 'remix_material_upload',
+        assetType: asset.type,
+      },
+    }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+    setMaterialStatus('Material saved to workspace assets and usage recorded.');
+  };
+
   return (
     <div className="p-[var(--spacing-xl)] space-y-[var(--spacing-lg)] max-w-7xl mx-auto">
       <div className="flex justify-between items-end">
@@ -660,12 +881,18 @@ function RemixMaterials() {
             <Plus className="icon-sm mr-2" />
             新建目录
           </button>
-          <button className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors shadow-sm flex items-center">
+          <button onClick={handleUploadMaterial} className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors shadow-sm flex items-center">
             <Plus className="icon-sm mr-2" />
             上传素材
           </button>
         </div>
       </div>
+
+      {materialStatus && (
+        <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-700 shadow-sm">
+          {materialStatus}
+        </div>
+      )}
 
       <div className="flex space-x-6 h-[600px] bg-[var(--bg-panel)] rounded-[var(--radius-xl)] shadow-sm border border-[var(--border-color)] overflow-hidden">
          {/* Left Sidebar catalogs */}
@@ -748,6 +975,74 @@ function RemixMaterials() {
 }
 
 function RemixTitles() {
+  const session = useSaasSession();
+  const repositoryContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const [titleStatus, setTitleStatus] = useState<string | null>(null);
+
+  const handleSaveTitleTemplate = (template: { name: string; tag: string; preview: string }) => {
+    const asset = createWorkspaceAsset({
+      name: `remix-title-template-${Date.now()}.json`,
+      type: 'text',
+      size: `${template.preview.length} chars`,
+      source: 'generated',
+      moduleId: 'remix_titles',
+      tags: ['remix', 'title-template', template.tag],
+      metadata: {
+        workflow: 'remix_title_template_save',
+        templateName: template.name,
+        tag: template.tag,
+        preview: template.preview,
+      },
+    }, repositoryContext);
+    createPricedWorkspaceUsageEvent({
+      moduleId: 'remix_titles',
+      pricingAction: 'automation',
+      kind: 'automation',
+      targetType: 'asset',
+      targetId: asset.id,
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      metadata: {
+        workflow: 'remix_title_template_save',
+        assetId: asset.id,
+        templateName: template.name,
+      },
+    }, repositoryContext);
+    recordWorkspaceAssetExport({
+      asset,
+      moduleId: 'remix_titles',
+      format: 'json',
+      fileName: asset.name,
+      sourceAction: 'export_title_template',
+      metered: true,
+      unitCount: 1,
+      metadata: {
+        pricingAction: 'export',
+        kind: 'export',
+        workflow: 'remix_title_template_save',
+        templateName: template.name,
+      },
+    }, {
+      ...repositoryContext,
+      session,
+    });
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: 'remix_titles',
+      targetType: 'asset',
+      targetId: asset.id,
+      metadata: {
+        workflow: 'remix_title_template_save',
+        templateName: template.name,
+      },
+    }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+    setTitleStatus('Title template saved to workspace assets.');
+  };
+
   return (
     <div className="p-[var(--spacing-xl)] space-y-[var(--spacing-lg)] max-w-7xl mx-auto">
       <div className="flex justify-between items-end">
@@ -773,7 +1068,7 @@ function RemixTitles() {
            { name: '新闻·跑马灯', tag: '纪实', preview: '▶ 突发新闻：全球最新动态追踪' },
            { name: '快闪·动感切割', tag: '卡点', preview: '1️⃣ 2️⃣ 3️⃣ GO!!' },
          ].map((tpl, i) => (
-           <div key={i} className="bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] shadow-sm hover:shadow-md transition-shadow group flex flex-col justify-between overflow-hidden cursor-pointer">
+           <div key={i} onClick={() => handleSaveTitleTemplate(tpl)} className="bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] shadow-sm hover:shadow-md transition-shadow group flex flex-col justify-between overflow-hidden cursor-pointer">
               <div className="aspect-[4/3] bg-gray-900 flex items-center justify-center p-[var(--spacing-lg)] relative">
                  <div className="text-center">
                     <p className="text-white font-black text-xl tracking-tight leading-tight transform -skew-x-6">{tpl.preview.split('/')[0]}</p>
@@ -795,6 +1090,75 @@ function RemixTitles() {
 }
 
 function RemixTemplates() {
+  const session = useSaasSession();
+  const repositoryContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const [templateStatus, setTemplateStatus] = useState<string | null>(null);
+
+  const handleSaveVideoTemplate = (template: { name: string; style: string; shots: string; img: string }) => {
+    const asset = createWorkspaceAsset({
+      name: `remix-video-template-${Date.now()}.json`,
+      type: 'document',
+      size: 'template preset',
+      source: 'generated',
+      moduleId: 'remix_templates',
+      previewUrl: `https://images.unsplash.com/photo-${template.img}?auto=format&fit=crop&q=80&w=600`,
+      tags: ['remix', 'video-template', template.style],
+      metadata: {
+        workflow: 'remix_video_template_save',
+        templateName: template.name,
+        style: template.style,
+        requiredShots: template.shots,
+      },
+    }, repositoryContext);
+    createPricedWorkspaceUsageEvent({
+      moduleId: 'remix_templates',
+      pricingAction: 'automation',
+      kind: 'automation',
+      targetType: 'asset',
+      targetId: asset.id,
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      metadata: {
+        workflow: 'remix_video_template_save',
+        assetId: asset.id,
+        templateName: template.name,
+      },
+    }, repositoryContext);
+    recordWorkspaceAssetExport({
+      asset,
+      moduleId: 'remix_templates',
+      format: 'json',
+      fileName: asset.name,
+      sourceAction: 'export_video_template',
+      metered: true,
+      unitCount: 1,
+      metadata: {
+        pricingAction: 'export',
+        kind: 'export',
+        workflow: 'remix_video_template_save',
+        templateName: template.name,
+      },
+    }, {
+      ...repositoryContext,
+      session,
+    });
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: 'remix_templates',
+      targetType: 'asset',
+      targetId: asset.id,
+      metadata: {
+        workflow: 'remix_video_template_save',
+        templateName: template.name,
+      },
+    }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+    setTemplateStatus('Video template saved to workspace assets.');
+  };
+
   return (
     <div className="p-[var(--spacing-xl)] space-y-[var(--spacing-lg)] max-w-7xl mx-auto">
       <div className="flex justify-between items-end">
@@ -811,7 +1175,7 @@ function RemixTemplates() {
            { name: '氛围感情绪人像系列', style: '9:16 / 慢放抒情', shots: '需 3-5 段长镜头', img: '1492633423735-8c08ef1caa8a' },
            { name: '高燃产品开箱展示', style: '16:9 / 科技感', shots: '需 6-8 段特写', img: '1505740420928-5e560c06d30e' },
          ].map((tpl, i) => (
-           <div key={i} className="bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] overflow-hidden shadow-sm hover:shadow-md transition-shadow group cursor-pointer">
+           <div key={i} onClick={() => handleSaveVideoTemplate(tpl)} className="bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] overflow-hidden shadow-sm hover:shadow-md transition-shadow group cursor-pointer">
               <div className="aspect-video bg-gray-200 relative">
                  <img src={`https://images.unsplash.com/photo-${tpl.img}?auto=format&fit=crop&q=80&w=600`} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                  <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors flex items-center justify-center">
@@ -835,8 +1199,166 @@ function RemixTemplates() {
 }
 
 function RemixViral() {
+  const session = useSaasSession();
+  const repositoryContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [analysisStatus, setAnalysisStatus] = useState<string | null>(null);
+
+  const handleAnalyzeViralClone = () => {
+    const targetUrl = sourceUrl.trim() || 'https://example.com/viral-short-video';
+    const job = createGenerationJob({
+      title: 'Viral clone structure analysis',
+      prompt: `Analyze viral short video structure from ${targetUrl}`,
+      status: 'running',
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      moduleId: 'remix_viral',
+      progress: 0,
+      metadata: {
+        sourceUrl: targetUrl,
+        workflow: 'remix_viral_clone_analysis',
+      },
+    }, repositoryContext);
+    logAuditEvent({
+      action: 'generation_job_start',
+      moduleId: 'remix_viral',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        sourceUrl: targetUrl,
+        workflow: 'remix_viral_clone_analysis',
+      },
+    }, { session });
+
+    try {
+      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
+      const asset = createWorkspaceAsset({
+      name: `viral-clone-structure-${Date.now()}.md`,
+      type: 'text',
+      size: 'viral analysis',
+      source: 'generated',
+      moduleId: 'remix_viral',
+      generationJobId: job.id,
+      tags: ['remix', 'viral-clone', 'analysis'],
+      metadata: {
+        sourceUrl: targetUrl,
+        hook: 'first-three-second-contrast',
+        shotCount: 8,
+        bgmPattern: 'fast-cut-peak-drop',
+        workflow: 'remix_viral_clone_analysis',
+      },
+    }, repositoryContext);
+    createPricedWorkspaceUsageEvent({
+      moduleId: 'remix_viral',
+      pricingAction: 'generation',
+      kind: 'generation',
+      targetType: 'generation_job',
+      targetId: job.id,
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      metadata: {
+        sourceUrl: targetUrl,
+        assetId: asset.id,
+        workflow: 'remix_viral_clone_analysis',
+      },
+    }, repositoryContext);
+    recordWorkspaceAssetExport({
+      asset,
+      moduleId: 'remix_viral',
+      format: 'md',
+      fileName: asset.name,
+      sourceAction: 'export_viral_analysis',
+      metered: true,
+      unitCount: 1,
+      metadata: {
+        pricingAction: 'export',
+        kind: 'export',
+        workflow: 'remix_viral_clone_analysis',
+        sourceUrl: targetUrl,
+      },
+    }, {
+      ...repositoryContext,
+      session,
+    });
+    const task = createWorkspaceTask({
+      title: 'Produce remix from viral clone analysis',
+      column: 'todo',
+      priority: 'High',
+      type: 'Remix',
+      date: new Date().toISOString().slice(0, 10),
+      isAuto: true,
+      status: 'queued',
+      metadata: {
+        workflow: 'remix_viral_clone_analysis',
+        generationJobId: job.id,
+        analysisAssetId: asset.id,
+        sourceUrl: targetUrl,
+      },
+    }, repositoryContext);
+    logAuditEvent({
+      action: 'generation_job_complete',
+      moduleId: 'remix_viral',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        assetId: asset.id,
+        sourceUrl: targetUrl,
+      },
+    }, { session });
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: 'remix_viral',
+      targetType: 'asset',
+      targetId: asset.id,
+      metadata: {
+        generationJobId: job.id,
+        sourceUrl: targetUrl,
+      },
+    }, { session });
+    logAuditEvent({
+      action: 'task_create',
+      moduleId: 'remix_viral',
+      targetType: 'task',
+      targetId: task.id,
+      metadata: {
+        generationJobId: job.id,
+        analysisAssetId: asset.id,
+        sourceUrl: targetUrl,
+      },
+    }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+      setAnalysisStatus('Viral clone analysis saved and production task created.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Viral clone provider failed before returning analysis.';
+      failGenerationJob(job.id, {
+        error: message,
+        metadata: {
+          sourceUrl: targetUrl,
+          workflow: 'remix_viral_clone_analysis',
+        },
+      }, repositoryContext);
+      logAuditEvent({
+        action: 'generation_job_failed',
+        moduleId: 'remix_viral',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          sourceUrl: targetUrl,
+          workflow: 'remix_viral_clone_analysis',
+          error: message,
+        },
+      }, { session });
+      window.dispatchEvent(new Event('activity_logged'));
+      setAnalysisStatus('Viral clone analysis failed. The job is saved for retry.');
+    }
+  };
+
   return (
     <div className="p-[var(--spacing-xl)] max-w-5xl mx-auto space-y-[var(--spacing-lg)]">
+      <GenerationFailureRecoveryPanel moduleId="remix_viral" session={session} context={repositoryContext} />
       <div className="bg-gradient-to-r from-amber-500 to-orange-600 rounded-[24px] p-[var(--spacing-xl)] text-white shadow-lg relative overflow-hidden">
         <Sparkles className="absolute -right-4 -top-4 w-32 h-32 opacity-20 transform rotate-12" />
         <h2 className="text-[var(--text-main)]xl font-black mb-2 relative z-10 tracking-tight">爆款视频一键复刻</h2>
@@ -847,8 +1369,8 @@ function RemixViral() {
          <div className="mb-[var(--spacing-md)]">
             <h3 className="font-bold text-[var(--text-main)] mb-2">第 1 步：导入对标对象</h3>
             <div className="flex space-x-3">
-               <input type="text" placeholder="粘贴抖音 / 小红书 / 视频号的视频链接..." className="flex-1 bg-gray-50 border border-[var(--border-color)] rounded-[var(--radius-lg)] px-4 py-3 text-sm focus:bg-[var(--bg-panel)] focus:outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400 transition-all font-medium" />
-               <button className="bg-orange-500 hover:bg-orange-600 text-white font-bold px-6 py-3 rounded-[var(--radius-lg)] shadow-sm transition-colors">解析视频</button>
+               <input type="text" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="粘贴抖音 / 小红书 / 视频号的视频链接..." className="flex-1 bg-gray-50 border border-[var(--border-color)] rounded-[var(--radius-lg)] px-4 py-3 text-sm focus:bg-[var(--bg-panel)] focus:outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400 transition-all font-medium" />
+               <button onClick={handleAnalyzeViralClone} className="bg-orange-500 hover:bg-orange-600 text-white font-bold px-6 py-3 rounded-[var(--radius-lg)] shadow-sm transition-colors">解析视频</button>
             </div>
             <div className="flex items-center space-x-4 mt-4 text-sm">
                <div className="text-[var(--text-muted)]">或手动上传参考视频：</div>

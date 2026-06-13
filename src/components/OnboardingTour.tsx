@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, Map, SplitSquareHorizontal, Bot, X, ChevronRight, ChevronLeft, Check } from 'lucide-react';
+import { getSetting, saveSetting } from '../lib/data/settingsRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
 const steps = [
   {
@@ -30,20 +32,25 @@ const steps = [
 ];
 
 export function OnboardingTour() {
+  const session = useSaasSession();
+  const settingsContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
 
   useEffect(() => {
     // Check if user has seen the tour
-    const hasSeen = localStorage.getItem('has_seen_tour');
+    const hasSeen = getSetting<boolean>('has_seen_tour', false, settingsContext);
     if (!hasSeen) {
       setTimeout(() => setIsOpen(true), 1500); // Delayed start
     }
-  }, []);
+  }, [settingsContext]);
 
   const handleClose = () => {
     setIsOpen(false);
-    localStorage.setItem('has_seen_tour', 'true');
+    saveSetting('has_seen_tour', true, settingsContext);
   };
 
   const nextStep = () => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useDeveloperMode } from '../hooks/useDeveloperMode';
 import { Activity, Cpu, Wifi, Download, Clock } from 'lucide-react';
 import jsPDF from 'jspdf';
@@ -6,12 +6,21 @@ import html2canvas from 'html2canvas';
 import { useRef } from 'react';
 import { motion } from 'motion/react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { useWorkspaceUsage } from '../hooks/useWorkspaceUsage';
 
 export function PerformanceMonitor() {
   const { isDevMode } = useDeveloperMode();
+  const moduleTimes = useWorkspaceUsage();
   const [metrics, setMetrics] = useState({ latency: 45, memory: 120, fps: 60 });
   const [history, setHistory] = useState<any[]>([]);
-  const [topModule, setTopModule] = useState<string>('N/A');
+  const topModule = useMemo(() => {
+    const top = Object.entries(moduleTimes).reduce<{ id: string; seconds: number } | null>((current, [id, seconds]) => {
+      const value = seconds ?? 0;
+      if (!current || value > current.seconds) return { id, seconds: value };
+      return current;
+    }, null);
+    return top && top.seconds > 0 ? top.id : 'N/A';
+  }, [moduleTimes]);
   const monitorRef = useRef<HTMLDivElement>(null);
   
   const handleExportPDF = async () => {
@@ -38,15 +47,6 @@ export function PerformanceMonitor() {
     const interval = setInterval(() => {
       seconds++;
       
-      try {
-        const stored = localStorage.getItem('module_time_tracker');
-        if (stored) {
-          const data = JSON.parse(stored);
-          const maxModule = Object.keys(data).reduce((a, b) => (data[a] || 0) > (data[b] || 0) ? a : b, '');
-          if (maxModule) setTopModule(maxModule);
-        }
-      } catch (e) {}
-
       setMetrics(prev => {
         const nextLatency = Math.max(10, Math.min(prev.latency + (Math.random() * 20 - 10), 300));
         const nextMemory = Math.max(50, Math.min(prev.memory + (Math.random() * 10 - 5), 500));
@@ -105,7 +105,7 @@ export function PerformanceMonitor() {
       </div>
       
       <div className="h-24 mb-3 w-full">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
           <LineChart data={history}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
             <XAxis dataKey="time" hide />

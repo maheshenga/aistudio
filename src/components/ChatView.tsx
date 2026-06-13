@@ -1,6 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useUndoRedo } from '../context/UndoRedoContext';
 import { Send, Bot, Sparkles, Plus, Image as ImageIcon, FileText, Code, Settings2, MoreVertical, Search, Paperclip, MessageSquare, Briefcase, Hash, History, PenTool, Database, Megaphone, Check, Compass, Users, Video, Music, Layout, BookOpen, Star, TrendingUp, Brain, ToggleLeft, ToggleRight, Copy, ThumbsUp, ThumbsDown, RefreshCcw, Command, Square, X, Trash2 } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { createWorkspaceAsset } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
 
 const AGENTS = [
   { id: 'general', name: '全能顾问', icon: Bot, color: 'text-blue-500', bg: 'bg-blue-50', desc: '通用的强大 AI 助手，解答各种问题' },
@@ -49,6 +54,11 @@ const MOCK_HISTORY = [
 ];
 
 export function ChatView() {
+  const session = useSaasSession();
+  const jobContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const { pushAction } = useUndoRedo();
   const [activeAgent, setActiveAgent] = useState(AGENTS[0]);
   const [prompt, setPrompt] = useState('');
@@ -64,8 +74,7 @@ export function ChatView() {
   const [isStreaming, setIsStreaming] = useState(false);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const streamIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const generateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const activeJobRef = useRef<string | null>(null);
   const [attachments, setAttachments] = useState<{name: string, size: string}[]>([]);
 
   useEffect(() => {
@@ -78,24 +87,30 @@ export function ChatView() {
     setStreamingContent('');
     setIsStreaming(false);
     setAttachments([]);
-    if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
-    if (generateTimeoutRef.current) clearTimeout(generateTimeoutRef.current);
+    activeJobRef.current = null;
     setMessages([
       { id: Date.now().toString(), role: 'assistant', content: `你好！我是${activeAgent.name}。你可以向我输入任何诉求或上传相关文件，我将结合领域专业知识为你提供强有力的支持。` }
     ]);
   }, [activeAgent]);
 
   const handleStop = () => {
-    if (streamIntervalRef.current) {
-      clearInterval(streamIntervalRef.current);
-      setMessages(p => [...p, { id: Date.now().toString(), role: 'assistant', content: streamingContent }]);
-      setStreamingContent('');
-      setIsStreaming(false);
+    if (activeJobRef.current) {
+      updateGenerationJob(activeJobRef.current, { status: 'cancelled', progress: 100, error: 'Stopped by user' }, jobContext);
+      logAuditEvent({
+        action: 'generation_job_failed',
+        moduleId: 'chat',
+        targetType: 'generation_job',
+        targetId: activeJobRef.current,
+        metadata: {
+          reason: 'user_stopped',
+          agent: activeAgent.id,
+        },
+      }, { session });
+      activeJobRef.current = null;
     }
-    if (generateTimeoutRef.current) {
-      clearTimeout(generateTimeoutRef.current);
-      setIsGenerating(false);
-    }
+    setStreamingContent('');
+    setIsStreaming(false);
+    setIsGenerating(false);
   };
 
   const handleClearChat = () => {
@@ -139,29 +154,103 @@ export function ChatView() {
     setPrompt('');
     setAttachments([]);
 
-    // Simulate network delay then thinking
-    generateTimeoutRef.current = setTimeout(() => {
-      setIsGenerating(false);
-      setIsStreaming(true);
-      
-      const memoryText = memoryEnabled && messages.length >= 2 
-        ? `\n\n*(已自动关联刚才 ${messages.length} 轮历史对话的上下文记忆片段)*` 
-        : '';
-        
-      const fullResponse = `基于 ${activeAgent.name} 的专业知识模型，针对您的问题：“${text || '针对附件内容的分析'}”，以下是我的分析建议：\n\n1. **核心观点阐述**\n问题本质在于信息流的分发与整合，建议通过结构化数据重塑链路。\n\n2. **可执行方案拆解**\n- 第一阶段：梳理现有存量资源。\n- 第二阶段：引入自动化工作流脚本。\n- 第三阶段：持续监控与A/B测试。\n\n3. **预测与复盘指标**\n预计能降低 30% 的沟通成本，同时提高产出一致性。\n\n需要我进一步将其细化或生成可视化报告吗？${memoryText}`;
-      
-      let i = 0;
-      streamIntervalRef.current = setInterval(() => {
-        setStreamingContent(fullResponse.slice(0, i));
-        i += 3;
-        if (i >= fullResponse.length) {
-          if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
-          setStreamingContent('');
-          setIsStreaming(false);
-          setMessages(p => [...p, { id: Date.now().toString(), role: 'assistant', content: fullResponse }]);
-        }
-      }, 20);
-    }, 1200);
+    const job = createGenerationJob({
+      title: `Chat - ${activeAgent.name}`,
+      prompt: userMsg,
+      status: 'running',
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      moduleId: 'chat',
+      progress: 0,
+      metadata: {
+        agent: activeAgent.id,
+        agentName: activeAgent.name,
+        memoryEnabled,
+        attachments: attachments.map(attachment => attachment.name),
+      },
+    }, jobContext);
+    activeJobRef.current = job.id;
+    logAuditEvent({
+      action: 'generation_job_start',
+      moduleId: 'chat',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        agent: activeAgent.id,
+        attachmentCount: attachments.length,
+      },
+    }, { session });
+
+    const memoryText = memoryEnabled && messages.length >= 2
+      ? `\n\n*(已自动关联刚才 ${messages.length} 轮历史对话的上下文记忆片段)*`
+      : '';
+
+    const fullResponse = `基于 ${activeAgent.name} 的专业知识模型，针对您的问题：“${text || '针对附件内容的分析'}”，以下是我的分析建议：\n\n1. **核心观点阐述**\n问题本质在于信息流的分发与整合，建议通过结构化数据重塑链路。\n\n2. **可执行方案拆解**\n- 第一阶段：梳理现有存量资源。\n- 第二阶段：引入自动化工作流脚本。\n- 第三阶段：持续监控与A/B测试。\n\n3. **预测与复盘指标**\n预计能降低 30% 的沟通成本，同时提高产出一致性。\n\n需要我进一步将其细化或生成可视化报告吗？${memoryText}`;
+
+    updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+    const asset = createWorkspaceAsset({
+      name: `chat-response-${Date.now()}.md`,
+      type: 'text',
+      size: `${fullResponse.length} chars`,
+      source: 'generated',
+      moduleId: 'chat',
+      generationJobId: job.id,
+      tags: [activeAgent.name, activeAgent.id],
+      metadata: {
+        prompt: userMsg,
+        agent: activeAgent.id,
+        agentName: activeAgent.name,
+        memoryEnabled,
+        responsePreview: fullResponse.slice(0, 160),
+      },
+    }, jobContext);
+    createPricedWorkspaceUsageEvent({
+      moduleId: 'chat',
+      pricingAction: 'generation',
+      kind: 'generation',
+      targetType: 'generation_job',
+      targetId: job.id,
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      unitCount: Math.max(1, Math.ceil((userMsg.length + fullResponse.length) / 800)),
+      metadata: {
+        assetId: asset.id,
+        assetType: asset.type,
+        agent: activeAgent.id,
+        agentName: activeAgent.name,
+        promptLength: userMsg.length,
+        responseLength: fullResponse.length,
+        attachmentCount: attachments.length,
+      },
+    }, jobContext);
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: 'chat',
+      targetType: 'asset',
+      targetId: asset.id,
+      metadata: {
+        assetType: asset.type,
+        generationJobId: job.id,
+        agent: activeAgent.id,
+      },
+    }, { session });
+    logAuditEvent({
+      action: 'generation_job_complete',
+      moduleId: 'chat',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        generatedAsset: true,
+        assetId: asset.id,
+        assetType: asset.type,
+        agent: activeAgent.id,
+      },
+    }, { session });
+    activeJobRef.current = null;
+    setStreamingContent('');
+    setIsStreaming(false);
+    setIsGenerating(false);
+    setMessages(p => [...p, { id: Date.now().toString(), role: 'assistant', content: fullResponse }]);
   };
 
   const handleMockUpload = () => {

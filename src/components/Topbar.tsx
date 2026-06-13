@@ -2,6 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { PanelLeft, PanelLeftClose, Search, Bell, HelpCircle, ListTodo, MessageSquare, Sparkles, Moon, Sun, Coffee, Zap, Globe, Check, Play, Square, Timer, Maximize, Minimize, AlertCircle, CheckCircle2, Clock, Activity, LineChart, WifiOff } from 'lucide-react';
 import { useTheme, ThemeType } from './ThemeProvider';
 import { QuickActions } from './QuickActions';
+import { toast } from './Toast';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { listAuditLogs } from '../lib/data/auditLogRepository';
+import { listGenerationJobs } from '../lib/data/generationJobRepository';
+import { loadOfflineQueue } from '../lib/data/offlineQueueRepository';
 
 interface TopbarProps {
   onOpenQuickNotes?: () => void;
@@ -18,13 +23,45 @@ interface TopbarProps {
   onOpenOfflineQueue?: () => void;
 }
 
+type TopbarNotificationType = 'alert' | 'success' | 'update';
+
+interface TopbarNotification {
+  id: string;
+  type: TopbarNotificationType;
+  title: string;
+  message: string;
+  time: string;
+  timestamp: number;
+  unread: boolean;
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const ageMs = Math.max(0, Date.now() - timestamp);
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function formatAuditAction(action: string): string {
+  return action
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 export function Topbar({ isCollapsed, toggleSidebar, title, onOpenTaskCenter, onOpenMessages, onOpenCopilot, isFocusMode = false, onToggleFocusMode, onOpenShortcutsHelp, onOpenSessionSummary, onOpenOfflineQueue }: TopbarProps) {
+  const session = useSaasSession();
   const { theme, setTheme } = useTheme();
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [themeSearch, setThemeSearch] = useState('');
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [isInboxOpen, setIsInboxOpen] = useState(false);
+  const [notifications, setNotifications] = useState<TopbarNotification[]>([]);
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>([]);
   const themeMenuRef = useRef<HTMLDivElement>(null);
   const inboxRef = useRef<HTMLDivElement>(null);
   
@@ -36,7 +73,7 @@ export function Topbar({ isCollapsed, toggleSidebar, title, onOpenTaskCenter, on
     let interval: NodeJS.Timeout;
     if (isLiveRefresh) {
       interval = setInterval(() => {
-        import('./Toast').then(({ toast }) => toast('Live Refresh: Data synced from backend.', 'success'));
+        toast('Live Refresh: Data synced from backend.', 'success');
       }, 60000);
     }
     return () => clearInterval(interval);
@@ -106,11 +143,81 @@ export function Topbar({ isCollapsed, toggleSidebar, title, onOpenTaskCenter, on
     }
   };
 
-  const mockNotifications = [
-    { id: 1, type: 'alert', title: 'Payment Failed', message: 'Your API usage exceeded the billing threshold.', time: '10m ago', unread: true },
-    { id: 2, type: 'success', title: 'Build Successfully', message: 'Storefront deployment completed successfully.', time: '1h ago', unread: true },
-    { id: 3, type: 'update', title: 'Team Sync', message: 'Agent-X has finished writing the blog post.', time: '2h ago', unread: false },
-  ];
+  const refreshInboxNotifications = () => {
+    const jobs = listGenerationJobs({
+      workspaceId: session.workspace.id,
+      userId: session.user.id,
+    });
+    const offlineItems = loadOfflineQueue({
+      workspaceId: session.workspace.id,
+      userId: session.user.id,
+    });
+    const auditLogs = listAuditLogs({ workspaceId: session.workspace.id });
+
+    const jobNotifications: TopbarNotification[] = jobs.slice(0, 5).map((job) => ({
+      id: `job:${job.id}`,
+      type: job.status === 'failed' ? 'alert' : job.status === 'succeeded' ? 'success' : 'update',
+      title: job.status === 'failed' ? 'Generation failed' : job.status === 'succeeded' ? 'Generation completed' : 'Generation running',
+      message: `${job.title} - ${job.status} (${job.progress}%)`,
+      timestamp: job.updatedAt,
+      time: formatRelativeTime(job.updatedAt),
+      unread: !readNotificationIds.includes(`job:${job.id}`),
+    }));
+
+    const offlineNotifications: TopbarNotification[] = offlineItems.slice(0, 5).map((item) => {
+      const timestamp = Date.parse(item.timestamp) || Date.now();
+      return {
+        id: `offline:${item.id}`,
+        type: 'alert',
+        title: 'Offline action pending',
+        message: `${item.key} is waiting to sync`,
+        timestamp,
+        time: formatRelativeTime(timestamp),
+        unread: !readNotificationIds.includes(`offline:${item.id}`),
+      };
+    });
+
+    const auditNotifications: TopbarNotification[] = auditLogs.slice(0, 6).map((log) => ({
+      id: `audit:${log.id}`,
+      type: log.action.includes('failed') ? 'alert' : log.action.includes('complete') || log.action.includes('export') ? 'success' : 'update',
+      title: formatAuditAction(log.action),
+      message: `${log.actor.name} updated ${log.moduleId ?? log.targetType}`,
+      timestamp: log.timestamp,
+      time: formatRelativeTime(log.timestamp),
+      unread: !readNotificationIds.includes(`audit:${log.id}`),
+    }));
+
+    setNotifications(
+      [...offlineNotifications, ...jobNotifications, ...auditNotifications]
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 10),
+    );
+  };
+
+  useEffect(() => {
+    refreshInboxNotifications();
+    const refreshEvents = [
+      'generation_jobs_updated',
+      'offlineQueueUpdated',
+      'dashboard_ai_command',
+      'activity_log_theme',
+      'settings_updated',
+    ];
+    refreshEvents.forEach((eventName) => window.addEventListener(eventName, refreshInboxNotifications));
+    return () => {
+      refreshEvents.forEach((eventName) => window.removeEventListener(eventName, refreshInboxNotifications));
+    };
+  }, [session.user.id, session.workspace.id, readNotificationIds]);
+
+  const unreadCount = notifications.filter((notification) => notification.unread).length;
+
+  const markNotificationRead = (notificationId: string) => {
+    setReadNotificationIds((current) => Array.from(new Set([...current, notificationId])));
+  };
+
+  const markAllNotificationsRead = () => {
+    setReadNotificationIds((current) => Array.from(new Set([...current, ...notifications.map((notification) => notification.id)])));
+  };
 
   return (
     <header className={`h-16 border-b flex items-center justify-between px-6 z-10 sticky top-0 transition-colors ${isSessionActive ? 'bg-blue-50/50 border-blue-200 shadow-[0_4px_24px_rgba(59,130,246,0.1)]' : 'bg-[var(--bg-panel)] border-[var(--border-color)]'}`}>
@@ -150,7 +257,7 @@ export function Topbar({ isCollapsed, toggleSidebar, title, onOpenTaskCenter, on
         <button
           onClick={() => {
             setIsLiveRefresh(!isLiveRefresh);
-            import('./Toast').then(({ toast }) => toast(`Live Refresh ${!isLiveRefresh ? 'Enabled (60s)' : 'Disabled'}`, 'success'));
+            toast(`Live Refresh ${!isLiveRefresh ? 'Enabled (60s)' : 'Disabled'}`, 'success');
           }}
           className={`flex items-center px-3 py-1.5 mr-2 text-xs font-bold rounded-full border transition-colors ${
             isLiveRefresh 
@@ -323,12 +430,12 @@ export function Topbar({ isCollapsed, toggleSidebar, title, onOpenTaskCenter, on
         </button>
 
         <button 
-          onClick={onOpenMessages}
-          className="p-2 text-[var(--text-muted)] hover:bg-[var(--bg-app)] hover:text-[var(--text-main)] rounded-full transition-colors relative" 
-          title="站内信件/系统通知"
-        >
-          <MessageSquare className="w-[20px] h-[20px]" />
-          {!isSessionActive && <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-[#D93025] ring-2 ring-white"></span>}
+            onClick={onOpenMessages}
+            className="p-2 text-[var(--text-muted)] hover:bg-[var(--bg-app)] hover:text-[var(--text-main)] rounded-full transition-colors relative"
+            title="站内信件/系统通知"
+          >
+            <MessageSquare className="w-[20px] h-[20px]" />
+          {!isSessionActive && unreadCount > 0 && <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-[#D93025] ring-2 ring-white"></span>}
         </button>
 
         <div className="relative" ref={inboxRef}>
@@ -337,18 +444,28 @@ export function Topbar({ isCollapsed, toggleSidebar, title, onOpenTaskCenter, on
             className="p-2 text-[var(--text-muted)] hover:bg-[var(--bg-app)] hover:text-[var(--text-main)] rounded-full transition-colors relative" title="消息通知"
           >
             <Bell className="w-[20px] h-[20px]" />
-            {!isSessionActive && <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-[#1A73E8] ring-2 ring-white"></span>}
+            {!isSessionActive && unreadCount > 0 && <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-[#1A73E8] ring-2 ring-white"></span>}
           </button>
 
           {isInboxOpen && (
             <div className="absolute right-0 mt-2 w-80 bg-[var(--bg-panel)] rounded-[var(--radius-xl)] shadow-xl border border-[var(--border-color)] overflow-hidden z-50 transform origin-top-right transition-all animate-in fade-in zoom-in-95 duration-200">
               <div className="p-4 border-b border-[var(--border-color)] bg-gray-50/50 flex justify-between items-center">
-                <h3 className="font-bold text-[var(--text-main)] text-sm">Inbox ({mockNotifications.filter(n => n.unread).length} unread)</h3>
-                <button className="text-[11px] font-bold text-[var(--color-primary)] hover:text-blue-700">Mark all as read</button>
+                <h3 className="font-bold text-[var(--text-main)] text-sm">Inbox ({unreadCount} unread)</h3>
+                <button onClick={markAllNotificationsRead} className="text-[11px] font-bold text-[var(--color-primary)] hover:text-blue-700">Mark all as read</button>
               </div>
               <div className="max-h-[300px] overflow-y-auto">
-                {mockNotifications.map(notification => (
-                  <div key={notification.id} className={`p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer ${notification.unread ? 'bg-blue-50/30' : ''}`}>
+                {notifications.length === 0 && (
+                  <div className="p-6 text-center">
+                    <p className="text-sm font-bold text-[var(--text-main)]">Inbox is clear</p>
+                    <p className="text-xs text-[var(--text-muted)] mt-1">Workspace activity will appear here.</p>
+                  </div>
+                )}
+                {notifications.map(notification => (
+                  <div
+                    key={notification.id}
+                    onClick={() => markNotificationRead(notification.id)}
+                    className={`p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer ${notification.unread ? 'bg-blue-50/30' : ''}`}
+                  >
                     <div className="flex gap-3">
                       <div className="mt-0.5">
                         {notification.type === 'alert' && <AlertCircle className="icon-md text-red-500" />}

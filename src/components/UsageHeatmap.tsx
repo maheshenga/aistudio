@@ -1,17 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { Calendar, Layers } from 'lucide-react';
-import { navGroups, iconMap } from './Sidebar';
+import { getProductNavGroupsForRole } from '../product/registry';
+import { iconMap } from '../product/icons';
+import { useWorkspaceUsage } from '../hooks/useWorkspaceUsage';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
 export function UsageHeatmap() {
-  const [heatmapData, setHeatmapData] = useState<any[]>([]);
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('module_time_tracker');
-      const timeData = stored ? JSON.parse(stored) : {};
-      
-      const allModules = navGroups.flatMap(g => g.items);
-      const data = allModules.map(mod => {
+  const session = useSaasSession();
+  const timeData = useWorkspaceUsage();
+  const accessibleModules = useMemo(
+    () => getProductNavGroupsForRole(session.membership.role).flatMap((group) => group.items),
+    [session.membership.role],
+  );
+  const heatmapData = useMemo(
+    () => accessibleModules.map(mod => {
           const rawScore = timeData[mod.id] || Math.floor(Math.random() * 200); // fallback mock for visuals
           return {
               id: mod.id,
@@ -19,10 +21,9 @@ export function UsageHeatmap() {
               score: rawScore,
               icon: mod.icon
           };
-      });
-      setHeatmapData(data);
-    } catch(e) {}
-  }, []);
+      }),
+    [accessibleModules, timeData],
+  );
 
   const maxScore = Math.max(...heatmapData.map(d => d.score), 1);
 

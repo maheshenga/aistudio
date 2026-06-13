@@ -1,6 +1,24 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { LayoutDashboard, Save, FolderOpen, MoreVertical, Check } from 'lucide-react';
 import { toast } from './Toast';
+import { getSetting, saveSetting } from '../lib/data/settingsRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
+
+interface LayoutPreset {
+  name: string;
+  data: any;
+}
+
+const defaultLayoutPresets: LayoutPreset[] = [
+  {
+    name: 'Research Focus',
+    data: { activeModule: 'knowledge', isSplitScreen: true, secondaryModule: 'assets', splitRatio: 60, pinnedModules: ['knowledge', 'assets'] }
+  },
+  {
+    name: 'Development Mode',
+    data: { activeModule: 'code', isSplitScreen: true, secondaryModule: 'task', splitRatio: 50, pinnedModules: ['code', 'task', 'messages'] }
+  }
+];
 
 export function LayoutPresets({ 
   currentLayout,
@@ -9,29 +27,34 @@ export function LayoutPresets({
   currentLayout: any,
   onLoadLayout: (layout: any) => void
 }) {
+  const session = useSaasSession();
+  const settingsContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [isOpen, setIsOpen] = useState(false);
-  const [presets, setPresets] = useState<{name: string, data: any}[]>([
-    {
-      name: 'Research Focus',
-      data: { activeModule: 'knowledge', isSplitScreen: true, secondaryModule: 'assets', splitRatio: 60, pinnedModules: ['knowledge', 'assets'] }
-    },
-    {
-      name: 'Development Mode',
-      data: { activeModule: 'code', isSplitScreen: true, secondaryModule: 'task', splitRatio: 50, pinnedModules: ['code', 'task', 'messages'] }
-    }
-  ]);
+  const [presets, setPresets] = useState<LayoutPreset[]>(() =>
+    getSetting<LayoutPreset[]>('layout_presets', defaultLayoutPresets, settingsContext),
+  );
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const stored = localStorage.getItem('layout_presets');
-    if (stored) {
-      try { setPresets(JSON.parse(stored)); } catch(e) {}
-    }
-  }, []);
+    const refreshPresets = () => setPresets(getSetting<LayoutPreset[]>('layout_presets', defaultLayoutPresets, settingsContext));
+    const handleSettingsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string; userId?: string }>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== settingsContext.workspaceId) return;
+      if (detail?.userId && detail.userId !== settingsContext.userId) return;
+      refreshPresets();
+    };
 
-  const saveToStorage = (newPresets: any[]) => {
+    refreshPresets();
+    window.addEventListener('settings_updated', handleSettingsUpdated);
+    return () => window.removeEventListener('settings_updated', handleSettingsUpdated);
+  }, [settingsContext]);
+
+  const saveToStorage = (newPresets: LayoutPreset[]) => {
     setPresets(newPresets);
-    localStorage.setItem('layout_presets', JSON.stringify(newPresets));
+    saveSetting('layout_presets', newPresets, settingsContext);
   };
 
   useEffect(() => {

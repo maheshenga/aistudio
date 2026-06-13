@@ -1,19 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Clock, Zap, TrendingUp } from 'lucide-react';
+import { useWorkspaceUsage } from '../hooks/useWorkspaceUsage';
 
 export function DailyInsightsWidget() {
+  const moduleTimes = useWorkspaceUsage();
   const [topModule, setTopModule] = useState<string>('N/A');
   const [topTime, setTopTime] = useState<number>(0);
   const [totalTime, setTotalTime] = useState<number>(0);
   const [avgLoadTime, setAvgLoadTime] = useState<number>(0);
 
   useEffect(() => {
-    const fetchData = () => {
-      try {
-        const stored = localStorage.getItem('module_time_tracker');
-        if (!stored) return;
-        const moduleTimes = JSON.parse(stored);
-        
+    try {
         let maxMod = 'N/A';
         let maxVal = 0;
         let total = 0;
@@ -40,13 +37,8 @@ export function DailyInsightsWidget() {
         } else {
           setAvgLoadTime(45);
         }
-      } catch(e) {}
-    };
-
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    } catch(e) {}
+  }, [moduleTimes]);
 
   const formatTime = (seconds: number) => {
     if (seconds < 60) return `${seconds}s`;

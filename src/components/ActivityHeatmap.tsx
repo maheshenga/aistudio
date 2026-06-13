@@ -1,8 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
 import * as d3 from 'd3';
+import { listAuditLogs } from '../lib/data/auditLogRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
 export function ActivityHeatmap() {
   const d3Container = useRef(null);
+  const session = useSaasSession();
 
   useEffect(() => {
     if (d3Container.current) {
@@ -13,7 +16,7 @@ export function ActivityHeatmap() {
       const height = 180;
       const cellSize = 18;
       const cellMargin = 4;
-      
+
       const svg = d3.select(d3Container.current)
         .append('svg')
         .attr('width', '100%')
@@ -23,25 +26,22 @@ export function ActivityHeatmap() {
       // Read real data
       let data = Array(7).fill(0).map(() => Array(8).fill(0));
       try {
-        const logsStr = localStorage.getItem('aistudio_activity_logs');
-        if (logsStr) {
-          const logs = JSON.parse(logsStr);
-          const now = Date.now();
-          const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
-          
-          logs.forEach((log: any) => {
-            if (log.timestamp > thirtyDaysAgo) {
-              const date = new Date(log.timestamp);
-              let day = date.getDay() - 1; // 0 is Sunday, convert to Monday=0
-              if (day === -1) day = 6;
-              const hour = date.getHours();
-              const period = Math.floor(hour / 3);
-              if (day >= 0 && day < 7 && period >= 0 && period < 8) {
-                data[day][period]++;
-              }
+        const logs = listAuditLogs({ workspaceId: session.workspace.id });
+        const now = Date.now();
+        const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+        logs.forEach((log) => {
+          if (log.timestamp > thirtyDaysAgo) {
+            const date = new Date(log.timestamp);
+            let day = date.getDay() - 1; // 0 is Sunday, convert to Monday=0
+            if (day === -1) day = 6;
+            const hour = date.getHours();
+            const period = Math.floor(hour / 3);
+            if (day >= 0 && day < 7 && period >= 0 && period < 8) {
+              data[day][period]++;
             }
-          });
-        }
+          }
+        });
       } catch (e) {
         console.error("Failed to parse activity logs", e);
       }
@@ -124,12 +124,12 @@ export function ActivityHeatmap() {
             tooltip.transition().duration(200).style('opacity', 0);
           });
       });
-      
+
       return () => {
          tooltip.remove();
       }
     }
-  }, []);
+  }, [session.workspace.id]);
 
   return (
     <div className="w-full flex justify-center items-center h-full min-h-[160px]">

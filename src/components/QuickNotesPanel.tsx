@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, Plus, StickyNote, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { getSetting, saveSetting } from '../lib/data/settingsRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
 interface QuickNotesPanelProps {
   isOpen: boolean;
@@ -8,18 +10,32 @@ interface QuickNotesPanelProps {
 }
 
 export function QuickNotesPanel({ isOpen, onClose }: QuickNotesPanelProps) {
-  const [notes, setNotes] = useState<{id: string, text: string}[]>([]);
+  const session = useSaasSession();
+  const settingsContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const [notes, setNotes] = useState<{id: string, text: string}[]>(() =>
+    getSetting<{id: string, text: string}[]>('quick_notes', [], settingsContext),
+  );
 
   useEffect(() => {
-    const saved = localStorage.getItem('quick_notes');
-    if (saved) {
-      try { setNotes(JSON.parse(saved)); } catch(e){}
-    }
-  }, []);
+    const refreshNotes = () => setNotes(getSetting<{id: string, text: string}[]>('quick_notes', [], settingsContext));
+    const handleSettingsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string; userId?: string }>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== settingsContext.workspaceId) return;
+      if (detail?.userId && detail.userId !== settingsContext.userId) return;
+      refreshNotes();
+    };
+
+    refreshNotes();
+    window.addEventListener('settings_updated', handleSettingsUpdated);
+    return () => window.removeEventListener('settings_updated', handleSettingsUpdated);
+  }, [settingsContext]);
 
   const saveNotes = (newNotes: {id: string, text: string}[]) => {
     setNotes(newNotes);
-    localStorage.setItem('quick_notes', JSON.stringify(newNotes));
+    saveSetting('quick_notes', newNotes, settingsContext);
   };
 
   const addNote = () => {

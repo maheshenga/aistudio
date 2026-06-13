@@ -1,8 +1,14 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Mic, MicOff, FileText, CheckSquare, Calendar, Loader2, DollarSign, BrainCircuit, AlertCircle } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createWorkspaceTask } from '../lib/data/taskRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { loadWorkspaceFinancialRecords, summarizeWorkspaceFinancials } from '../lib/data/financialRepository';
 import { toast } from './Toast';
 
 export function FinanceMeetingAssistant() {
+  const session = useSaasSession();
+  const taskContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState<string[]>([]);
@@ -10,14 +16,6 @@ export function FinanceMeetingAssistant() {
   
   const transcriptRef = useRef<HTMLDivElement>(null);
   
-  const mockPhrases = [
-    "系统: 正在启动财务会议录音助手...",
-    "财务总监: 上个月我们的公关营销支出超标了约28%，需要严格控制。",
-    "法务: 海外业务的这笔1,500美金收款，税务合规的凭证需要抓紧准备。",
-    "产品负责人: Next版本可能会增加外包支出，预计在5万元左右，我们需要提前做税务规划。",
-    "系统: 会议录音已结束，正在提取财务摘要与待办事项..."
-  ];
-
   useEffect(() => {
     if (transcriptRef.current) {
         transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
@@ -28,56 +26,74 @@ export function FinanceMeetingAssistant() {
     if (isRecording) {
       setIsRecording(false);
       setIsProcessing(true);
-      
-      // Simulate processing and taking 1 more phrase
-      setTimeout(() => {
-        setTranscript(prev => [...prev, mockPhrases[4]]);
-      }, 500);
+      const financialRecords = loadWorkspaceFinancialRecords({ workspaceId: session.workspace.id });
+      const financialSummary = summarizeWorkspaceFinancials(financialRecords);
+      const nextTranscript = [
+        ...transcript,
+        `System: Finance meeting recording ended for ${session.workspace.name}.`,
+        `Finance: Current monthly revenue is CNY ${(financialSummary.monthlyRevenueCents / 100).toFixed(2)} with ${financialSummary.paidSubscriptionCount} paid subscriptions.`,
+        `Compliance: Pending withdrawal exposure is CNY ${(financialSummary.pendingWithdrawalCents / 100).toFixed(2)} and should be reviewed with the tax filing package.`,
+        'System: Finance meeting summary and compliance action items were extracted.',
+      ];
 
-      setTimeout(() => {
-        setIsProcessing(false);
-        setSummary({
-          overview: "本次会议复盘了本季度资金情况及税务预期。核心关注：营销支出控制、海外收款凭证合规、以及下月研发外包税务筹划。",
-          actionItems: [
-            { id: 1, title: "准备海外收款(1,500 USD)相关的税务完税凭证", type: "tax", priority: "high" },
-            { id: 2, title: "复核本月公关类支出，调整下月预算预估表", type: "budget", priority: "medium" },
-            { id: 3, title: "为 Next 阶段的 5 万元研发外包拟定合同及税务要求", type: "compliance", priority: "medium" }
-          ]
-        });
-        toast('财务会议记录已分析完毕并同步至任务中心', 'success');
-        
-        // sync to task center
-        window.dispatchEvent(new CustomEvent('SYNC_CRM_TASKS', { 
-            detail: [
-                { id: `meeting-task-1-${Date.now()}`, title: "【合规】准备海外收款(1,500 USD)相关的税务完税凭证", dueDate: new Date(Date.now() + 86400000 * 2), priority: 'high', type: '财务合规审批' },
-                { id: `meeting-task-2-${Date.now()}`, title: "【预算】为 Next 阶段的 5 万元研发外包拟定合同及税务要求", dueDate: new Date(Date.now() + 86400000 * 5), priority: 'medium', type: '任务分配' }
-            ]
-        }));
-      }, 3000);
+      const meetingSummary = {
+        overview: "本次会议复盘了本季度资金情况及税务预期。核心关注：营销支出控制、海外收款凭证合规、以及下月研发外包税务筹划。",
+        actionItems: [
+          { id: 1, title: "准备海外收款(1,500 USD)相关的税务完税凭证", type: "tax", priority: "high" },
+          { id: 2, title: "复核本月公关类支出，调整下月预算预估表", type: "budget", priority: "medium" },
+          { id: 3, title: "为 Next 阶段的 5 万元研发外包拟定合同及税务要求", type: "compliance", priority: "medium" }
+        ]
+      };
+      const createdTasks = [
+        createWorkspaceTask({
+          title: "【合规】准备海外收款(1,500 USD)相关的税务完税凭证",
+          date: new Date(Date.now() + 86_400_000 * 2).toISOString().slice(0, 10),
+          priority: 'High',
+          type: '财务合规审批',
+          column: 'todo',
+          isAuto: true,
+        }, taskContext),
+        createWorkspaceTask({
+          title: "【预算】为 Next 阶段的 5 万元研发外包拟定合同及税务要求",
+          date: new Date(Date.now() + 86_400_000 * 5).toISOString().slice(0, 10),
+          priority: 'Medium',
+          type: '任务分配',
+          column: 'todo',
+          isAuto: true,
+        }, taskContext),
+      ];
+      setTranscript(nextTranscript);
+      setIsProcessing(false);
+      setSummary(meetingSummary);
+      logAuditEvent({
+        action: 'finance_meeting_summary_generate',
+        moduleId: 'finance',
+        targetType: 'module',
+        targetId: 'finance_meeting_assistant',
+        metadata: {
+          actionItemCount: meetingSummary.actionItems.length,
+          transcriptLines: nextTranscript.length,
+        },
+      }, { session });
+      logAuditEvent({
+        action: 'finance_compliance_task_sync',
+        moduleId: 'finance',
+        targetType: 'task',
+        targetId: createdTasks[0]?.id,
+        metadata: {
+          source: 'finance_meeting_assistant',
+          createdTaskCount: createdTasks.length,
+          taskTitles: createdTasks.map((task) => task.title),
+        },
+      }, { session });
+      window.dispatchEvent(new Event('activity_logged'));
+      toast('财务会议记录已分析完毕并同步至任务中心', 'success');
       return;
     }
 
-    // Start recording
     setIsRecording(true);
-    setTranscript([mockPhrases[0]]);
+    setTranscript([`System: Finance meeting recording started for ${session.workspace.name}.`]);
     setSummary(null);
-    
-    let index = 1;
-    const interval = setInterval(() => {
-      if (index < 4) {
-        setTranscript(prev => [...prev, mockPhrases[index]]);
-        index++;
-      } else {
-        clearInterval(interval);
-      }
-    }, 2000);
-    
-    // Stop after phrase 3 finishes
-    setTimeout(() => {
-        if (isRecording) {
-            clearInterval(interval);
-        }
-    }, 8000);
   };
 
   return (

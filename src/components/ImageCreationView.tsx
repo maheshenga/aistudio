@@ -1,11 +1,25 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ImageIcon, Wand2, Plus, Download, Sliders, Maximize2, RotateCcw, Copy, Trash2, Check, LayoutTemplate, Box, Settings2, ImagePlus, Globe } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createGenerationJob, failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { createWorkspaceAsset, recordWorkspaceAssetExport, type WorkspaceAsset } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
 import { FullscreenViewer } from './FullscreenViewer';
+import { GenerationFailureRecoveryPanel } from './GenerationFailureRecoveryPanel';
+
+const GENERATED_IMAGE_URL = 'https://images.unsplash.com/photo-1549298240-0d8e60513026?auto=format&fit=crop&w=1000&q=80';
 
 export function ImageCreationView() {
+  const session = useSaasSession();
+  const jobContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [resultAsset, setResultAsset] = useState<WorkspaceAsset | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const [activeModel, setActiveModel] = useState('Midjourney V6');
@@ -16,11 +30,127 @@ export function ImageCreationView() {
     if (!prompt.trim() || isGenerating) return;
     setIsGenerating(true);
     setResult(null);
+    setResultAsset(null);
 
-    setTimeout(() => {
+    const job = createGenerationJob({
+      title: `Image - ${activeModel}`,
+      prompt: prompt.trim(),
+      status: 'running',
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      moduleId: 'image',
+      progress: 0,
+      metadata: {
+        activeModel,
+        aspectRatio,
+        styleMode,
+      },
+    }, jobContext);
+    logAuditEvent({
+      action: 'generation_job_start',
+      moduleId: 'image',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        activeModel,
+        aspectRatio,
+        styleMode,
+      },
+    }, { session });
+
+    try {
+      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+      const asset = createWorkspaceAsset({
+        name: `image-${Date.now()}.jpg`,
+        type: 'image',
+        size: aspectRatio,
+        source: 'generated',
+        moduleId: 'image',
+        generationJobId: job.id,
+        url: GENERATED_IMAGE_URL,
+        previewUrl: GENERATED_IMAGE_URL,
+        tags: [activeModel, aspectRatio, styleMode],
+        metadata: {
+          prompt: prompt.trim(),
+          activeModel,
+          aspectRatio,
+          styleMode,
+        },
+      }, jobContext);
+      setResultAsset(asset);
+      createPricedWorkspaceUsageEvent({
+        moduleId: 'image',
+        pricingAction: 'generation',
+        kind: 'generation',
+        targetType: 'generation_job',
+        targetId: job.id,
+        providerKind: 'mock',
+        runtimeMode: 'web',
+        metadata: {
+          assetId: asset.id,
+          assetType: asset.type,
+          activeModel,
+          aspectRatio,
+          styleMode,
+        },
+      }, jobContext);
+      logAuditEvent({
+        action: 'generation_job_complete',
+        moduleId: 'image',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          generatedAsset: true,
+          assetType: 'image',
+          activeModel,
+        },
+      }, { session });
+      setResult(GENERATED_IMAGE_URL);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Image provider failed before returning an output.';
+      failGenerationJob(job.id, {
+        error: message,
+        metadata: { activeModel, aspectRatio, styleMode },
+      }, jobContext);
+      logAuditEvent({
+        action: 'generation_job_failed',
+        moduleId: 'image',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          activeModel,
+          aspectRatio,
+          styleMode,
+          error: message,
+        },
+      }, { session });
+    } finally {
       setIsGenerating(false);
-      setResult('https://images.unsplash.com/photo-1549298240-0d8e60513026?auto=format&fit=crop&w=1000&q=80');
-    }, 2000);
+    }
+  };
+
+  const handleDownloadResult = () => {
+    if (!resultAsset) return;
+    recordWorkspaceAssetExport({
+      asset: resultAsset,
+      moduleId: 'image',
+      format: 'jpg',
+      fileName: resultAsset.name,
+      sourceAction: 'download_original',
+      metered: true,
+      unitCount: 1,
+      metadata: {
+        pricingAction: 'export',
+        kind: 'export',
+        activeModel,
+        aspectRatio,
+        styleMode,
+      },
+    }, {
+      ...jobContext,
+      session,
+    });
+    window.dispatchEvent(new Event('activity_logged'));
   };
 
   return (
@@ -127,6 +257,9 @@ export function ImageCreationView() {
         </div>
 
         <div className="p-5 border-t border-[var(--border-color)] bg-[var(--bg-panel)]">
+           <div className="mb-4">
+             <GenerationFailureRecoveryPanel moduleId="image" session={session} context={jobContext} />
+           </div>
            <div className="flex items-center justify-between mb-3">
              <label className="text-[12px] font-black text-[var(--text-main)] uppercase tracking-wider flex items-center">
                <Globe className="icon-sm mr-1.5 text-blue-500" /> 提示词语言 / Prompt Language
@@ -182,7 +315,7 @@ export function ImageCreationView() {
                  <button onClick={() => setIsFullscreen(true)} className="bg-[var(--bg-panel)] text-[var(--text-main)] p-2.5 rounded-[var(--radius-lg)] shadow hover:scale-105 transition-transform" title="全屏看大图">
                    <Maximize2 className="icon-md" />
                  </button>
-                 <button className="bg-[var(--bg-panel)] text-[var(--text-main)] p-2.5 rounded-[var(--radius-lg)] shadow hover:scale-105 transition-transform" title="下载高质量图">
+                 <button onClick={handleDownloadResult} className="bg-[var(--bg-panel)] text-[var(--text-main)] p-2.5 rounded-[var(--radius-lg)] shadow hover:scale-105 transition-transform" title="下载高质量图">
                    <Download className="icon-md" />
                  </button>
                  <button className="bg-[var(--bg-panel)] text-[var(--text-main)] p-2.5 rounded-[var(--radius-lg)] shadow hover:scale-105 transition-transform" title="设为同款Seed垫图">

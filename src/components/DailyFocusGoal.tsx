@@ -1,47 +1,67 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Target, CheckCircle2 } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { getSetting, saveSetting } from '../lib/data/settingsRepository';
+import { calculateTaskCompletion, loadWorkspaceTasks } from '../lib/data/taskRepository';
 
 export function DailyFocusGoal() {
+  const session = useSaasSession();
+  const taskContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
+  const settingContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [goal, setGoal] = useState('');
   const [isSetting, setIsSetting] = useState(false);
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
-    const savedGoal = localStorage.getItem('daily_focus_goal');
+    const savedGoal = getSetting('daily_focus_goal', '', settingContext);
     if (savedGoal) {
       setGoal(savedGoal);
     } else {
       setIsSetting(true);
     }
-  }, []);
+  }, [settingContext]);
 
   // Sync tasks to progress
   useEffect(() => {
     const checkTasks = () => {
-      const stored = localStorage.getItem('tasks');
-      if (stored) {
-        try {
-          const tasks = JSON.parse(stored);
-          const total = tasks.length;
-          const completed = tasks.filter((t: any) => t.status === 'done').length;
-          setProgress(total === 0 ? 0 : Math.round((completed / total) * 100));
-        } catch(e) {}
-      }
+      const tasks = loadWorkspaceTasks(taskContext);
+      setProgress(calculateTaskCompletion(tasks).percent);
     };
+    const handleTasksUpdated = (event: Event) => {
+      const workspaceId = (event as CustomEvent<{ workspaceId?: string }>).detail?.workspaceId;
+      if (workspaceId && workspaceId !== taskContext.workspaceId) return;
+      checkTasks();
+    };
+
     checkTasks();
-    window.addEventListener('tasks_updated', checkTasks);
+    window.addEventListener('tasks_updated', handleTasksUpdated);
     // Also set an interval to catch out-of-band updates
     const interval = setInterval(checkTasks, 2000);
     return () => {
-      window.removeEventListener('tasks_updated', checkTasks);
+      window.removeEventListener('tasks_updated', handleTasksUpdated);
       clearInterval(interval);
     };
-  }, []);
+  }, [taskContext]);
 
   const saveGoal = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!goal.trim()) return;
-    localStorage.setItem('daily_focus_goal', goal);
+    const nextGoal = goal.trim();
+    if (!nextGoal) return;
+    saveSetting('daily_focus_goal', nextGoal, settingContext);
+    logAuditEvent({
+      action: 'settings_change',
+      targetType: 'settings',
+      targetId: 'daily_focus_goal',
+      metadata: {
+        key: 'daily_focus_goal',
+        valueLength: nextGoal.length,
+      },
+    }, { session });
+    setGoal(nextGoal);
     setIsSetting(false);
   };
 

@@ -1,5 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ImagePlus, Eraser, Scissors, Replace, Maximize, Sparkles, Maximize2, Download, Undo, Redo, ZoomIn, ZoomOut, UploadCloud, Move, Palette, MousePointer2, Settings2, Hand, Wand2, Lightbulb, Image as ImageIcon, Brush, Type, Layers, Sticker, History } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { createWorkspaceAsset } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
 import { FullscreenViewer } from './FullscreenViewer';
 
 type Tool = 'select' | 'erase' | 'remove_bg' | 'expand' | 'style' | 'relight' | 'enhance' | 'inpaint' | 'text_fx' | 'blend' | 'replace_text' | 'mockup';
@@ -38,9 +43,18 @@ const TOOLS: { id: Tool; name: string; icon: any; desc: string }[] = [
   { id: 'enhance', name: '画质超分', icon: Sparkles, desc: '低分辨率商品图无损高清放大与细节增强' },
 ];
 
+const SOURCE_IMAGE_URL = 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&q=80&w=1000';
+const EDITED_IMAGE_URL = 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&q=80&w=1600';
+
 export function ImageEditorView() {
+  const session = useSaasSession();
+  const repositoryContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [activeTool, setActiveTool] = useState<Tool>('remove_bg');
   const [hasImage, setHasImage] = useState(false);
+  const [sourceImageAssetId, setSourceImageAssetId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -82,20 +96,184 @@ export function ImageEditorView() {
   const [bgMode, setBgMode] = useState<'transparent' | 'white' | 'scene' | 'color'>('transparent');
   const [bgColor, setBgColor] = useState('#F0F0F0');
 
+  const dispatchActivityLogged = () => {
+    window.dispatchEvent(new Event('activity_logged'));
+  };
+
   const handleUpload = () => {
+    if (isProcessing) return;
     setIsProcessing(true);
-    setTimeout(() => {
-      setIsProcessing(false);
+    try {
+      const asset = createWorkspaceAsset({
+        name: `image-edit-source-${Date.now()}.jpg`,
+        type: 'image',
+        size: 'uploaded image',
+        source: 'uploaded',
+        moduleId: 'ai_image_edit',
+        url: SOURCE_IMAGE_URL,
+        previewUrl: SOURCE_IMAGE_URL,
+        tags: ['image-edit', 'source-image', activeTool],
+        metadata: {
+          operation: 'upload_source_image',
+          activeTool,
+        },
+      }, repositoryContext);
+      logAuditEvent({
+        action: 'asset_create',
+        moduleId: 'ai_image_edit',
+        targetType: 'asset',
+        targetId: asset.id,
+        metadata: {
+          assetType: 'image',
+          source: 'uploaded',
+          operation: 'upload_source_image',
+          activeTool,
+        },
+      }, { session });
+      setSourceImageAssetId(asset.id);
       setHasImage(true);
-    }, 1500);
+      dispatchActivityLogged();
+      showToast('源图已保存到工作区资产库');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '上传素材保存失败');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleApplyTool = () => {
+    if (!hasImage || isProcessing) return;
+    const tool = TOOLS.find(t => t.id === activeTool);
+    if (!tool) return;
+    const resolvedPrompt = prompt.trim() || tool.desc;
+    let jobId: string | null = null;
     setIsProcessing(true);
-    setTimeout(() => {
+    try {
+      const job = createGenerationJob({
+        title: `Image edit - ${tool.name}`,
+        prompt: resolvedPrompt,
+        status: 'running',
+        providerKind: 'mock',
+        runtimeMode: 'web',
+        moduleId: 'ai_image_edit',
+        agentId: 'image-editor-agent',
+        progress: 30,
+        metadata: {
+          activeTool,
+          toolName: tool.name,
+          sourceImageAssetId,
+          brushSize,
+          bgMode,
+          bgColor,
+        },
+      }, repositoryContext);
+      jobId = job.id;
+      logAuditEvent({
+        action: 'generation_job_start',
+        moduleId: 'ai_image_edit',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          activeTool,
+          toolName: tool.name,
+          sourceImageAssetId,
+          brushSize,
+          bgMode,
+          bgColor,
+        },
+      }, { session });
+
+      updateGenerationJob(job.id, {
+        status: 'succeeded',
+        progress: 100,
+        metadata: {
+          ...job.metadata,
+          result: 'edited_image_asset',
+        },
+      }, repositoryContext);
+      const asset = createWorkspaceAsset({
+        name: `image-edit-${activeTool}-${Date.now()}.jpg`,
+        type: 'image',
+        size: 'edited image',
+        source: 'generated',
+        moduleId: 'ai_image_edit',
+        generationJobId: job.id,
+        url: EDITED_IMAGE_URL,
+        previewUrl: EDITED_IMAGE_URL,
+        tags: ['image-edit', activeTool, tool.name],
+        metadata: {
+          prompt: resolvedPrompt,
+          activeTool,
+          toolName: tool.name,
+          sourceImageAssetId,
+          brushSize,
+          bgMode,
+          bgColor,
+        },
+      }, repositoryContext);
+      createPricedWorkspaceUsageEvent({
+        moduleId: 'ai_image_edit',
+        pricingAction: 'generation',
+        kind: 'generation',
+        targetType: 'generation_job',
+        targetId: job.id,
+        providerKind: 'mock',
+        runtimeMode: 'web',
+        metadata: {
+          assetId: asset.id,
+          assetType: asset.type,
+          activeTool,
+          toolName: tool.name,
+          sourceImageAssetId,
+        },
+      }, repositoryContext);
+      logAuditEvent({
+        action: 'generation_job_complete',
+        moduleId: 'ai_image_edit',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          assetId: asset.id,
+          assetType: 'image',
+          activeTool,
+          toolName: tool.name,
+        },
+      }, { session });
+      logAuditEvent({
+        action: 'asset_create',
+        moduleId: 'ai_image_edit',
+        targetType: 'asset',
+        targetId: asset.id,
+        metadata: {
+          generationJobId: job.id,
+          assetType: 'image',
+          source: 'generated',
+          activeTool,
+          toolName: tool.name,
+        },
+      }, { session });
+      dispatchActivityLogged();
+      showToast(`${tool.name}已应用，结果已保存到资产库`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '图像编辑任务失败';
+      if (jobId) {
+        updateGenerationJob(jobId, { status: 'failed', progress: 100, error: message }, repositoryContext);
+        logAuditEvent({
+          action: 'generation_job_failed',
+          moduleId: 'ai_image_edit',
+          targetType: 'generation_job',
+          targetId: jobId,
+          metadata: {
+            activeTool,
+            error: message,
+          },
+        }, { session });
+        dispatchActivityLogged();
+      }
+      showToast(message);
+    } finally {
       setIsProcessing(false);
-      // Process done
-    }, 2000);
+    }
   };
 
   return (

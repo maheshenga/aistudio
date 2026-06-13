@@ -1,11 +1,25 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Film, Play, Download, Wand2, Box, Sparkles, Video, Clapperboard, MonitorPlay, History, Activity, Share2, Scissors, Music, Layers, HardDrive, Maximize2 } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createGenerationJob, failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { createWorkspaceAsset, recordWorkspaceAssetExport, type WorkspaceAsset } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
 import { FullscreenViewer } from './FullscreenViewer';
+import { GenerationFailureRecoveryPanel } from './GenerationFailureRecoveryPanel';
+
+const GENERATED_VIDEO_URL = 'https://videos.pexels.com/video-files/3121459/3121459-uhd_2560_1440_24fps.mp4';
 
 export function VideoCreationView() {
+  const session = useSaasSession();
+  const jobContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [resultAsset, setResultAsset] = useState<WorkspaceAsset | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const [activeModel, setActiveModel] = useState('Sora (Preview)');
@@ -17,11 +31,136 @@ export function VideoCreationView() {
     if (!prompt.trim() || isGenerating) return;
     setIsGenerating(true);
     setResult(null);
+    setResultAsset(null);
 
-    setTimeout(() => {
+    const job = createGenerationJob({
+      title: `Video - ${activeModel}`,
+      prompt: prompt.trim(),
+      status: 'running',
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      moduleId: 'video',
+      progress: 0,
+      metadata: {
+        activeModel,
+        motionStrength,
+        cameraMovement,
+        duration,
+      },
+    }, jobContext);
+    logAuditEvent({
+      action: 'generation_job_start',
+      moduleId: 'video',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        activeModel,
+        motionStrength,
+        cameraMovement,
+        duration,
+      },
+    }, { session });
+
+    try {
+      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+      const asset = createWorkspaceAsset({
+        name: `video-${Date.now()}.mp4`,
+        type: 'video',
+        size: duration,
+        source: 'generated',
+        moduleId: 'video',
+        generationJobId: job.id,
+        url: GENERATED_VIDEO_URL,
+        previewUrl: GENERATED_VIDEO_URL,
+        tags: [activeModel, cameraMovement, duration],
+        metadata: {
+          prompt: prompt.trim(),
+          activeModel,
+          motionStrength,
+          cameraMovement,
+          duration,
+        },
+      }, jobContext);
+      setResultAsset(asset);
+      createPricedWorkspaceUsageEvent({
+        moduleId: 'video',
+        pricingAction: 'generation',
+        kind: 'generation',
+        targetType: 'generation_job',
+        targetId: job.id,
+        providerKind: 'mock',
+        runtimeMode: 'web',
+        metadata: {
+          assetId: asset.id,
+          assetType: asset.type,
+          activeModel,
+          duration,
+          motionStrength,
+        },
+      }, jobContext);
+      logAuditEvent({
+        action: 'generation_job_complete',
+        moduleId: 'video',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          generatedAsset: true,
+          assetType: 'video',
+          activeModel,
+          duration,
+        },
+      }, { session });
+      setResult(GENERATED_VIDEO_URL);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Video provider failed before returning an output.';
+      failGenerationJob(job.id, {
+        error: message,
+        metadata: {
+          activeModel,
+          motionStrength,
+          cameraMovement,
+          duration,
+        },
+      }, jobContext);
+      logAuditEvent({
+        action: 'generation_job_failed',
+        moduleId: 'video',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          activeModel,
+          duration,
+          error: message,
+        },
+      }, { session });
+    } finally {
       setIsGenerating(false);
-      setResult('https://videos.pexels.com/video-files/3121459/3121459-uhd_2560_1440_24fps.mp4');
-    }, 3000);
+    }
+  };
+
+  const handleDownloadResult = () => {
+    if (!resultAsset) return;
+    recordWorkspaceAssetExport({
+      asset: resultAsset,
+      moduleId: 'video',
+      format: 'mp4',
+      fileName: resultAsset.name,
+      sourceAction: 'download_original',
+      metered: true,
+      unitCount: 1,
+      metadata: {
+        pricingAction: 'export',
+        kind: 'export',
+        activeModel,
+        duration,
+        motionStrength,
+        cameraMovement,
+      },
+    }, {
+      ...jobContext,
+      session,
+    });
+    window.dispatchEvent(new Event('activity_logged'));
   };
 
   return (
@@ -162,6 +301,9 @@ export function VideoCreationView() {
         </div>
 
         <div className="p-5 border-t border-[var(--border-color)] bg-[var(--bg-panel)]">
+           <div className="mb-4">
+             <GenerationFailureRecoveryPanel moduleId="video" session={session} context={jobContext} />
+           </div>
            <textarea
              value={prompt}
              onChange={e => setPrompt(e.target.value)}
@@ -206,7 +348,7 @@ export function VideoCreationView() {
                  <button onClick={() => setIsFullscreen(true)} className="bg-[var(--bg-panel)] text-[var(--text-main)] p-2.5 rounded-[var(--radius-lg)] shadow hover:scale-105 transition-transform" title="全屏查看">
                    <Maximize2 className="icon-md" />
                  </button>
-                 <button className="bg-[var(--bg-panel)] text-[var(--text-main)] p-2.5 rounded-[var(--radius-lg)] shadow hover:scale-105 transition-transform" title="下载无水印原画">
+                 <button onClick={handleDownloadResult} className="bg-[var(--bg-panel)] text-[var(--text-main)] p-2.5 rounded-[var(--radius-lg)] shadow hover:scale-105 transition-transform" title="下载无水印原画">
                    <Download className="icon-md" />
                  </button>
                  <button className="bg-[var(--bg-panel)] text-[var(--text-main)] p-2.5 rounded-[var(--radius-lg)] shadow hover:scale-105 transition-transform" title="进入剪辑台">

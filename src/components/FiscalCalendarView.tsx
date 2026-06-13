@@ -1,92 +1,42 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Calendar, Tag, Info, CalendarCheck, CalendarIcon, ChevronLeft, ChevronRight, Clock, AlertTriangle, FileText, CheckSquare, Plus, Bell } from 'lucide-react';
 import { toast } from './Toast';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import {
+  loadWorkspaceTaxEvents,
+  seedWorkspaceTaxEvents,
+  type WorkspaceTaxEvent,
+} from '../lib/data/taxEventRepository';
+import { createWorkspaceTask } from '../lib/data/taskRepository';
 
-export interface TaxEvent {
-  id: string;
-  date: string; // YYYY-MM-DD
-  title: string;
-  type: 'tax_deadline' | 'audit_window' | 'invoice_due';
-  description: string;
-  summary: string;
-  amount?: string;
-  status: 'pending' | 'completed' | 'urgent';
-  daysUntil?: number;
-}
-
-const generateMockEvents = (): TaxEvent[] => {
-  const today = new Date();
-  
-  // Create some dates relative to today
-  const addDays = (days: number) => {
-    const d = new Date(today);
-    d.setDate(today.getDate() + days);
-    return d.toISOString().split('T')[0];
-  };
-
-  return [
-    {
-      id: 'e1',
-      date: addDays(3),
-      title: 'Q2 企业所得税预缴',
-      type: 'tax_deadline',
-      description: '需完成季度所得税预估与申报',
-      summary: '相关交易：本季度销项专票核开金额共计 ¥ 50,000.00，实际进项抵扣 ¥ 3,650.00。请确保所有可抵扣发票已归档。',
-      amount: '¥ 12,450.00',
-      status: 'urgent',
-      daysUntil: 3
-    },
-    {
-      id: 'e2',
-      date: addDays(10),
-      title: '年度高新企业复审',
-      type: 'audit_window',
-      description: '准备并提交三年内研发费用相关凭证',
-      summary: '相关交易：研发加计扣除专项，已归集研发外包支出共计 ¥ 112,000.00。',
-      status: 'pending',
-      daysUntil: 10
-    },
-    {
-      id: 'e5',
-      date: addDays(7),
-      title: '增值税申报预警',
-      type: 'tax_deadline',
-      description: '检查并确认本月所有进销项发票',
-      summary: '相关交易：本月已收到进项发票未认证金额 ¥ 8,500.00。',
-      amount: '¥ 8,500.00',
-      status: 'pending',
-      daysUntil: 7
-    },
-    {
-      id: 'e3',
-      date: addDays(1),
-      title: 'Stripe 跨境汇款进项认证',
-      type: 'invoice_due',
-      description: '海关完税凭证电子划拨核对外汇流向',
-      summary: '相关交易：包含 1,500 USD (按汇率 7.30 折合 ¥ 10,950.00)。',
-      amount: '¥ 10,950.00',
-      status: 'pending',
-      daysUntil: 1
-    },
-    {
-      id: 'e4',
-      date: addDays(-2),
-      title: '上月员工个税代扣代缴',
-      type: 'tax_deadline',
-      description: '已完成全员薪金薪酬核算与纳税申报',
-      summary: '相关交易：公司总薪酬支出 ¥ 125,000.00。',
-      status: 'completed',
-      daysUntil: -2
-    }
-  ];
-};
-
-export const MOCK_EVENTS = generateMockEvents();
+export type TaxEvent = WorkspaceTaxEvent;
 
 export function FiscalCalendarView() {
+  const session = useSaasSession();
+  const taxEventContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
+  const taskContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
   const [hoveredEvent, setHoveredEvent] = useState<TaxEvent | null>(null);
+  const [taxEvents, setTaxEvents] = useState<TaxEvent[]>(() => seedWorkspaceTaxEvents(taxEventContext));
+
+  const refreshTaxEvents = useCallback(() => {
+    setTaxEvents(loadWorkspaceTaxEvents(taxEventContext));
+  }, [taxEventContext]);
+
+  useEffect(() => {
+    setTaxEvents(seedWorkspaceTaxEvents(taxEventContext));
+    setSelectedEvents([]);
+
+    const handleTaxEventsUpdated = (event: Event) => {
+      const workspaceId = (event as CustomEvent<{ workspaceId?: string }>).detail?.workspaceId;
+      if (workspaceId && workspaceId !== taxEventContext.workspaceId) return;
+      refreshTaxEvents();
+    };
+
+    window.addEventListener('tax_events_updated', handleTaxEventsUpdated);
+    return () => window.removeEventListener('tax_events_updated', handleTaxEventsUpdated);
+  }, [refreshTaxEvents, taxEventContext]);
 
   const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
   const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay();
@@ -101,7 +51,7 @@ export function FiscalCalendarView() {
 
   const getEventsForDate = (day: number) => {
     const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return MOCK_EVENTS.filter(e => e.date === dateStr);
+    return taxEvents.filter(e => e.date === dateStr);
   };
 
   const toggleEventSelection = (eventId: string, e: React.MouseEvent) => {
@@ -118,7 +68,20 @@ export function FiscalCalendarView() {
       toast('请先选择事项', 'info');
       return;
     }
-    toast(`已将 ${selectedEvents.length} 个税务事项同步至 TaskCenter，为您自动建立提醒`, 'success');
+
+    const selectedTaxEvents = taxEvents.filter((event) => selectedEvents.includes(event.id));
+    selectedTaxEvents.forEach((event) => {
+      createWorkspaceTask({
+        title: `[Tax] ${event.title}`,
+        column: 'todo',
+        priority: event.status === 'urgent' ? 'High' : 'Medium',
+        type: event.type,
+        date: event.date,
+        isAuto: true,
+      }, taskContext);
+    });
+
+    toast(`已将 ${selectedTaxEvents.length} 个税务事项同步至 TaskCenter，为您自动建立提醒`, 'success');
     setSelectedEvents([]);
   };
 

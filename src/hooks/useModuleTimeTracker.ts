@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react';
+import type { ModuleId } from '../types';
+import { incrementModuleUsage } from '../lib/data/usageRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
-interface ModuleTime {
-  [moduleId: string]: number; // seconds
-}
-
-export function useModuleTimeTracker(activeModule: string) {
+export function useModuleTimeTracker(activeModule: ModuleId) {
+  const session = useSaasSession();
   const currentModule = useRef(activeModule);
   const startTime = useRef(Date.now());
 
@@ -16,11 +16,10 @@ export function useModuleTimeTracker(activeModule: string) {
       
       if (elapsedSeconds > 0) {
         try {
-          const stored = localStorage.getItem('module_time_tracker');
-          const data: ModuleTime = stored ? JSON.parse(stored) : {};
-          
-          data[currentModule.current] = (data[currentModule.current] || 0) + elapsedSeconds;
-          localStorage.setItem('module_time_tracker', JSON.stringify(data));
+          incrementModuleUsage(currentModule.current, elapsedSeconds, {
+            workspaceId: session.workspace.id,
+            userId: session.user.id,
+          });
         } catch (e) {
           console.error("Failed to save module time", e);
         }
@@ -40,5 +39,5 @@ export function useModuleTimeTracker(activeModule: string) {
       clearInterval(interval);
       saveTime();
     };
-  }, [activeModule]);
+  }, [activeModule, session.user.id, session.workspace.id]);
 }

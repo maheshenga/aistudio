@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, Network, MemoryStick, Cpu, Clock, CheckCircle2, AlertTriangle, ArrowRight, Settings, Download, RotateCw, X, ShieldAlert, Edit3, Library, ListTodo, History, AlertCircle, Waypoints, Target } from 'lucide-react';
+import { Activity, Network, MemoryStick, Cpu, Clock, CheckCircle2, AlertTriangle, ArrowRight, Settings, Download, RotateCw, X, ShieldAlert, Edit3, Library, ListTodo, History, AlertCircle, Waypoints, Target, MonitorCog, Server, WifiOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from './Toast';
 import { AgentNodeDiagram } from './AgentNodeDiagram';
@@ -10,6 +10,7 @@ import { BatchTaskSchedulerModal } from './BatchTaskSchedulerModal';
 import { LatencyProjectionChart } from './LatencyProjectionChart';
 import { AutoScaleConfigModal } from './AutoScaleConfigModal';
 import { AgentWeeklyHeatmap } from './AgentWeeklyHeatmap';
+import { useAgentRuntimeStatus } from '../runtime/useAgentRuntimeStatus.ts';
 
 interface AgentStatus {
    id: string;
@@ -26,6 +27,7 @@ interface AgentStatus {
 }
 
 export function AgentStatusDashboardView() {
+   const { status: runtimeStatus, isLoading: isRuntimeLoading } = useAgentRuntimeStatus();
    const [isConfigOpen, setIsConfigOpen] = useState(false);
    const [isSkillsOpen, setIsSkillsOpen] = useState(false);
    const [isBatchTaskOpen, setIsBatchTaskOpen] = useState(false);
@@ -141,6 +143,42 @@ export function AgentStatusDashboardView() {
                  导出报表
               </button>
            </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
+          <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-4">
+            <div className="text-[11px] font-black text-[var(--text-muted)] uppercase flex items-center">
+              <MonitorCog className="icon-sm mr-1.5" />
+              Runtime Mode
+            </div>
+            <div className="text-lg font-black text-[var(--text-main)] mt-2">
+              {runtimeStatus?.mode ?? (isRuntimeLoading ? 'loading' : 'web')}
+            </div>
+          </div>
+          <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-4">
+            <div className="text-[11px] font-black text-[var(--text-muted)] uppercase flex items-center">
+              <Server className="icon-sm mr-1.5" />
+              Runtime Health
+            </div>
+            <div className="text-lg font-black text-[var(--text-main)] mt-2">
+              {runtimeStatus?.health ?? 'available'}
+            </div>
+          </div>
+          <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-4">
+            <div className="text-[11px] font-black text-[var(--text-muted)] uppercase">CLI Providers</div>
+            <div className="text-sm font-bold text-[var(--text-main)] mt-2">
+              {runtimeStatus?.cliProviders.join(', ') || 'web'}
+            </div>
+          </div>
+          <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-4">
+            <div className="text-[11px] font-black text-[var(--text-muted)] uppercase flex items-center">
+              <WifiOff className="icon-sm mr-1.5" />
+              Bridge
+            </div>
+            <div className="text-sm font-bold text-[var(--text-main)] mt-2">
+              {runtimeStatus?.bridgeAvailable ? 'desktop bridge connected' : 'browser/web only'}
+            </div>
+          </div>
         </div>
 
         <AgentNodeDiagram canaryEnabled={canaryEnabled} />

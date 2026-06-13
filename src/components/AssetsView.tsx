@@ -1,19 +1,33 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Upload, Search, Filter, Folder, Image as ImageIcon, Video, Music, FileText, MoreVertical, Grid, List, Download, Check, X, Maximize2, FileOutput, Trash2, AlertTriangle, Tag, UserPlus } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { toast } from './Toast';
-
-const initialAssets = [
-  { id: 1, name: 'Brand_Logo_V2.png', type: 'image', size: '2.4 MB', date: '2026-05-28' },
-  { id: 2, name: 'Product_Intro_Draft.mp4', type: 'video', size: '145.8 MB', date: '2026-05-27' },
-  { id: 3, name: 'Background_Music_01.mp3', type: 'audio', size: '4.2 MB', date: '2026-05-25' },
-  { id: 4, name: 'Q3_Marketing_Copy.docx', type: 'document', size: '1.1 MB', date: '2026-05-24' },
-  { id: 5, name: 'Hero_Banner_Concept.jpg', type: 'image', size: '3.8 MB', date: '2026-05-22' },
-  { id: 6, name: 'UI_Mockups_Final.png', type: 'image', size: '5.6 MB', date: '2026-05-20' },
-  { id: 7, name: 'Voiceover_Take2.wav', type: 'audio', size: '12.4 MB', date: '2026-05-18' },
-  { id: 8, name: 'CEO_Greeting.mp4', type: 'video', size: '89.5 MB', date: '2026-05-15' },
-];
+import { useWorkspaceAssets } from '../hooks/useWorkspaceAssets';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import {
+  createWorkspaceAsset,
+  deleteWorkspaceAssets,
+  type WorkspaceAsset,
+} from '../lib/data/assetRepository';
+import {
+  canStartBillableGeneration,
+  getPlanMonthlyAllowance,
+  loadWorkspaceBillingPlans,
+} from '../lib/data/billingRepository';
+import {
+  loadWorkspaceFinancialRecords,
+  sumWorkspacePromotionalCredits,
+  sumWorkspaceRechargeCredits,
+} from '../lib/data/financialRepository';
+import { listGenerationJobs } from '../lib/data/generationJobRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import {
+  createWorkspaceUsageEvent,
+  listWorkspaceUsageEvents,
+  loadModuleUsage,
+} from '../lib/data/usageRepository';
+import { buildPermissionDeniedMetadata, hasWorkspacePermission } from '../saas/permissions';
 
 const fileTypes = [
   { id: 'all', label: '全部文件' },
@@ -24,32 +38,167 @@ const fileTypes = [
 ];
 
 export function AssetsView() {
+  const session = useSaasSession();
+  const assetContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const canManageAssets = hasWorkspacePermission(session.membership.role, 'assets.manage');
+  const assets = useWorkspaceAssets();
   const [activeFilter, setActiveFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedAssets, setSelectedAssets] = useState<number[]>([]);
+  const [selectedAssets, setSelectedAssets] = useState<string[]>([]);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isCleanupOpen, setIsCleanupOpen] = useState(false);
   const [isCleaning, setIsCleaning] = useState(false);
 
-  const toggleSelection = (id: number, e: React.MouseEvent) => {
+  const toggleSelection = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setSelectedAssets(prev => prev.includes(id) ? prev.filter(a => a !== id) : [...prev, id]);
   };
 
-  const handleExportCSV = () => {
-    if (selectedAssets.length === 0) return;
-    
-    const headers = ['ID', 'File Name', 'Type', 'Size', 'Date'];
-    const rows = selectedAssets.map(id => {
-      const asset = initialAssets.find(a => a.id === id);
-      return asset ? `${asset.id},${asset.name},${asset.type},${asset.size},${asset.date}` : '';
+  const handleAssetDragStart = (event: React.DragEvent, asset: WorkspaceAsset) => {
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData('text/plain', asset.id);
+    event.dataTransfer.setData('application/x-aistudio-asset', asset.id);
+  };
+
+  const formatAssetDate = (asset: WorkspaceAsset) => new Date(asset.updatedAt).toISOString().slice(0, 10);
+
+  const logAssetAudit = (
+    action: 'asset_create' | 'asset_delete' | 'asset_export',
+    metadata: Record<string, unknown>,
+    targetId?: string,
+  ) => {
+    logAuditEvent({
+      action,
+      moduleId: 'assets',
+      targetType: 'asset',
+      targetId,
+      metadata,
+    }, { session });
+  };
+
+  const logAssetPermissionDenied = (
+    operation: string,
+    targetId = operation,
+    metadata: Record<string, unknown> = {},
+  ) => {
+    logAuditEvent({
+      action: 'permission_denied',
+      moduleId: 'assets',
+      targetType: 'asset',
+      targetId,
+      metadata: {
+        ...buildPermissionDeniedMetadata({
+          role: session.membership.role,
+          permission: 'assets.manage',
+          operation,
+          moduleId: 'assets',
+        }),
+        ...metadata,
+      },
+    }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+  };
+
+  const estimateAssetExportCredits = (assetCount: number) => Math.max(1, Math.ceil(assetCount / 5));
+
+  const preflightAssetExport = (format: 'csv' | 'zip', selectedAssetRecords: WorkspaceAsset[]) => {
+    const requestedCredits = estimateAssetExportCredits(selectedAssetRecords.length);
+    const billingPlans = loadWorkspaceBillingPlans({ workspaceId: session.workspace.id });
+    const financialRecords = loadWorkspaceFinancialRecords({ workspaceId: session.workspace.id });
+    const rechargeCredits =
+      sumWorkspaceRechargeCredits(financialRecords) + sumWorkspacePromotionalCredits(financialRecords);
+    const quota = canStartBillableGeneration({
+      monthlyAllowance: getPlanMonthlyAllowance(session.workspace.plan, billingPlans),
+      rechargeCredits,
+      generationJobs: listGenerationJobs(assetContext),
+      moduleUsage: loadModuleUsage(assetContext),
+      usageEvents: listWorkspaceUsageEvents(assetContext),
+      requestedCredits,
     });
-    
-    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" 
+
+    if (quota.allowed) return true;
+
+    createWorkspaceUsageEvent({
+      moduleId: 'assets',
+      kind: 'quota_block',
+      targetType: 'asset',
+      targetId: selectedAssetRecords.length === 1 ? selectedAssetRecords[0]?.id : 'asset_export',
+      credits: 0,
+      metadata: {
+        format,
+        reason: 'quota_exceeded',
+        requestedCredits: quota.requestedCredits,
+        remainingCredits: quota.remainingCredits,
+        overageCredits: quota.overageCredits,
+        assetCount: selectedAssetRecords.length,
+        assetIds: selectedAssetRecords.map((asset) => asset.id),
+      },
+    }, assetContext);
+    logAuditEvent({
+      action: 'general',
+      moduleId: 'billing',
+      targetType: 'workspace',
+      targetId: session.workspace.id,
+      metadata: {
+        operation: 'asset_export_quota_block',
+        format,
+        requestedCredits: quota.requestedCredits,
+        remainingCredits: quota.remainingCredits,
+        overageCredits: quota.overageCredits,
+        assetCount: selectedAssetRecords.length,
+      },
+    }, { session });
+    toast(`算力额度不足：导出需要 ${quota.requestedCredits} 点，当前剩余 ${quota.remainingCredits} 点。`, 'warning');
+    return false;
+  };
+
+  const recordAssetExportUsage = (format: 'csv' | 'zip', selectedAssetRecords: WorkspaceAsset[]) => {
+    createWorkspaceUsageEvent({
+      moduleId: 'assets',
+      kind: 'export',
+      targetType: 'asset',
+      targetId: selectedAssetRecords.length === 1 ? selectedAssetRecords[0]?.id : 'asset_export',
+      credits: estimateAssetExportCredits(selectedAssetRecords.length),
+      metadata: {
+        format,
+        assetCount: selectedAssetRecords.length,
+        assetIds: selectedAssetRecords.map((asset) => asset.id),
+      },
+    }, assetContext);
+  };
+
+  const requireAssetManagement = (
+    operation = 'asset_mutation',
+    targetId = operation,
+    metadata: Record<string, unknown> = {},
+  ) => {
+    if (canManageAssets) return true;
+    logAssetPermissionDenied(operation, targetId, metadata);
+    toast('当前角色没有资产管理权限', 'warning');
+    return false;
+  };
+
+  const handleExportCSV = () => {
+    if (!requireAssetManagement('asset_export', 'asset_export', { format: 'csv', selectedAssetCount: selectedAssets.length })) return;
+    if (selectedAssets.length === 0) return;
+    const selectedAssetRecords = selectedAssets
+      .map(id => assets.find(a => a.id === id))
+      .filter((asset): asset is WorkspaceAsset => Boolean(asset));
+    if (!preflightAssetExport('csv', selectedAssetRecords)) return;
+
+    const headers = ['ID', 'File Name', 'Type', 'Size', 'Date'];
+    const rows = selectedAssetRecords.map(asset => (
+      `${asset.id},${asset.name},${asset.type},${asset.size},${formatAssetDate(asset)}`
+    ));
+
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF"
       + headers.join(',') + "\n"
       + rows.join("\n");
-      
+
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -57,31 +206,124 @@ export function AssetsView() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    logAssetAudit('asset_export', {
+      format: 'csv',
+      assetCount: selectedAssetRecords.length,
+      assetIds: selectedAssetRecords.map(asset => asset.id),
+    }, selectedAssetRecords.length === 1 ? selectedAssetRecords[0]?.id : undefined);
+    recordAssetExportUsage('csv', selectedAssetRecords);
     setSelectedAssets([]);
   };
 
   const handleBulkDownload = async () => {
+    if (!requireAssetManagement('asset_export', 'asset_export', { format: 'zip', selectedAssetCount: selectedAssets.length })) return;
     if (selectedAssets.length === 0) return;
     setIsDownloading(true);
-    
+
     try {
       const zip = new JSZip();
-      
-      selectedAssets.forEach(id => {
-        const asset = initialAssets.find(a => a.id === id);
-        if (asset) {
-          zip.file(asset.name + '.txt', 'Mock file content for ' + asset.name);
+
+      const selectedAssetRecords = selectedAssets
+        .map(id => assets.find(a => a.id === id))
+        .filter((asset): asset is WorkspaceAsset => Boolean(asset));
+      if (!preflightAssetExport('zip', selectedAssetRecords)) return;
+
+      const manifest = selectedAssetRecords.map((asset) => ({
+        id: asset.id,
+        name: asset.name,
+        type: asset.type,
+        size: asset.size,
+        source: asset.source,
+        moduleId: asset.moduleId,
+        tags: asset.tags,
+        createdAt: new Date(asset.createdAt).toISOString(),
+        updatedAt: new Date(asset.updatedAt).toISOString(),
+        downloadUrl: asset.url ?? asset.previewUrl ?? null,
+        generationJobId: asset.generationJobId ?? null,
+      }));
+
+      zip.file('asset_manifest.json', JSON.stringify({
+        workspaceId: session.workspace.id,
+        exportedAt: new Date().toISOString(),
+        assetCount: manifest.length,
+        assets: manifest,
+      }, null, 2));
+
+      selectedAssetRecords.forEach(asset => {
+        const assetFolder = zip.folder(`assets/${asset.id}`);
+        if (!assetFolder) return;
+        const downloadUrl = asset.url ?? asset.previewUrl ?? null;
+        assetFolder.file('metadata.json', JSON.stringify({
+          id: asset.id,
+          name: asset.name,
+          type: asset.type,
+          size: asset.size,
+          source: asset.source,
+          moduleId: asset.moduleId,
+          tags: asset.tags,
+          downloadUrl,
+          previewUrl: asset.previewUrl ?? null,
+          generationJobId: asset.generationJobId ?? null,
+          metadata: asset.metadata,
+          createdAt: new Date(asset.createdAt).toISOString(),
+          updatedAt: new Date(asset.updatedAt).toISOString(),
+          lastAccessedAt: asset.lastAccessedAt ? new Date(asset.lastAccessedAt).toISOString() : null,
+        }, null, 2));
+        if (downloadUrl) {
+          assetFolder.file('downloadUrl.txt', downloadUrl);
         }
       });
-      
+
       const content = await zip.generateAsync({ type: 'blob' });
       saveAs(content, 'assets_download.zip');
+      logAssetAudit('asset_export', {
+        format: 'zip',
+        assetCount: selectedAssetRecords.length,
+        assetIds: selectedAssetRecords.map(asset => asset.id),
+        manifest: true,
+      }, selectedAssetRecords.length === 1 ? selectedAssetRecords[0]?.id : undefined);
+      recordAssetExportUsage('zip', selectedAssetRecords);
     } catch (e) {
       console.error('ZIP creation failed', e);
     } finally {
       setIsDownloading(false);
       setSelectedAssets([]);
     }
+  };
+
+  const handleCreateUploadPlaceholder = () => {
+    if (!requireAssetManagement('asset_create', 'asset_upload_placeholder')) return;
+    const asset = createWorkspaceAsset(
+      {
+        name: `Uploaded_Asset_${assets.length + 1}.png`,
+        type: 'image',
+        size: '0 KB',
+        source: 'uploaded',
+        moduleId: 'assets',
+        tags: ['upload'],
+      },
+      assetContext,
+    );
+    logAssetAudit('asset_create', {
+      name: asset.name,
+      type: asset.type,
+      size: asset.size,
+      source: asset.source,
+    }, asset.id);
+    toast(`Created asset record: ${asset.name}`, 'success');
+  };
+
+  const handleDeleteSelected = () => {
+    if (!requireAssetManagement('asset_delete', 'asset_delete', { selectedAssetCount: selectedAssets.length })) return;
+    if (selectedAssets.length === 0) return;
+    const assetIds = [...selectedAssets];
+    deleteWorkspaceAssets(selectedAssets, assetContext);
+    logAssetAudit('asset_delete', {
+      assetCount: assetIds.length,
+      assetIds,
+    }, assetIds.length === 1 ? assetIds[0] : undefined);
+    toast(`Deleted ${selectedAssets.length} assets`, 'success');
+    setSelectedAssets([]);
   };
 
   const getIcon = (type: string) => {
@@ -94,7 +336,7 @@ export function AssetsView() {
     }
   };
 
-  const filteredAssets = initialAssets.filter(asset => {
+  const filteredAssets = assets.filter(asset => {
     const matchesFilter = activeFilter === 'all' || asset.type === activeFilter;
     const matchesSearch = asset.name.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesFilter && matchesSearch;
@@ -105,7 +347,12 @@ export function AssetsView() {
       {/* Sidebar Filters */}
       <div className="w-[280px] bg-[var(--bg-panel)] border-r border-[var(--border-color)] shadow-sm flex flex-col flex-shrink-0 relative z-10 transition-all">
         <div className="p-5 border-b border-[var(--border-color)]">
-          <button className="w-full flex items-center justify-center space-x-2 bg-[var(--color-primary)] hover:bg-blue-700 text-white px-4 py-3 rounded-[var(--radius-lg)] font-bold transition-colors shadow-sm">
+          <button
+            onClick={handleCreateUploadPlaceholder}
+            disabled={!canManageAssets}
+            title={canManageAssets ? undefined : '当前角色没有资产管理权限'}
+            className="w-full flex items-center justify-center space-x-2 bg-[var(--color-primary)] hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed text-white px-4 py-3 rounded-[var(--radius-lg)] font-bold transition-colors shadow-sm"
+          >
             <Upload className="w-[18px] h-[18px]" />
             <span>上传素材或文件夹</span>
           </button>
@@ -160,9 +407,14 @@ export function AssetsView() {
           </div>
           <div className="flex flex-col gap-2">
             <button className="w-full py-2 bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-lg text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50 transition-colors">扩容空间</button>
-            <button 
-              onClick={() => setIsCleanupOpen(true)}
-              className="w-full py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-sm font-bold shadow-sm hover:bg-amber-100 transition-colors flex items-center justify-center gap-2"
+            <button
+              onClick={() => {
+                if (!requireAssetManagement()) return;
+                setIsCleanupOpen(true);
+              }}
+              disabled={!canManageAssets}
+              title={canManageAssets ? undefined : '当前角色没有资产管理权限'}
+              className="w-full py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-sm font-bold shadow-sm hover:bg-amber-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
             >
               <Trash2 className="icon-sm" />
               <span>清理临时文件</span>
@@ -211,7 +463,7 @@ export function AssetsView() {
             {selectedAssets.length > 0 && (
               <div className="flex items-center gap-3">
                 {selectedAssets.length >= 2 && (
-                  <button 
+                  <button
                     onClick={() => setIsPreviewOpen(true)}
                     className="flex items-center space-x-2 bg-[var(--bg-panel)] border border-[var(--border-color)] hover:bg-gray-50 text-[var(--text-main)] px-4 py-2 rounded-[var(--radius-lg)] text-sm font-bold shadow-sm transition-colors animate-in fade-in zoom-in duration-200"
                   >
@@ -219,38 +471,48 @@ export function AssetsView() {
                     <span>对比预览</span>
                   </button>
                 )}
-                <button 
-                  onClick={() => toast(`Added labels to ${selectedAssets.length} assets`, 'success')}
-                  className="flex items-center space-x-2 bg-[var(--bg-panel)] border border-[var(--border-color)] hover:bg-gray-50 text-[var(--text-main)] px-4 py-2 rounded-[var(--radius-lg)] text-sm font-bold shadow-sm transition-colors animate-in fade-in zoom-in duration-200"
+                <button
+                  onClick={() => {
+                    if (!requireAssetManagement()) return;
+                    toast(`Added labels to ${selectedAssets.length} assets`, 'success');
+                  }}
+                  disabled={!canManageAssets}
+                  className="flex items-center space-x-2 bg-[var(--bg-panel)] border border-[var(--border-color)] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed text-[var(--text-main)] px-4 py-2 rounded-[var(--radius-lg)] text-sm font-bold shadow-sm transition-colors animate-in fade-in zoom-in duration-200"
                 >
                   <Tag className="icon-sm" />
                   <span>Label</span>
                 </button>
-                <button 
-                  onClick={() => toast(`Assigned ${selectedAssets.length} assets`, 'success')}
-                  className="flex items-center space-x-2 bg-[var(--bg-panel)] border border-[var(--border-color)] hover:bg-gray-50 text-[var(--text-main)] px-4 py-2 rounded-[var(--radius-lg)] text-sm font-bold shadow-sm transition-colors animate-in fade-in zoom-in duration-200"
+                <button
+                  onClick={() => {
+                    if (!requireAssetManagement()) return;
+                    toast(`Assigned ${selectedAssets.length} assets`, 'success');
+                  }}
+                  disabled={!canManageAssets}
+                  className="flex items-center space-x-2 bg-[var(--bg-panel)] border border-[var(--border-color)] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed text-[var(--text-main)] px-4 py-2 rounded-[var(--radius-lg)] text-sm font-bold shadow-sm transition-colors animate-in fade-in zoom-in duration-200"
                 >
                   <UserPlus className="icon-sm" />
                   <span>Assign</span>
                 </button>
-                <button 
-                  onClick={() => toast(`Deleted ${selectedAssets.length} assets`, 'success')}
-                  className="flex items-center space-x-2 bg-[var(--bg-panel)] border border-[var(--border-color)] hover:bg-red-50 text-red-600 px-4 py-2 rounded-[var(--radius-lg)] text-sm font-bold shadow-sm transition-colors animate-in fade-in zoom-in duration-200"
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={!canManageAssets}
+                  className="flex items-center space-x-2 bg-[var(--bg-panel)] border border-[var(--border-color)] hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed text-red-600 px-4 py-2 rounded-[var(--radius-lg)] text-sm font-bold shadow-sm transition-colors animate-in fade-in zoom-in duration-200"
                 >
                   <Trash2 className="icon-sm" />
                   <span>Delete</span>
                 </button>
                 <div className="w-px h-6 bg-gray-300 mx-1"></div>
-                <button 
+                <button
                   onClick={handleExportCSV}
-                  className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-[var(--radius-lg)] text-sm font-bold shadow-sm transition-colors animate-in fade-in zoom-in duration-200"
+                  disabled={!canManageAssets}
+                  className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-[var(--radius-lg)] text-sm font-bold shadow-sm transition-colors animate-in fade-in zoom-in duration-200"
                 >
                   <FileOutput className="icon-sm" />
                   <span>导出元数据 CSV</span>
                 </button>
-                <button 
+                <button
                   onClick={handleBulkDownload}
-                  disabled={isDownloading}
+                  disabled={isDownloading || !canManageAssets}
                   className="flex items-center space-x-2 bg-[var(--color-primary)] hover:bg-blue-700 disabled:bg-blue-400 text-white px-4 py-2 rounded-[var(--radius-lg)] text-sm font-bold shadow-sm transition-colors animate-in fade-in zoom-in duration-200"
                 >
                   <Download className="icon-sm" />
@@ -263,6 +525,8 @@ export function AssetsView() {
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-[var(--spacing-md)]">
               {filteredAssets.map((asset) => (
                 <div key={asset.id} 
+                     draggable
+                     onDragStart={(e) => handleAssetDragStart(e, asset)}
                      onClick={(e) => toggleSelection(asset.id, e)}
                      className={`bg-[var(--bg-panel)] rounded-[20px] border ${selectedAssets.includes(asset.id) ? 'border-blue-500 ring-4 ring-blue-50' : 'border-[var(--border-color)]'} overflow-hidden shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 group flex flex-col cursor-pointer relative animate-in fade-in zoom-in-95 duration-200`}>
                   
@@ -281,7 +545,7 @@ export function AssetsView() {
                     <h4 className="text-[14px] font-bold text-[var(--text-main)] truncate pr-2 group-hover:text-[var(--color-primary)] transition-colors leading-tight mb-2" title={asset.name}>{asset.name}</h4>
                     <div className="mt-auto flex items-center justify-between text-[12px] text-[var(--text-muted)] font-medium">
                       <span className="bg-gray-100 px-2 py-0.5 rounded-md">{asset.size}</span>
-                      <span>{asset.date}</span>
+                      <span>{formatAssetDate(asset)}</span>
                     </div>
                   </div>
                 </div>
@@ -314,7 +578,7 @@ export function AssetsView() {
             <div className="flex-1 p-[var(--spacing-lg)] overflow-hidden">
                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[var(--spacing-md)] h-full overflow-y-auto no-scrollbar pb-6">
                   {selectedAssets.map(id => {
-                     const asset = initialAssets.find(a => a.id === id);
+                     const asset = assets.find(a => a.id === id);
                      if (!asset) return null;
                      return (
                        <div key={asset.id} className="bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] overflow-hidden flex flex-col shadow-sm group">
@@ -332,7 +596,7 @@ export function AssetsView() {
                              </div>
                              <div className="bg-gray-50 rounded p-2 text-center border border-[var(--border-color)]">
                                <span className="block text-gray-400 mb-0.5 scale-90">修改日期</span>
-                               <span className="font-bold text-gray-700">{asset.date}</span>
+                               <span className="font-bold text-gray-700">{formatAssetDate(asset)}</span>
                              </div>
                            </div>
                          </div>
@@ -374,6 +638,7 @@ export function AssetsView() {
                </button>
                <button 
                  onClick={() => {
+                   if (!requireAssetManagement()) return;
                    setIsCleaning(true);
                    setTimeout(() => {
                      setIsCleaning(false);

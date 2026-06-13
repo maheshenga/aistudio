@@ -1,12 +1,44 @@
-import React, { useState } from 'react';
-import { User, Bell, Shield, Key, Database, Palette, Globe, Smartphone, Check, Copy, Eye, EyeOff, LayoutTemplate, Moon, Sun, Monitor, Lock, Building2, Languages, BookOpen, Radio, Hexagon, Zap } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { User, Bell, Shield, Key, Database, Palette, Globe, Smartphone, Check, Copy, Eye, EyeOff, LayoutTemplate, Moon, Sun, Monitor, Lock, Building2, Languages, BookOpen, Radio, Hexagon, Zap, MonitorCog } from 'lucide-react';
 import { useSessionAutoSave } from '../hooks/useSessionAutoSave';
 import { useTheme, ThemeType } from './ThemeProvider';
 import { useAmbientSound, AmbientSoundType } from '../hooks/useAmbientSound';
 import { Headphones, Volume2 } from 'lucide-react';
 import { useDeveloperMode } from '../hooks/useDeveloperMode';
+import { DesktopAgentRuntimePanel } from './runtime/DesktopAgentRuntimePanel';
+import * as settingsRepository from '../lib/data/settingsRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { buildPermissionDeniedMetadata, hasWorkspacePermission } from '../saas/permissions';
+import { toast } from './Toast';
+import {
+  RUNTIME_MODE_STRATEGY_SETTING_KEY,
+  RUNTIME_MULTICA_API_URL_SETTING_KEY,
+  RUNTIME_MULTICA_WS_URL_SETTING_KEY,
+  RUNTIME_MULTICA_WORKSPACE_ID_SETTING_KEY,
+  WORKSPACE_PREFERENCES_SETTING_KEY,
+  readWorkspaceRuntimeSettings,
+  type RuntimeModeStrategy,
+} from '../runtime/runtimeMode';
+
+type RuntimeSettingsForm = {
+  runtimeModeStrategy: RuntimeModeStrategy;
+  multicaApiUrl: string;
+  multicaWsUrl: string;
+  multicaWorkspaceId: string;
+  defaultLanguage: string;
+  compactMode: boolean;
+};
+
+const runtimeModeOptions: Array<{ value: RuntimeModeStrategy; label: string; description: string }> = [
+  { value: 'auto', label: 'Auto', description: 'Use Desktop Multica when a bridge exists, otherwise fall back to Web or self-hosted endpoints.' },
+  { value: 'web', label: 'Web standalone', description: 'Keep the SaaS control plane independent from Multica.' },
+  { value: 'desktop_multica', label: 'Desktop Multica', description: 'Use the local desktop daemon only when the bridge is available.' },
+  { value: 'self_hosted_multica', label: 'Self-hosted Multica', description: 'Route runtime operations through a configured Multica API and WS endpoint.' },
+];
 
 export function SettingsView() {
+  const session = useSaasSession();
   const [activeTab, setActiveTab] = useState('profile');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
@@ -14,6 +46,26 @@ export function SettingsView() {
   const [previewTheme, setPreviewTheme] = useState<ThemeType | null>(null);
   const { isDevMode, toggleDevMode } = useDeveloperMode();
   const { activeSound, setActiveSound, volume, setVolume } = useAmbientSound();
+  const runtimeSettingsContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const canManageRuntimeSettings = hasWorkspacePermission(session.membership.role, 'settings.manage');
+  const buildRuntimeSettingsForm = (): RuntimeSettingsForm => {
+    const runtimeSettings = readWorkspaceRuntimeSettings(runtimeSettingsContext);
+    const defaultLanguage = runtimeSettings.workspacePreferences.defaultLanguage;
+    const compactMode = runtimeSettings.workspacePreferences.compactMode;
+
+    return {
+      runtimeModeStrategy: runtimeSettings.runtimeModeStrategy,
+      multicaApiUrl: runtimeSettings.multicaApiUrl ?? '',
+      multicaWsUrl: runtimeSettings.multicaWsUrl ?? '',
+      multicaWorkspaceId: runtimeSettings.multicaWorkspaceId ?? '',
+      defaultLanguage: typeof defaultLanguage === 'string' ? defaultLanguage : 'zh-CN',
+      compactMode: compactMode === true,
+    };
+  };
+  const [runtimeSettingsForm, setRuntimeSettingsForm] = useState<RuntimeSettingsForm>(() => buildRuntimeSettingsForm());
 
   const { value: signature, setValue: setSignature, isSaving: isSavingSignature } = useSessionAutoSave('settings_signature_draft', '');
 
@@ -24,6 +76,7 @@ export function SettingsView() {
     { id: 'notifications', icon: Bell, label: '消息通知' },
     { id: 'security', icon: Shield, label: '账号安全' },
     { id: 'api', icon: Key, label: 'API 密钥' },
+    { id: 'runtime', icon: MonitorCog, label: '桌面运行时' },
     { id: 'storage', icon: Database, label: '存储空间' },
   ];
 
@@ -31,6 +84,93 @@ export function SettingsView() {
     navigator.clipboard.writeText(text);
     setCopiedKey(id);
     setTimeout(() => setCopiedKey(null), 2000);
+  };
+
+  useEffect(() => {
+    const refreshRuntimeSettings = () => setRuntimeSettingsForm(buildRuntimeSettingsForm());
+    const handleSettingsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string; userId?: string }>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== session.workspace.id) return;
+      if (detail?.userId && detail.userId !== session.user.id) return;
+      refreshRuntimeSettings();
+    };
+
+    refreshRuntimeSettings();
+    window.addEventListener('settings_updated', handleSettingsUpdated);
+    window.addEventListener('storage', refreshRuntimeSettings);
+    return () => {
+      window.removeEventListener('settings_updated', handleSettingsUpdated);
+      window.removeEventListener('storage', refreshRuntimeSettings);
+    };
+  }, [runtimeSettingsContext, session.user.id, session.workspace.id]);
+
+  const updateRuntimeSettingsForm = <K extends keyof RuntimeSettingsForm>(
+    key: K,
+    value: RuntimeSettingsForm[K],
+  ) => {
+    setRuntimeSettingsForm((previous) => ({ ...previous, [key]: value }));
+  };
+
+  const auditRuntimeSettingsPermissionDenied = () => {
+    logAuditEvent(
+      {
+        action: 'permission_denied',
+        moduleId: 'settings',
+        targetType: 'settings',
+        targetId: 'runtime_config',
+        metadata: buildPermissionDeniedMetadata({
+          role: session.membership.role,
+          permission: 'settings.manage',
+          operation: 'runtime_settings_update',
+          moduleId: 'settings',
+        }),
+      },
+      { session },
+    );
+    window.dispatchEvent(new Event('activity_logged'));
+  };
+
+  const handleSaveRuntimeSettings = () => {
+    if (!canManageRuntimeSettings) {
+      auditRuntimeSettingsPermissionDenied();
+      toast('Runtime settings require settings permission.', 'warning');
+      return;
+    }
+
+    const workspacePreferences = {
+      defaultLanguage: runtimeSettingsForm.defaultLanguage,
+      compactMode: runtimeSettingsForm.compactMode,
+    };
+    settingsRepository.saveSettings(
+      {
+        [RUNTIME_MODE_STRATEGY_SETTING_KEY]: runtimeSettingsForm.runtimeModeStrategy,
+        [RUNTIME_MULTICA_API_URL_SETTING_KEY]: runtimeSettingsForm.multicaApiUrl.trim(),
+        [RUNTIME_MULTICA_WS_URL_SETTING_KEY]: runtimeSettingsForm.multicaWsUrl.trim(),
+        [RUNTIME_MULTICA_WORKSPACE_ID_SETTING_KEY]: runtimeSettingsForm.multicaWorkspaceId.trim(),
+        [WORKSPACE_PREFERENCES_SETTING_KEY]: workspacePreferences,
+      },
+      runtimeSettingsContext,
+    );
+    logAuditEvent(
+      {
+        action: 'settings_change',
+        moduleId: 'settings',
+        targetType: 'settings',
+        targetId: 'runtime_config',
+        metadata: {
+          operation: 'runtime_config_update',
+          runtimeModeStrategy: runtimeSettingsForm.runtimeModeStrategy,
+          multicaApiUrlConfigured: Boolean(runtimeSettingsForm.multicaApiUrl.trim()),
+          multicaWsUrlConfigured: Boolean(runtimeSettingsForm.multicaWsUrl.trim()),
+          multicaWorkspaceIdConfigured: Boolean(runtimeSettingsForm.multicaWorkspaceId.trim()),
+          workspacePreferenceKeys: Object.keys(workspacePreferences),
+          sensitiveValuesStored: false,
+        },
+      },
+      { session },
+    );
+    window.dispatchEvent(new Event('activity_logged'));
+    toast('Runtime settings saved.', 'success');
   };
 
   return (
@@ -420,6 +560,135 @@ export function SettingsView() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'runtime' && (
+            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <section className="bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm overflow-hidden">
+                <div className="p-[var(--spacing-lg)] border-b border-[var(--border-color)] flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-[var(--text-main)] flex items-center">
+                      <MonitorCog className="w-[18px] h-[18px] mr-2 text-indigo-600" />
+                      Runtime Configuration
+                    </h3>
+                    <p className="text-sm text-[var(--text-muted)] mt-1">
+                      Persist Web, Desktop Multica, or self-hosted Multica preferences for this workspace.
+                    </p>
+                  </div>
+                  {!canManageRuntimeSettings && (
+                    <span className="text-xs font-bold px-2 py-1 rounded-md bg-amber-50 text-amber-700 border border-amber-200">
+                      Read only
+                    </span>
+                  )}
+                </div>
+
+                <div className="p-[var(--spacing-xl)] space-y-6">
+                  <div>
+                    <label className="block text-sm font-bold text-[var(--text-main)] mb-2">
+                      Runtime mode strategy
+                    </label>
+                    <select
+                      value={runtimeSettingsForm.runtimeModeStrategy}
+                      disabled={!canManageRuntimeSettings}
+                      onChange={(event) => updateRuntimeSettingsForm(
+                        'runtimeModeStrategy',
+                        event.target.value as RuntimeModeStrategy,
+                      )}
+                      className="w-full px-4 py-2.5 border border-[var(--border-color)] rounded-[var(--radius-lg)] text-sm font-bold shadow-sm focus:ring-blue-500 outline-none bg-[var(--bg-panel)] disabled:bg-[var(--bg-hover)] disabled:text-[var(--text-muted)]"
+                    >
+                      {runtimeModeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-[var(--text-muted)] mt-2">
+                      {runtimeModeOptions.find((option) => option.value === runtimeSettingsForm.runtimeModeStrategy)?.description}
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label className="block">
+                      <span className="block text-sm font-bold text-[var(--text-main)] mb-2">Multica API URL</span>
+                      <input
+                        value={runtimeSettingsForm.multicaApiUrl}
+                        disabled={!canManageRuntimeSettings}
+                        onChange={(event) => updateRuntimeSettingsForm('multicaApiUrl', event.target.value)}
+                        placeholder="https://multica.example.com"
+                        className="w-full px-4 py-2.5 border border-[var(--border-color)] rounded-[var(--radius-lg)] text-sm bg-[var(--bg-panel)] disabled:bg-[var(--bg-hover)] disabled:text-[var(--text-muted)]"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="block text-sm font-bold text-[var(--text-main)] mb-2">Multica WS URL</span>
+                      <input
+                        value={runtimeSettingsForm.multicaWsUrl}
+                        disabled={!canManageRuntimeSettings}
+                        onChange={(event) => updateRuntimeSettingsForm('multicaWsUrl', event.target.value)}
+                        placeholder="wss://multica.example.com/ws"
+                        className="w-full px-4 py-2.5 border border-[var(--border-color)] rounded-[var(--radius-lg)] text-sm bg-[var(--bg-panel)] disabled:bg-[var(--bg-hover)] disabled:text-[var(--text-muted)]"
+                      />
+                    </label>
+                    <label className="block md:col-span-2">
+                      <span className="block text-sm font-bold text-[var(--text-main)] mb-2">Multica workspace ID</span>
+                      <input
+                        value={runtimeSettingsForm.multicaWorkspaceId}
+                        disabled={!canManageRuntimeSettings}
+                        onChange={(event) => updateRuntimeSettingsForm('multicaWorkspaceId', event.target.value)}
+                        placeholder="workspace_multica_001"
+                        className="w-full px-4 py-2.5 border border-[var(--border-color)] rounded-[var(--radius-lg)] text-sm bg-[var(--bg-panel)] disabled:bg-[var(--bg-hover)] disabled:text-[var(--text-muted)]"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label className="block">
+                      <span className="block text-sm font-bold text-[var(--text-main)] mb-2">Default language</span>
+                      <select
+                        value={runtimeSettingsForm.defaultLanguage}
+                        disabled={!canManageRuntimeSettings}
+                        onChange={(event) => updateRuntimeSettingsForm('defaultLanguage', event.target.value)}
+                        className="w-full px-4 py-2.5 border border-[var(--border-color)] rounded-[var(--radius-lg)] text-sm bg-[var(--bg-panel)] disabled:bg-[var(--bg-hover)] disabled:text-[var(--text-muted)]"
+                      >
+                        <option value="zh-CN">Simplified Chinese</option>
+                        <option value="zh-TW">Traditional Chinese</option>
+                        <option value="en-US">English (US)</option>
+                        <option value="ja-JP">Japanese</option>
+                        <option value="ko-KR">Korean</option>
+                      </select>
+                    </label>
+                    <div className="flex items-center justify-between p-4 rounded-[var(--radius-lg)] border border-[var(--border-color)] bg-[var(--bg-hover)]">
+                      <div>
+                        <p className="text-sm font-bold text-[var(--text-main)]">Compact mode</p>
+                        <p className="text-xs text-[var(--text-muted)] mt-1">Use denser spacing in operational panels.</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
+                          disabled={!canManageRuntimeSettings}
+                          checked={runtimeSettingsForm.compactMode}
+                          onChange={(event) => updateRuntimeSettingsForm('compactMode', event.target.checked)}
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--bg-panel)] after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--color-primary)] peer-disabled:opacity-50"></div>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      disabled={!canManageRuntimeSettings}
+                      onClick={handleSaveRuntimeSettings}
+                      className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-[var(--radius-lg)] text-sm font-bold shadow-sm hover:bg-blue-700 transition-colors disabled:bg-[var(--bg-hover)] disabled:text-[var(--text-muted)]"
+                    >
+                      Save runtime settings
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <DesktopAgentRuntimePanel />
             </div>
           )}
 

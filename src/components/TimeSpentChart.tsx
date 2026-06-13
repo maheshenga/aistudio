@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
+import { useWorkspaceUsage } from '../hooks/useWorkspaceUsage';
 
 interface TimeData {
   module: string;
@@ -8,25 +9,21 @@ interface TimeData {
 
 export function TimeSpentChart() {
   const chartRef = useRef<HTMLDivElement>(null);
+  const rawData = useWorkspaceUsage();
   const [data, setData] = useState<TimeData[]>([]);
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem('module_time_tracker');
-      if (stored) {
-        const rawData = JSON.parse(stored);
-        
-        // Convert to array, map to minutes, sort desc, limit top 6
-        const sortedData: TimeData[] = Object.keys(rawData)
-          .map(k => ({ module: k, minutes: Math.round(rawData[k] / 60) }))
-          .filter(d => d.minutes > 0)
-          .sort((a, b) => b.minutes - a.minutes)
-          .slice(0, 6);
-        
-        setData(sortedData);
-      }
+      // Convert to array, map to minutes, sort desc, limit top 6
+      const sortedData: TimeData[] = Object.keys(rawData)
+        .map(k => ({ module: k, minutes: Math.round((rawData[k as keyof typeof rawData] ?? 0) / 60) }))
+        .filter(d => d.minutes > 0)
+        .sort((a, b) => b.minutes - a.minutes)
+        .slice(0, 6);
+
+      setData(sortedData);
     } catch (e) {}
-  }, []);
+  }, [rawData]);
 
   useEffect(() => {
     if (!chartRef.current || data.length === 0) return;

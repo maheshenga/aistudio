@@ -1,9 +1,22 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, ArrowUp, X, Command } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { createWorkspaceAsset } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { toast } from './Toast';
 
+function buildQuickPromptReply(prompt: string): string {
+  return `[Gemini 3.1 Flash]\nResponse for: "${prompt}"\nTask completed and context analyzed.`;
+}
+
 export function QuickPromptFAB() {
+  const session = useSaasSession();
+  const repositoryContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -15,19 +28,124 @@ export function QuickPromptFAB() {
     }
   }, [isOpen]);
 
+  const dispatchActivityLogged = () => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('activity_logged'));
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isSubmitting) return;
+    const prompt = input.trim();
+    if (!prompt || isSubmitting) return;
 
     setIsSubmitting(true);
-    
-    // Simulate Gemini API call
-    setTimeout(() => {
-      toast(`[Gemini 3.1 Flash]\nResponse for: "${input}"\n✅ Task completed and context analyzed.`);
+    let jobId: string | null = null;
+    try {
+      const responseText = buildQuickPromptReply(prompt);
+      const job = createGenerationJob({
+        title: 'Quick Prompt - Gemini Flash',
+        prompt,
+        status: 'running',
+        providerKind: 'mock',
+        runtimeMode: 'web',
+        moduleId: 'dashboard',
+        agentId: 'quick-prompt-agent',
+        progress: 30,
+        metadata: {
+          surface: 'quick_prompt_fab',
+        },
+      }, repositoryContext);
+      jobId = job.id;
+      logAuditEvent({
+        action: 'ai_command',
+        moduleId: 'dashboard',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          description: `Quick prompt: ${prompt}`,
+          surface: 'quick_prompt_fab',
+        },
+      }, { session });
+      logAuditEvent({
+        action: 'generation_job_start',
+        moduleId: 'dashboard',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          agentId: 'quick-prompt-agent',
+          surface: 'quick_prompt_fab',
+        },
+      }, { session });
+      updateGenerationJob(job.id, {
+        status: 'succeeded',
+        progress: 100,
+        metadata: {
+          ...job.metadata,
+          result: 'quick_prompt_text_asset',
+        },
+      }, repositoryContext);
+      const asset = createWorkspaceAsset({
+        name: `quick-prompt-${Date.now()}.md`,
+        type: 'text',
+        size: `${responseText.length} chars`,
+        source: 'generated',
+        moduleId: 'dashboard',
+        generationJobId: job.id,
+        tags: ['quick-prompt', 'gemini-flash'],
+        metadata: {
+          prompt,
+          responsePreview: responseText.slice(0, 160),
+          surface: 'quick_prompt_fab',
+        },
+      }, repositoryContext);
+      logAuditEvent({
+        action: 'generation_job_complete',
+        moduleId: 'dashboard',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          assetId: asset.id,
+          assetType: 'text',
+          surface: 'quick_prompt_fab',
+        },
+      }, { session });
+      logAuditEvent({
+        action: 'asset_create',
+        moduleId: 'dashboard',
+        targetType: 'asset',
+        targetId: asset.id,
+        metadata: {
+          generationJobId: job.id,
+          assetType: 'text',
+          source: 'generated',
+          surface: 'quick_prompt_fab',
+        },
+      }, { session });
+      dispatchActivityLogged();
+      toast(responseText);
       setInput('');
-      setIsSubmitting(false);
       setIsOpen(false);
-    }, 1500);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Quick prompt failed';
+      if (jobId) {
+        updateGenerationJob(jobId, { status: 'failed', progress: 100, error: message }, repositoryContext);
+        logAuditEvent({
+          action: 'generation_job_failed',
+          moduleId: 'dashboard',
+          targetType: 'generation_job',
+          targetId: jobId,
+          metadata: {
+            agentId: 'quick-prompt-agent',
+            error: message,
+          },
+        }, { session });
+        dispatchActivityLogged();
+      }
+      toast(message, 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

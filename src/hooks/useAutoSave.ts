@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { toast } from '../components/Toast';
+import { createOfflineQueueItem } from '../lib/data/offlineQueueRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
 export function useAutoSave<T>(key: string, initialValue: T, delay: number = 1000) {
+  const session = useSaasSession();
   // Try to load from localStorage first
   const [value, setValue] = useState<T>(() => {
     try {
@@ -33,11 +36,10 @@ export function useAutoSave<T>(key: string, initialValue: T, delay: number = 100
         console.warn(`Error setting localStorage key "${key}":`, error);
         toast('Failed to save draft. Added to Offline Queue.', 'error');
         try {
-          const offlineQueueStr = localStorage.getItem('offline_queue');
-          const offlineQueue = offlineQueueStr ? JSON.parse(offlineQueueStr) : [];
-          offlineQueue.push({ id: Date.now().toString(), key, value, timestamp: new Date().toISOString() });
-          localStorage.setItem('offline_queue', JSON.stringify(offlineQueue));
-          window.dispatchEvent(new CustomEvent('offlineQueueUpdated'));
+          createOfflineQueueItem(
+            { key, value },
+            { workspaceId: session.workspace.id, userId: session.user.id },
+          );
         } catch (e) {}
       } finally {
         setIsSaving(false);
@@ -47,7 +49,7 @@ export function useAutoSave<T>(key: string, initialValue: T, delay: number = 100
     return () => {
       clearTimeout(handler);
     };
-  }, [value, key, delay]);
+  }, [value, key, delay, session.user.id, session.workspace.id]);
 
   return { value, setValue, isSaving, lastSaved };
 }

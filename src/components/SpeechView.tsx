@@ -1,5 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Play, Pause, Download, Settings2, Mic, History, Wand2, Plus, SlidersHorizontal, AudioLines, Share2, Sparkles, Search, Trash2, Globe, User, Layers, FileText, ChevronDown, SplitSquareVertical, GripVertical } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createGenerationJob, failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { createWorkspaceAsset } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
+import { GenerationFailureRecoveryPanel } from './GenerationFailureRecoveryPanel';
 
 const VOICES = [
   { id: 'v1', name: 'Alloy', lang: '多语种', gender: '女声', type: '新闻联播 / 旁白', bg: 'bg-emerald-50', text: 'text-emerald-600', tags: ['清晰', '专业', '中立'] },
@@ -18,6 +24,11 @@ const MOCK_HISTORY = [
 ];
 
 export function SpeechView() {
+  const session = useSaasSession();
+  const jobContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [mode, setMode] = useState<'single' | 'batch'>('single');
   const [text, setText] = useState('在这个速生的时代，我们常常忘记了停下脚步。你好，我是多语种智能语音引擎。我能用富有情感的声音，将文字转化为触动人心的旋律。');
   const [scriptLines, setScriptLines] = useState([
@@ -63,22 +74,121 @@ export function SpeechView() {
   }, [isPlaying]);
 
   const handleGenerate = () => {
-    const hasContent = mode === 'single' ? text.trim() : scriptLines.some(line => line.text.trim());
+    const speechText = mode === 'single'
+      ? text.trim()
+      : scriptLines.map(line => `${line.role}: ${line.text.trim()}`).filter(line => line.trim()).join('\n');
+    const hasContent = Boolean(speechText);
     if (!hasContent || isGenerating) return;
     setIsGenerating(true);
     setAudioReady(false);
     setIsPlaying(false);
-    
-    setTimeout(() => {
-      setIsGenerating(false);
+
+    const job = createGenerationJob({
+      title: `Speech - ${activeVoice.name}`,
+      prompt: speechText,
+      status: 'running',
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      moduleId: 'speech',
+      progress: 0,
+      metadata: {
+        mode,
+        voice: activeVoice.name,
+        speed,
+        stability,
+        clarity,
+      },
+    }, jobContext);
+    logAuditEvent({
+      action: 'generation_job_start',
+      moduleId: 'speech',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        mode,
+        voice: activeVoice.name,
+        characterCount: speechText.length,
+      },
+    }, { session });
+
+    try {
+      const audioUrl = `aistudio://generated-audio/${job.id}.wav`;
+      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+      const asset = createWorkspaceAsset({
+        name: `speech-${Date.now()}.wav`,
+        type: 'audio',
+        size: `${Math.max(1, Math.ceil(speechText.length / 12))}s`,
+        source: 'generated',
+        moduleId: 'speech',
+        generationJobId: job.id,
+        url: audioUrl,
+        tags: [activeVoice.name, mode],
+        metadata: {
+          textPreview: speechText.slice(0, 160),
+          mode,
+          voice: activeVoice.name,
+          speed,
+          stability,
+          clarity,
+          scriptLines: mode === 'batch' ? scriptLines : undefined,
+        },
+      }, jobContext);
+      createPricedWorkspaceUsageEvent({
+        moduleId: 'speech',
+        pricingAction: 'generation',
+        kind: 'generation',
+        targetType: 'generation_job',
+        targetId: job.id,
+        providerKind: 'mock',
+        runtimeMode: 'web',
+        unitCount: Math.max(1, Math.ceil(speechText.length / 120)),
+        metadata: {
+          assetId: asset.id,
+          assetType: asset.type,
+          mode,
+          voice: activeVoice.name,
+          characterCount: speechText.length,
+        },
+      }, jobContext);
+      logAuditEvent({
+        action: 'generation_job_complete',
+        moduleId: 'speech',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          generatedAsset: true,
+          assetType: 'audio',
+          voice: activeVoice.name,
+        },
+      }, { session });
       setAudioReady(true);
       setIsPlaying(true);
-      
-      // Auto stop after 5s for demo
-      setTimeout(() => {
-        setIsPlaying(false);
-      }, 5000);
-    }, 2000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Speech provider failed before returning audio.';
+      failGenerationJob(job.id, {
+        error: message,
+        metadata: {
+          mode,
+          voice: activeVoice.name,
+          characterCount: speechText.length,
+        },
+      }, jobContext);
+      logAuditEvent({
+        action: 'generation_job_failed',
+        moduleId: 'speech',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          mode,
+          voice: activeVoice.name,
+          error: message,
+        },
+      }, { session });
+      setAudioReady(false);
+      setIsPlaying(false);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const togglePlay = () => {
@@ -201,6 +311,7 @@ export function SpeechView() {
       <div className="flex-1 flex flex-col relative overflow-hidden bg-gray-50/30">
         <div className="flex-1 overflow-y-auto p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] custom-scrollbar">
           <div className="max-w-4xl mx-auto space-y-[var(--spacing-lg)]">
+            <GenerationFailureRecoveryPanel moduleId="speech" session={session} context={jobContext} />
             
             {/* Header controls */}
             <div className="flex items-center justify-between">

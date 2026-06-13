@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   UsersRound, 
   Search, 
@@ -36,9 +36,80 @@ import { CustomerInsights } from './CustomerInsights';
 import { MeetingAssistant } from './MeetingAssistant';
 import { TeamLoadView } from './TeamLoadView';
 import { CrmWorkflowBuilder } from './CrmWorkflowBuilder';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { loadWorkspaceCustomers, type WorkspaceCustomer } from '../lib/data/customerRepository';
+import { createWorkspaceTask, loadWorkspaceTasks } from '../lib/data/taskRepository';
 
 const CUSTOMER_STATUSES = ['潜在', '活跃', '流失'] as const;
 type CustomerStatus = typeof CUSTOMER_STATUSES[number];
+
+type CrmCustomer = {
+  id: string;
+  name: string;
+  company: string;
+  role: string;
+  tags: string[];
+  ltv: string;
+  active: string;
+  aiStatus: string;
+  level: string;
+  stage: string;
+  status: CustomerStatus;
+  taskDue: boolean;
+  aiScore: number;
+  nextFollowUp: string;
+  source?: WorkspaceCustomer['source'];
+};
+
+const CRM_DEMO_CUSTOMERS: CrmCustomer[] = [
+  { id: 'C-8092', name: '王梦璇 (Sarah)', company: '泛星跃动传媒', role: '营销总监', tags: ['高净值', '多次复购', 'AIGC依赖'], ltv: '¥ 124,500', active: '今天 10:15', aiStatus: '需跟进: 续约周期临近', level: 'VIP', stage: '沟通中', status: '活跃', taskDue: true, aiScore: 98, nextFollowUp: '2026-06-09' },
+  { id: 'C-8093', name: '李智 (Leo)', company: '云创未来科技', role: '电商操盘手', tags: ['决策人', '近期流失风险'], ltv: '¥ 32,800', active: '昨天', aiStatus: 'AI 预警: 近 14 天活跃度下降', level: 'A', stage: '潜在线索', status: '流失', taskDue: false, aiScore: 56, nextFollowUp: '2026-06-11' },
+  { id: 'C-8094', name: '赵静茹', company: '静茹个人工作室', role: '主理人', tags: ['单飞IP', '品牌设计'], ltv: '¥ 8,600', active: '3天前', aiStatus: '日常维系', level: 'B', stage: '已成交', status: '活跃', taskDue: false, aiScore: 82, nextFollowUp: '2026-06-12' },
+  { id: 'C-8095', name: 'Alex Peterson', company: 'Global Reach Inc.', role: 'VP of Growth', tags: ['海外大客', '英语跟进'], ltv: '$ 24,000', active: '周一', aiStatus: '已发送财报分析', level: 'VIP', stage: '沟通中', status: '活跃', taskDue: false, aiScore: 91, nextFollowUp: '2026-06-08' },
+  { id: 'C-8096', name: '陈建国', company: '传统制造转型', role: '总经理', tags: ['待激活', '预算高'], ltv: '¥ 0', active: '1个月前', aiStatus: '建议推送同行业研报', level: 'C', stage: '潜在线索', status: '潜在', taskDue: false, aiScore: 64, nextFollowUp: '2026-06-14' },
+];
+
+function mapWorkspaceCustomerToCrmCustomer(customer: WorkspaceCustomer): CrmCustomer {
+  const sourceChannel = customer.source?.sourceChannel;
+  const tags = [...new Set([...customer.tags, sourceChannel, 'marketing_lead'].filter(Boolean))] as string[];
+  const lifecycleStageMap: Record<WorkspaceCustomer['lifecycleStage'], { stage: string; status: CustomerStatus; level: string; score: number }> = {
+    new_lead: { stage: '潜在线索', status: '潜在', level: 'Lead', score: 72 },
+    qualified: { stage: '潜在线索', status: '活跃', level: 'A', score: 86 },
+    contacted: { stage: '沟通中', status: '活跃', level: 'A', score: 82 },
+    converted: { stage: '已成交', status: '活跃', level: 'VIP', score: 94 },
+    inactive: { stage: '潜在线索', status: '流失', level: 'C', score: 48 },
+  };
+  const lifecycle = lifecycleStageMap[customer.lifecycleStage];
+  const nextFollowUp = new Date((customer.lastInteractionAt || customer.updatedAt) + 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  return {
+    id: customer.id,
+    name: customer.name,
+    company: customer.company ?? 'Unknown company',
+    role: customer.role ?? 'Lead owner',
+    tags,
+    ltv: '¥ 0',
+    active: new Date(customer.lastInteractionAt).toLocaleDateString('zh-CN'),
+    aiStatus: customer.source?.campaignName
+      ? `Campaign lead: ${customer.source.campaignName}`
+      : 'Marketing lead ready for follow-up',
+    level: lifecycle.level,
+    stage: lifecycle.stage,
+    status: lifecycle.status,
+    taskDue: customer.lifecycleStage === 'new_lead' || customer.lifecycleStage === 'qualified',
+    aiScore: lifecycle.score,
+    nextFollowUp,
+    source: customer.source,
+  };
+}
+
+function escapeCsvValue(value: unknown): string {
+  const text = String(value ?? '');
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
 
 const MOCK_SALES_DATA = [
   { name: '周一', sales: 4000, leads: 24 },
@@ -66,15 +137,20 @@ const CSAT_DATA = [
 ];
 
 export function CrmView() {
+  const session = useSaasSession();
+  const taskContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
+  const customerContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [activeTab, setActiveTab] = useState('all');
   const [filterStatus, setFilterStatus] = useState<CustomerStatus | '全部'>('全部');
-  const [customers, setCustomers] = useState([
-    { id: 'C-8092', name: '王梦璇 (Sarah)', company: '泛星跃动传媒', role: '营销总监', tags: ['高净值', '多次复购', 'AIGC依赖'], ltv: '¥ 124,500', active: '今天 10:15', aiStatus: '需跟进: 续约周期临近', level: 'VIP', stage: '沟通中', status: '活跃' as CustomerStatus, taskDue: true, aiScore: 98, nextFollowUp: '2026-06-09' },
-    { id: 'C-8093', name: '李智 (Leo)', company: '云创未来科技', role: '电商操盘手', tags: ['决策人', '近期流失风险'], ltv: '¥ 32,800', active: '昨天', aiStatus: 'AI 预警: 近 14 天活跃度下降', level: 'A', stage: '潜在线索', status: '流失' as CustomerStatus, taskDue: false, aiScore: 56, nextFollowUp: '2026-06-11' },
-    { id: 'C-8094', name: '赵静茹', company: '静茹个人工作室', role: '主理人', tags: ['单飞IP', '品牌设计'], ltv: '¥ 8,600', active: '3天前', aiStatus: '日常维系', level: 'B', stage: '已成交', status: '活跃' as CustomerStatus, taskDue: false, aiScore: 82, nextFollowUp: '2026-06-12' },
-    { id: 'C-8095', name: 'Alex Peterson', company: 'Global Reach Inc.', role: 'VP of Growth', tags: ['海外大客', '英语跟进'], ltv: '$ 24,000', active: '周一', aiStatus: '已发送财报分析', level: 'VIP', stage: '沟通中', status: '活跃' as CustomerStatus, taskDue: false, aiScore: 91, nextFollowUp: '2026-06-08' },
-    { id: 'C-8096', name: '陈建国', company: '传统制造转型', role: '总经理', tags: ['待激活', '预算高'], ltv: '¥ 0', active: '1个月前', aiStatus: '建议推送同行业研报', level: 'C', stage: '潜在线索', status: '潜在' as CustomerStatus, taskDue: false, aiScore: 64, nextFollowUp: '2026-06-14' },
-  ]);
+  const [customers, setCustomers] = useState<CrmCustomer[]>(() => {
+    const workspaceCustomers = loadWorkspaceCustomers(customerContext);
+    return workspaceCustomers.length > 0
+      ? workspaceCustomers.map(mapWorkspaceCustomerToCrmCustomer)
+      : CRM_DEMO_CUSTOMERS;
+  });
   const [draggedId, setDraggedId] = useState<string | null>(null);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -88,16 +164,73 @@ export function CrmView() {
   const [calendarDate, setCalendarDate] = useState(new Date('2026-06-08'));
 
   useEffect(() => {
-    // 模拟检查临期任务
+    const syncCustomers = () => {
+      const workspaceCustomers = loadWorkspaceCustomers(customerContext);
+      setCustomers(workspaceCustomers.length > 0
+        ? workspaceCustomers.map(mapWorkspaceCustomerToCrmCustomer)
+        : CRM_DEMO_CUSTOMERS);
+    };
+
+    syncCustomers();
+    const handleCustomerUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail;
+      if (!detail?.workspaceId || detail.workspaceId === session.workspace.id) {
+        syncCustomers();
+      }
+    };
+    window.addEventListener('workspace_customers_updated', handleCustomerUpdate);
+    return () => window.removeEventListener('workspace_customers_updated', handleCustomerUpdate);
+  }, [customerContext, session.workspace.id]);
+
+  const auditCrm = useCallback((
+    action: 'crm_customer_export' | 'crm_followup_task_sync' | 'crm_email_draft_generate' | 'crm_summary_generate',
+    targetId: string,
+    metadata: Record<string, unknown>,
+  ) => {
+    logAuditEvent(
+      {
+        action,
+        moduleId: 'crm',
+        targetType: action === 'crm_followup_task_sync' ? 'task' : 'workspace',
+        targetId,
+        metadata,
+      },
+      { session },
+    );
+    window.dispatchEvent(new Event('activity_logged'));
+  }, [session]);
+
+  useEffect(() => {
     const dueCustomers = customers.filter(c => c.taskDue);
-    if (dueCustomers.length > 0) {
-      setTimeout(() => {
-        toast(`有 ${dueCustomers.length} 个客户跟进任务即将到期！已同步至任务中心。`, 'info', true);
-        // Trigger generic custom event that TaskCenter could listen to (if we implement that later)
-        window.dispatchEvent(new CustomEvent('SYNC_CRM_TASKS', { detail: dueCustomers }));
-      }, 1500);
+    if (dueCustomers.length === 0) return;
+
+    const existingTitles = new Set(loadWorkspaceTasks(taskContext).map((task) => task.title));
+    const createdTasks = dueCustomers.flatMap((customer) => {
+      const title = `[客户跟进] ${customer.name} - ${customer.company}`;
+      if (existingTitles.has(title)) return [];
+      const task = createWorkspaceTask(
+        {
+          title,
+          column: 'todo',
+          priority: 'High',
+          type: '客户维系',
+          date: customer.nextFollowUp,
+          isAuto: false,
+        },
+        taskContext,
+      );
+      existingTitles.add(title);
+      return [task];
+    });
+
+    if (createdTasks.length > 0) {
+      auditCrm('crm_followup_task_sync', 'crm_followups_due', {
+        customerIds: dueCustomers.map((customer) => customer.id),
+        createdTaskIds: createdTasks.map((task) => task.id),
+      });
+      toast(`有 ${createdTasks.length} 个客户跟进任务已同步至任务中心。`, 'info', true);
     }
-  }, []);
+  }, [auditCrm, customers, taskContext]);
 
   const STAGES = ['潜在线索', '沟通中', '已成交'];
 
@@ -120,34 +253,70 @@ export function CrmView() {
   };
 
   const handleExport = () => {
-    const csvHeader = 'ID,姓名,公司,职位,LTV,阶段,状态\n';
-    const csvContent = customers.map(c => `${c.id},${c.name},${c.company},${c.role},${c.ltv},${c.stage},${c.status}`).join('\n');
+    const csvHeader = 'ID,姓名,公司,职位,LTV,阶段,状态,Campaign ID,Campaign Name,Source Channel,Landing Page,Touchpoint\n';
+    const csvContent = customers.map(c => [
+      c.id,
+      c.name,
+      c.company,
+      c.role,
+      c.ltv,
+      c.stage,
+      c.status,
+      c.source?.campaignId,
+      c.source?.campaignName,
+      c.source?.sourceChannel,
+      c.source?.landingPage,
+      c.source?.touchpoint,
+    ].map(escapeCsvValue).join(',')).join('\n');
     const blob = new Blob([csvHeader + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `customers_export_${new Date().getTime()}.csv`;
     link.click();
+    auditCrm('crm_customer_export', session.workspace.id, {
+      customerCount: customers.length,
+      selectedCount: selectedIds.length,
+      filterStatus,
+      sourceCampaignCount: customers.filter((customer) => customer.source?.campaignId).length,
+    });
     toast('客户列表已成功导出为 CSV 文件', 'success');
   };
 
   const handleGenerateEmail = () => {
     if (!selectedCustomer) return;
     setIsGeneratingEmail(true);
-    setTimeout(() => {
-      setEmailDraft(`尊敬的${selectedCustomer.name}（${selectedCustomer.role}），\n\n您好！我是您的专属顾问。\n\n注意到贵司【${selectedCustomer.company}】在${selectedCustomer.tags[0] || '业务'}方面有进一步提升空间，结合您此前关注的方向，我为您整理了一套最新的行业AI应用方案。\n\n期待与您进一步交流！\n祝好`);
+    try {
+      const draft = `尊敬的${selectedCustomer.name}（${selectedCustomer.role}），\n\n您好！我是您的专属顾问。\n\n注意到贵司【${selectedCustomer.company}】在${selectedCustomer.tags[0] || '业务'}方面有进一步提升空间，结合您此前关注的方向，我为您整理了一套最新的行业AI应用方案。\n\n期待与您进一步交流！\n祝好`;
+      setEmailDraft(draft);
+      auditCrm('crm_email_draft_generate', selectedCustomer.id, {
+        customerId: selectedCustomer.id,
+        company: selectedCustomer.company,
+        tags: selectedCustomer.tags,
+        draftLength: draft.length,
+      });
+      toast('邮件草稿已生成并写入审计日志', 'success');
+    } finally {
       setIsGeneratingEmail(false);
-      toast('✅ 邮件草稿已由 AI 生成', 'success');
-    }, 1200);
+    }
   };
 
   const handleGenerateSummary = () => {
     if (!selectedCustomer) return;
     setIsGeneratingSummary(true);
-    setTimeout(() => {
-      setSummary(`【AI 智能沟通总结】\n🔘 客户状态：当前处于"${selectedCustomer.stage}"阶段，总体评级 ${selectedCustomer.level} (AI得分: ${selectedCustomer.aiScore})。\n🔘 核心诉求：对定制化需求较高，标签包含 [${selectedCustomer.tags.join(', ')}]，历史 LTV 约 ${selectedCustomer.ltv}。\n🔘 AI风险与机会洞察：${selectedCustomer.aiStatus}。\n🔘 建议行动：建议本周内安排优先跟进。`);
+    try {
+      const generatedSummary = `【AI 智能沟通总结】\n- 客户状态：当前处于"${selectedCustomer.stage}"阶段，总体评级 ${selectedCustomer.level} (AI得分: ${selectedCustomer.aiScore})。\n- 核心诉求：对定制化需求较高，标签包含 [${selectedCustomer.tags.join(', ')}]，历史 LTV 约 ${selectedCustomer.ltv}。\n- AI风险与机会洞察：${selectedCustomer.aiStatus}。\n- 建议行动：建议本周内安排优先跟进。`;
+      setSummary(generatedSummary);
+      auditCrm('crm_summary_generate', selectedCustomer.id, {
+        customerId: selectedCustomer.id,
+        stage: selectedCustomer.stage,
+        level: selectedCustomer.level,
+        aiScore: selectedCustomer.aiScore,
+        summaryLength: generatedSummary.length,
+      });
+      toast('沟通总结已生成并写入审计日志', 'success');
+    } finally {
       setIsGeneratingSummary(false);
-      toast('✅ 沟通总结已生成', 'success');
-    }, 1500);
+    }
   };
   
   const generateWeekDays = () => {
@@ -277,7 +446,7 @@ export function CrmView() {
                        <h3 className="font-bold text-[16px] text-[var(--text-main)]">近期销售与线索趋势</h3>
                     </div>
                     <div className="h-[300px] w-full">
-                       <ResponsiveContainer width="100%" height="100%">
+                       <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
                          <AreaChart data={MOCK_SALES_DATA} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                            <defs>
                              <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
@@ -298,7 +467,7 @@ export function CrmView() {
                  <div className="bg-white p-6 rounded-[20px] shadow-sm border border-[var(--border-color)]">
                     <h3 className="font-bold text-[16px] text-[var(--text-main)] mb-6">满意度分布</h3>
                     <div className="h-[250px] w-full flex items-center justify-center relative">
-                       <ResponsiveContainer width="100%" height="100%">
+                       <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
                          <BarChart layout="vertical" data={CSAT_DATA} margin={{ top: 5, right: 20, left: 20, bottom: 5 }} barSize={16}>
                            <CartesianGrid strokeDasharray="3 3" horizontal={false} vertical={false} />
                            <XAxis type="number" hide />
@@ -318,7 +487,7 @@ export function CrmView() {
                  <div className="bg-white p-6 rounded-[20px] shadow-sm border border-[var(--border-color)]">
                     <h3 className="font-bold text-[16px] text-[var(--text-main)] mb-6">客户行业分布</h3>
                     <div className="h-[250px] w-full flex items-center justify-center relative">
-                       <ResponsiveContainer width="100%" height="100%">
+                       <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
                          <PieChart>
                            <Pie data={PIE_DATA} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" stroke="none">
                              {PIE_DATA.map((entry, index) => (
@@ -437,6 +606,26 @@ export function CrmView() {
                                  <span key={t} className="px-2 py-0.5 bg-gray-100 border border-[var(--border-color)] text-gray-600 rounded text-[11px] font-bold">{tag}</span>
                               ))}
                            </div>
+
+                           {cust.source && (
+                             <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-bold text-blue-700">
+                               {cust.source.campaignName && (
+                                 <span className="px-2 py-0.5 rounded bg-blue-50 border border-blue-100">
+                                   Campaign: {cust.source.campaignName}
+                                 </span>
+                               )}
+                               {cust.source.sourceChannel && (
+                                 <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                   Source: {cust.source.sourceChannel}
+                                 </span>
+                               )}
+                               {cust.source.landingPage && (
+                                 <span className="px-2 py-0.5 rounded bg-gray-50 text-gray-600 border border-gray-100 max-w-[260px] truncate">
+                                   Landing: {cust.source.landingPage}
+                                 </span>
+                               )}
+                             </div>
+                           )}
                            
                            <div className="mt-3 flex flex-wrap items-center gap-6 text-[12px] font-medium">
                               <div className="flex items-center text-[var(--text-muted)]">
@@ -536,6 +725,11 @@ export function CrmView() {
                              
                              <div className="text-[11px] text-[var(--text-muted)] mb-3">
                                 <p className="truncate font-medium">{cust.company} · {cust.role}</p>
+                                {cust.source?.campaignName && (
+                                  <p className="truncate font-bold text-blue-600 mt-1">
+                                    Campaign: {cust.source.campaignName}
+                                  </p>
+                                )}
                              </div>
 
                              <div className="flex flex-wrap gap-1.5 mb-3">
@@ -836,6 +1030,34 @@ export function CrmView() {
                     </div>
                   </div>
 
+                  {selectedCustomer.source && (
+                    <div className="border border-blue-100 rounded-xl bg-blue-50/40 p-4">
+                      <h3 className="text-sm font-black text-gray-800 mb-3">Campaign Source</h3>
+                      <div className="grid grid-cols-1 gap-2 text-[12px]">
+                        <div className="flex justify-between gap-3">
+                          <span className="font-bold text-gray-500">Campaign ID</span>
+                          <span className="font-bold text-gray-800 text-right">{selectedCustomer.source.campaignId ?? '-'}</span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span className="font-bold text-gray-500">Campaign Name</span>
+                          <span className="font-bold text-gray-800 text-right">{selectedCustomer.source.campaignName ?? '-'}</span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span className="font-bold text-gray-500">Source Channel</span>
+                          <span className="font-bold text-blue-700 text-right">{selectedCustomer.source.sourceChannel ?? '-'}</span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span className="font-bold text-gray-500">Landing Page</span>
+                          <span className="font-bold text-gray-800 text-right break-all">{selectedCustomer.source.landingPage ?? '-'}</span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span className="font-bold text-gray-500">Touchpoint</span>
+                          <span className="font-bold text-gray-800 text-right">{selectedCustomer.source.touchpoint ?? selectedCustomer.source.assetId ?? '-'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Customer Insights and Actions */}
                   <CustomerInsights customerId={selectedCustomer.id} customerName={selectedCustomer.name} />
 
@@ -855,4 +1077,3 @@ export function CrmView() {
     </div>
   );
 }
-

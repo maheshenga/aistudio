@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sidebar, navGroups } from './components/Sidebar';
+import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
 import { DashboardView } from './components/Dashboard';
 import { FeatureView } from './components/FeatureView';
@@ -57,7 +57,17 @@ import { QuickNotesPanel } from './components/QuickNotesPanel';
 import { ToastContainer, toast } from './components/Toast';
 import { QuickPromptFAB } from './components/QuickPromptFAB';
 import { TopProgressBar } from './components/TopProgressBar';
-import { ModuleId } from './types';
+import { allModuleIds, ModuleId } from './types';
+import {
+  canViewProductModule,
+  getFirstAccessibleProductModule,
+  getProductBreadcrumb,
+  getProductModuleTitle,
+} from './product/registry';
+import { keepModuleIdListIfEqual } from './product/moduleListState';
+import { getSetting, saveSetting } from './lib/data/settingsRepository';
+import { loadModuleUsage } from './lib/data/usageRepository';
+import { useSaasSession } from './saas/SaasAuthContext';
 
 import { useModuleTimeTracker } from './hooks/useModuleTimeTracker';
 import { usePreloadPinnedModules } from './hooks/usePreloadPinnedModules';
@@ -75,6 +85,32 @@ const featureConfig: Record<string, { title: string, type: any, models: string[]
   speech: { title: '语音合成', type: 'audio', models: ['ElevenLabs', 'Google Cloud TTS', 'Azure Voice'] },
 };
 
+const DEFAULT_PINNED_MODULES: ModuleId[] = ['dashboard'];
+const validModuleIds = new Set<ModuleId>(allModuleIds);
+
+interface WorkspaceLayoutSetting {
+  activeModule?: ModuleId;
+  isSplitScreen?: boolean;
+  secondaryModule?: ModuleId | null;
+  activePane?: 'primary' | 'secondary';
+  splitRatio?: number;
+  pinnedModules?: unknown;
+}
+
+function normalizePinnedModules(value: unknown): ModuleId[] {
+  if (!Array.isArray(value)) return DEFAULT_PINNED_MODULES;
+
+  const modules = value.filter((id): id is ModuleId => (
+    typeof id === 'string' && validModuleIds.has(id as ModuleId)
+  ));
+  const uniqueModules = Array.from(new Set(modules));
+  return uniqueModules.length > 0 ? uniqueModules : DEFAULT_PINNED_MODULES;
+}
+
+function isWorkspaceLayoutSetting(value: unknown): value is WorkspaceLayoutSetting {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 function ModuleSkeleton() {
   return (
     <div className="layout-section layout-container animate-pulse space-y-[var(--spacing-xl)]">
@@ -85,7 +121,7 @@ function ModuleSkeleton() {
           <div className="w-96 h-4 bg-[var(--border-color)] rounded-[var(--radius-md)]"></div>
         </div>
       </div>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-[var(--spacing-md)]">
         <div className="col-span-2 space-y-[var(--spacing-lg)]">
           <div className="h-48 bg-[var(--border-color)] rounded-[var(--radius-xl)] w-full"></div>
@@ -102,6 +138,12 @@ function ModuleSkeleton() {
 }
 
 export default function App() {
+  const session = useSaasSession();
+  const workspaceRole = session.membership.role;
+  const settingsContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false);
   const [isMessagesOpen, setIsMessagesOpen] = useState(false);
@@ -109,7 +151,7 @@ export default function App() {
   const [isQuickNotesOpen, setIsQuickNotesOpen] = useState(false);
   const [isSessionSummaryOpen, setIsSessionSummaryOpen] = useState(false);
   const [isOfflineQueueOpen, setIsOfflineQueueOpen] = useState(false);
-  const [activeModule, setActiveModule] = useState<ModuleId>('dashboard');
+  const [activeModule, setActiveModule] = useState<ModuleId>(() => getFirstAccessibleProductModule(workspaceRole));
   const [isLoadingModule, setIsLoadingModule] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
@@ -117,6 +159,14 @@ export default function App() {
   const [isShortcutsHelpOpen, setIsShortcutsHelpOpen] = useState(false);
   const { isDevMode } = useDeveloperMode();
   useLayoutAuditor(isDevMode);
+  const firstAccessibleModule = useMemo(
+    () => getFirstAccessibleProductModule(workspaceRole),
+    [workspaceRole],
+  );
+  const canAccessModule = useCallback(
+    (moduleId: ModuleId) => canViewProductModule(moduleId, workspaceRole),
+    [workspaceRole],
+  );
 
   useEffect(() => {
     if (!sessionStorage.getItem('session_start_time')) {
@@ -140,49 +190,91 @@ export default function App() {
   const [activePane, setActivePane] = useState<'primary' | 'secondary'>('primary');
 
   useEffect(() => {
+    if (!canAccessModule(activeModule)) {
+      setActiveModule(firstAccessibleModule);
+    }
+    if (secondaryModule && !canAccessModule(secondaryModule)) {
+      setSecondaryModule(null);
+      setActivePane('primary');
+    }
+  }, [activeModule, canAccessModule, firstAccessibleModule, secondaryModule]);
+
+  useEffect(() => {
     const handleBeforeUnload = () => {
-      localStorage.setItem('clean_exit', 'true');
+      saveSetting('clean_exit', true, settingsContext);
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
+  }, [settingsContext]);
 
-  const [pinnedModules, setPinnedModules] = useState<ModuleId[]>(() => {
-    try {
-      const stored = localStorage.getItem('pinned_modules');
-      return stored ? JSON.parse(stored) : ['dashboard'];
-    } catch {
-      return ['dashboard'];
+  const [pinnedModules, setPinnedModules] = useState<ModuleId[]>(DEFAULT_PINNED_MODULES);
+  const normalizeAccessiblePinnedModules = useCallback((value: unknown): ModuleId[] => {
+    const accessiblePins = normalizePinnedModules(value).filter(canAccessModule);
+    return accessiblePins.length > 0 ? accessiblePins : [firstAccessibleModule];
+  }, [canAccessModule, firstAccessibleModule]);
+  const loadPinnedModules = useCallback(
+    () => normalizeAccessiblePinnedModules(getSetting('pinned_modules', DEFAULT_PINNED_MODULES, settingsContext)),
+    [normalizeAccessiblePinnedModules, settingsContext],
+  );
+  const persistPinnedModules = useCallback((nextPins: ModuleId[]) => {
+    const normalized = normalizeAccessiblePinnedModules(nextPins);
+    saveSetting('pinned_modules', normalized, settingsContext);
+    return normalized;
+  }, [normalizeAccessiblePinnedModules, settingsContext]);
+  const applyWorkspaceLayout = useCallback((layout: WorkspaceLayoutSetting) => {
+    if (layout.activeModule && canAccessModule(layout.activeModule)) setActiveModule(layout.activeModule);
+    if (layout.isSplitScreen !== undefined) setIsSplitScreen(layout.isSplitScreen);
+    if (layout.secondaryModule !== undefined) {
+      setSecondaryModule(layout.secondaryModule && canAccessModule(layout.secondaryModule) ? layout.secondaryModule : null);
     }
-  });
+    if (layout.activePane) setActivePane(layout.activePane);
+    if (layout.splitRatio) setSplitRatio(layout.splitRatio);
+    if (layout.pinnedModules) setPinnedModules(persistPinnedModules(normalizeAccessiblePinnedModules(layout.pinnedModules)));
+  }, [canAccessModule, normalizeAccessiblePinnedModules, persistPinnedModules]);
 
   useEffect(() => {
-    localStorage.setItem('session_last_state', JSON.stringify({
+    setPinnedModules(prev => keepModuleIdListIfEqual(prev, loadPinnedModules()));
+
+    const handleSettingsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string; userId?: string }>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== settingsContext.workspaceId) return;
+      if (detail?.userId && detail.userId !== settingsContext.userId) return;
+      setPinnedModules(prev => keepModuleIdListIfEqual(prev, loadPinnedModules()));
+    };
+
+    window.addEventListener('settings_updated', handleSettingsUpdated);
+    return () => window.removeEventListener('settings_updated', handleSettingsUpdated);
+  }, [loadPinnedModules, settingsContext]);
+
+  useEffect(() => {
+    saveSetting('session_last_state', {
       activeModule, isSplitScreen, secondaryModule, splitRatio, pinnedModules
-    }));
+    }, settingsContext);
     // Any change marks it dirty unless clean_exit is explicitly set on exit
-    localStorage.setItem('clean_exit', 'false');
-  }, [activeModule, isSplitScreen, secondaryModule, splitRatio, pinnedModules]);
+    saveSetting('clean_exit', false, settingsContext);
+  }, [activeModule, isSplitScreen, secondaryModule, splitRatio, pinnedModules, settingsContext]);
 
   useModuleTimeTracker(activeModule);
-  usePreloadPinnedModules();
+  usePreloadPinnedModules(pinnedModules);
   useAgentLatencyMonitor();
 
   useEffect(() => {
     const handleRestorePreset = (e: CustomEvent) => {
        const preset = e.detail;
+       if (!preset) {
+          setPinnedModules(loadPinnedModules());
+          return;
+       }
        if (preset.layout) {
-          if (preset.layout.activeModule) setActiveModule(preset.layout.activeModule);
-          if (preset.layout.isSplitScreen !== undefined) setIsSplitScreen(preset.layout.isSplitScreen);
-          if (preset.layout.secondaryModule !== undefined) setSecondaryModule(preset.layout.secondaryModule);
+          applyWorkspaceLayout(preset.layout);
        }
        if (preset.pinned) {
-          setPinnedModules(preset.pinned);
+          setPinnedModules(persistPinnedModules(preset.pinned));
        }
     };
     window.addEventListener('app:restore-preset', handleRestorePreset as EventListener);
     return () => window.removeEventListener('app:restore-preset', handleRestorePreset as EventListener);
-  }, []);
+  }, [applyWorkspaceLayout, loadPinnedModules, persistPinnedModules]);
 
   const { logActivity } = useActivityLogger();
   const [isDispatcherOpen, setIsDispatcherOpen] = useState(false);
@@ -190,17 +282,12 @@ export default function App() {
   // Load from auto-save on mount
   useEffect(() => {
     try {
-      const autoSave = localStorage.getItem('workspace_autosave');
-      if (autoSave) {
-        const state = JSON.parse(autoSave);
-        if (state.activeModule) setActiveModule(state.activeModule);
-        if (state.isSplitScreen) setIsSplitScreen(state.isSplitScreen);
-        if (state.secondaryModule) setSecondaryModule(state.secondaryModule);
-        if (state.activePane) setActivePane(state.activePane);
-        if (state.pinnedModules) setPinnedModules(state.pinnedModules);
+      const autoSave = getSetting('workspace_autosave', null, settingsContext);
+      if (isWorkspaceLayoutSetting(autoSave)) {
+        applyWorkspaceLayout(autoSave);
       }
     } catch {}
-  }, []);
+  }, [applyWorkspaceLayout, settingsContext]);
 
   // Auto-save every 30 seconds
   useEffect(() => {
@@ -223,18 +310,17 @@ export default function App() {
         if (Math.random() < 0.05) {
           throw new Error('Cloud Sync Failed');
         }
-        localStorage.setItem('workspace_autosave', JSON.stringify(workspaceState));
+        saveSetting('workspace_autosave', workspaceState, settingsContext);
       } catch (e) {
         toast('云端同步失败 / Cloud Sync Error', 'error', true, [
            { label: '保留本地 (Keep Local)', onClick: () => {
-              localStorage.setItem('workspace_autosave', JSON.stringify(workspaceState));
+              saveSetting('workspace_autosave', workspaceState, settingsContext);
               toast('已在本地保留您的工作区状态。', 'success');
            }},
            { label: '恢复云端 (Restore Cloud)', onClick: () => {
-              const autoSave = localStorage.getItem('workspace_autosave');
-              if (autoSave) {
-                 const state = JSON.parse(autoSave);
-                 if (state.activeModule) setActiveModule(state.activeModule);
+              const autoSave = getSetting('workspace_autosave', null, settingsContext);
+              if (isWorkspaceLayoutSetting(autoSave)) {
+                 applyWorkspaceLayout(autoSave);
                  toast('已从最近一期云端恢复。', 'success');
               }
            }}
@@ -245,35 +331,31 @@ export default function App() {
        clearInterval(interval);
        window.removeEventListener('activity_log_theme', handleThemeLog);
     };
-  }, [activeModule, isSplitScreen, secondaryModule, activePane, pinnedModules]);
+  }, [activeModule, applyWorkspaceLayout, isSplitScreen, secondaryModule, activePane, pinnedModules, settingsContext]);
 
-  // Sort pinned modules by usage frequency tracked by module_time_tracker
+  // Sort pinned modules by workspace usage frequency.
   useEffect(() => {
     const sortPinnedModules = () => {
       try {
-        const storedTracker = localStorage.getItem('module_time_tracker');
-        if (storedTracker) {
-          const tracker = JSON.parse(storedTracker);
-          setPinnedModules(prev => {
-            const sorted = [...prev].sort((a, b) => {
-              const timeA = tracker[a] || 0;
-              const timeB = tracker[b] || 0;
-              return timeB - timeA;
-            });
-            if (JSON.stringify(prev) !== JSON.stringify(sorted)) {
-              localStorage.setItem('pinned_modules', JSON.stringify(sorted));
-              return sorted;
-            }
-            return prev;
+        const tracker = loadModuleUsage(settingsContext);
+        setPinnedModules(prev => {
+          const sorted = [...prev].sort((a, b) => {
+            const timeA = tracker[a] || 0;
+            const timeB = tracker[b] || 0;
+            return timeB - timeA;
           });
-        }
+          if (JSON.stringify(prev) !== JSON.stringify(sorted)) {
+            return persistPinnedModules(sorted);
+          }
+          return prev;
+        });
       } catch (e) {}
     };
 
     const intervalId = setInterval(sortPinnedModules, 30000);
     sortPinnedModules();
     return () => clearInterval(intervalId);
-  }, []);
+  }, [persistPinnedModules, settingsContext]);
 
   const handleExportWorkspace = () => {
     const workspaceState = {
@@ -283,6 +365,11 @@ export default function App() {
       activePane,
       pinnedModules
     };
+    logActivity('export_workspace', 'Exported workspace state', 'Downloaded workspace_state.json', {
+      targetType: 'workspace',
+      targetId: 'workspace_state',
+      metadata: { activeModule, isSplitScreen, secondaryModule, pinnedModules },
+    });
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(workspaceState, null, 2));
     const dlAnchorElem = document.createElement('a');
     dlAnchorElem.setAttribute("href", dataStr);
@@ -352,18 +439,31 @@ export default function App() {
   }, []);
 
   const handleModuleNavigate = (moduleId: ModuleId) => {
+    if (!canAccessModule(moduleId)) {
+      toast('当前角色没有访问该模块的权限，请联系工作区管理员。', 'error');
+      return;
+    }
+
     if (activePane === 'primary') {
       if (moduleId === activeModule) return;
       setIsLoadingModule(true);
       setTimeout(() => {
-        logActivity('module_switch', `切换到 ${moduleId}`, '主编辑区导航');
+        logActivity('module_switch', `切换到 ${moduleId}`, '主编辑区导航', {
+          moduleId,
+          targetType: 'module',
+          targetId: moduleId,
+        });
         window.dispatchEvent(new Event('activity_logged'));
         setActiveModule(moduleId);
         setIsLoadingModule(false);
       }, 400);
     } else {
       if (moduleId === secondaryModule) return;
-      logActivity('module_switch', `切换到 ${moduleId}`, '分屏辅助区导航');
+      logActivity('module_switch', `切换到 ${moduleId}`, '分屏辅助区导航', {
+        moduleId,
+        targetType: 'module',
+        targetId: moduleId,
+      });
       window.dispatchEvent(new Event('activity_logged'));
       setSecondaryModule(moduleId);
     }
@@ -371,28 +471,22 @@ export default function App() {
 
   const getBreadcrumbs = () => {
     const targetModule = activePane === 'primary' ? activeModule : (secondaryModule || activeModule);
-    for (const group of navGroups) {
-      const item = group.items.find(i => i.id === targetModule);
-      if (item) {
-        return { groupTitle: group.title, itemLabel: item.label, firstItemId: group.items[0]?.id };
-      }
-    }
-    return { groupTitle: '系统', itemLabel: '工作台', firstItemId: 'dashboard' };
+    return getProductBreadcrumb(targetModule);
   };
 
   const getModuleTitle = () => {
     const targetModule = activePane === 'primary' ? activeModule : (secondaryModule || activeModule);
-    for (const group of navGroups) {
-      const item = group.items.find(i => i.id === targetModule);
-      if (item) return item.label;
-    }
-    return '工作台';
+    return getProductModuleTitle(targetModule);
   };
 
   const renderContent = (moduleId: ModuleId) => {
+    if (!canAccessModule(moduleId)) {
+      return <DashboardView onNavigate={handleModuleNavigate} />;
+    }
+
     switch (moduleId) {
       case 'dashboard':
-        return <DashboardView />;
+        return <DashboardView onNavigate={handleModuleNavigate} />;
       case 'media':
         return <MediaAccountsView />;
       case 'assets':
@@ -523,20 +617,20 @@ export default function App() {
     <div className="flex h-screen overflow-hidden font-sans selection:bg-[var(--color-primary)] selection:text-white print:h-auto print:overflow-visible">
       {!isFocusMode && (
         <div className="print:hidden h-full flex-shrink-0">
-          <Sidebar 
-            activeModule={activeModule} 
-            onSelect={handleModuleNavigate} 
-            isCollapsed={isSidebarCollapsed} 
+          <Sidebar
+            activeModule={activeModule}
+            onSelect={handleModuleNavigate}
+            isCollapsed={isSidebarCollapsed}
             onOpenCopilot={() => setIsCopilotOpen(true)}
           />
         </div>
       )}
-      
+
       <div className="flex-1 flex flex-col min-w-0 print:h-auto print:overflow-visible">
         <div className="print:hidden">
-          <Topbar 
-            isCollapsed={isSidebarCollapsed} 
-            toggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+          <Topbar
+            isCollapsed={isSidebarCollapsed}
+            toggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
             title={getModuleTitle()}
             onOpenTaskCenter={() => setIsTaskCenterOpen(true)}
             onOpenMessages={() => setIsMessagesOpen(true)}
@@ -549,7 +643,7 @@ export default function App() {
             onOpenOfflineQueue={() => setIsOfflineQueueOpen(true)}
           />
         </div>
-        
+
         {/* Dynamic Breadcrumbs & Pinned Modules */}
         <div className="bg-[var(--bg-panel)] border-b border-[var(--border-color)] px-6 py-2 flex items-center shadow-sm z-0 print:hidden">
           <div className="flex items-center text-[12px] font-medium text-gray-400">
@@ -571,26 +665,23 @@ export default function App() {
               <Network className="w-3.5 h-3.5 mr-1" />
               Agent Dispatcher
             </button>
-            <LayoutPresets 
-              currentLayout={{ activeModule, isSplitScreen, secondaryModule, splitRatio, pinnedModules }} 
-              onLoadLayout={(layout) => {
-                 if (layout.activeModule) setActiveModule(layout.activeModule);
-                 if (layout.isSplitScreen !== undefined) setIsSplitScreen(layout.isSplitScreen);
-                 if (layout.secondaryModule !== undefined) setSecondaryModule(layout.secondaryModule);
-                 if (layout.splitRatio) setSplitRatio(layout.splitRatio);
-                 if (layout.pinnedModules) setPinnedModules(layout.pinnedModules);
-              }} 
+            <LayoutPresets
+              currentLayout={{ activeModule, isSplitScreen, secondaryModule, splitRatio, pinnedModules }}
+              onLoadLayout={applyWorkspaceLayout}
             />
             <button
               onClick={() => {
                 const target = activePane === 'primary' ? activeModule : (secondaryModule || activeModule);
                 const isPinned = pinnedModules.includes(target);
-                logActivity(isPinned ? 'unpin_module' : 'pin_module', `${isPinned ? '取消' : ''}固定模块 ${target}`);
+                logActivity(isPinned ? 'unpin_module' : 'pin_module', `${isPinned ? '取消' : ''}固定模块 ${target}`, undefined, {
+                  moduleId: target,
+                  targetType: 'module',
+                  targetId: target,
+                });
                 window.dispatchEvent(new Event('activity_logged'));
                 setPinnedModules(prev => {
                   const newPins = isPinned ? prev.filter(p => p !== target) : [...prev, target];
-                  localStorage.setItem('pinned_modules', JSON.stringify(newPins));
-                  return newPins;
+                  return persistPinnedModules(newPins);
                 });
                 toast(isPinned ? 'Module Unpinned' : 'Module Pinned', 'success');
               }}
@@ -600,23 +691,19 @@ export default function App() {
               <Pin className="w-3.5 h-3.5" />
             </button>
           </div>
-          
+
           <div className="ml-6 flex items-center gap-2 flex-1 overflow-x-auto no-scrollbar border-l border-[var(--border-color)] pl-4">
              {pinnedModules.map((mId, index) => {
-                let mLabel = 'Module';
-                for (const group of navGroups) {
-                  const item = group.items.find(i => i.id === mId);
-                  if (item) mLabel = item.label;
-                }
+                const mLabel = getProductModuleTitle(mId);
                 return (
-                  <div 
-                    key={mId} 
+                  <div
+                    key={mId}
                     draggable
                     onDragStart={(e) => {
                       e.dataTransfer.setData('text/plain', index.toString());
                     }}
                     onDragOver={(e) => {
-                      e.preventDefault(); 
+                      e.preventDefault();
                     }}
                     onDrop={(e) => {
                       e.preventDefault();
@@ -627,21 +714,19 @@ export default function App() {
                           const newPins = [...prev];
                           const [removed] = newPins.splice(fromIndex, 1);
                           newPins.splice(toIndex, 0, removed);
-                          localStorage.setItem('pinned_modules', JSON.stringify(newPins));
-                          return newPins;
+                          return persistPinnedModules(newPins);
                         });
                       }
                     }}
                     className={`group flex items-center px-3 py-1 rounded-full text-xs font-bold border transition-colors ${mId === activeModule ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-600 border-[var(--border-color)] hover:border-gray-300 cursor-pointer'}`}>
                     <span onClick={() => handleModuleNavigate(mId)}>{mLabel}</span>
                     {mId !== 'dashboard' && (
-                      <button 
+                      <button
                         onClick={(e) => {
                           e.stopPropagation();
                           setPinnedModules(prev => {
                             const newPins = prev.filter(p => p !== mId);
-                            localStorage.setItem('pinned_modules', JSON.stringify(newPins));
-                            return newPins;
+                            return persistPinnedModules(newPins);
                           });
                         }}
                         className="ml-2  text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -657,7 +742,11 @@ export default function App() {
           <div className="ml-auto flex items-center gap-2">
             <button
                onClick={() => {
-                 logActivity('split_screen', `${isSplitScreen ? '关闭' : '开启'}分屏模式`);
+                 logActivity('split_screen', `${isSplitScreen ? '关闭' : '开启'}分屏模式`, undefined, {
+                   targetType: 'workspace',
+                   targetId: 'layout',
+                   metadata: { fromSplitScreen: isSplitScreen },
+                 });
                  window.dispatchEvent(new Event('activity_logged'));
                  setIsSplitScreen(prev => {
                    if (!prev && !secondaryModule) setSecondaryModule('dashboard');
@@ -682,7 +771,7 @@ export default function App() {
             setSplitRatio(newRatio);
           }} onMouseUp={() => isDraggingRef.current = false} onMouseLeave={() => isDraggingRef.current = false} >
           {/* Primary Pane */}
-          <motion.div 
+          <motion.div
             layout
             className={`flex flex-col min-w-0 overflow-hidden relative ${isSplitScreen ? 'bg-[var(--bg-panel)] rounded-[var(--radius-lg)] shadow-sm border border-[var(--border-color)] transition-none ' + (activePane === 'primary' ? 'ring-2 ring-blue-500' : 'opacity-70 hover:opacity-100') : 'flex-1'}`}
             style={isSplitScreen ? { width: `${splitRatio}%`, flex: 'none' } : undefined}
@@ -708,18 +797,18 @@ export default function App() {
                   exit="exit"
                   variants={{
                     hidden: { opacity: 0, scale: 0.96 },
-                    visible: { 
-                      opacity: 1, 
+                    visible: {
+                      opacity: 1,
                       scale: 1,
-                      transition: { 
-                        duration: 0.35, 
+                      transition: {
+                        duration: 0.35,
                         ease: [0.22, 1, 0.36, 1],
                         when: "beforeChildren",
                         staggerChildren: 0.05
-                      } 
+                      }
                     },
-                    exit: { 
-                      opacity: 0, 
+                    exit: {
+                      opacity: 0,
                       scale: 1.02,
                       transition: { duration: 0.25 }
                     }
@@ -733,7 +822,7 @@ export default function App() {
           </motion.div>
 
           {isSplitScreen && secondaryModule && (
-            <div 
+            <div
               className="cursor-col-resize hover:bg-blue-200 transition-colors rounded-full shrink-0 flex items-center justify-center flex-col gap-1 w-2 my-10"
               onMouseDown={() => isDraggingRef.current = true}
             >
@@ -746,7 +835,7 @@ export default function App() {
           {/* Secondary Pane */}
           <AnimatePresence>
             {isSplitScreen && secondaryModule && (
-              <motion.div 
+              <motion.div
                 layout // handles flexible sizing automatically
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -773,19 +862,19 @@ export default function App() {
           </AnimatePresence>
         </main>
       </div>
-      
+
       <TaskCenter isOpen={isTaskCenterOpen} onClose={() => setIsTaskCenterOpen(false)} />
       <InternalMessages isOpen={isMessagesOpen} onClose={() => setIsMessagesOpen(false)} />
       <AICopilot isOpen={isCopilotOpen} onClose={() => setIsCopilotOpen(false)} />
-      
-      <GlobalSearchOverlay 
-        isOpen={isGlobalSearchOpen} 
-        onClose={() => setIsGlobalSearchOpen(false)} 
+
+      <GlobalSearchOverlay
+        isOpen={isGlobalSearchOpen}
+        onClose={() => setIsGlobalSearchOpen(false)}
         onNavigate={handleModuleNavigate}
       />
-      
+
       <PerformanceMonitor />
-      <CommandPalette 
+      <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
         onNavigate={handleModuleNavigate}
@@ -794,8 +883,8 @@ export default function App() {
         onExportWorkspace={handleExportWorkspace}
       />
 
-      <KeyboardShortcutsHelp 
-        isOpen={isShortcutsHelpOpen} 
+      <KeyboardShortcutsHelp
+        isOpen={isShortcutsHelpOpen}
         onClose={() => setIsShortcutsHelpOpen(false)}
         activeModule={activeModule}
       />
@@ -808,13 +897,7 @@ export default function App() {
       <OnboardingTour />
       <SessionSummaryModal isOpen={isSessionSummaryOpen} onClose={() => setIsSessionSummaryOpen(false)} />
       <OfflineQueueModal isOpen={isOfflineQueueOpen} onClose={() => setIsOfflineQueueOpen(false)} />
-      <AutoResumeModal onLoadLayout={(layout) => {
-         if (layout.activeModule) setActiveModule(layout.activeModule);
-         if (layout.isSplitScreen !== undefined) setIsSplitScreen(layout.isSplitScreen);
-         if (layout.secondaryModule !== undefined) setSecondaryModule(layout.secondaryModule);
-         if (layout.splitRatio) setSplitRatio(layout.splitRatio);
-         if (layout.pinnedModules) setPinnedModules(layout.pinnedModules);
-      }} />
+      <AutoResumeModal onLoadLayout={applyWorkspaceLayout} />
       <FloatingQuickActions activeModule={activeModule} />
     </div>
   );

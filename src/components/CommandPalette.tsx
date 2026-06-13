@@ -1,9 +1,19 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Command, ArrowRight, FileText, Settings, LayoutDashboard, History, X, Monitor, Palette, Trash2, Download, Video, CheckCircle2, Play, Keyboard, Activity } from 'lucide-react';
-import { navGroups } from './Sidebar';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Command, ArrowRight, FileText, LayoutDashboard, History, X, Monitor, Palette, Trash2, Download, Video, CheckCircle2, Play, Keyboard, Activity } from 'lucide-react';
 import { ModuleId } from '../types';
+import { getProductFeature, getProductNavGroupsForRole } from '../product/registry';
+import { iconMap } from '../product/icons';
+import { listAuditLogs } from '../lib/data/auditLogRepository';
+import { getSetting, saveSetting } from '../lib/data/settingsRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
 import { toast } from './Toast';
 import { useTheme } from './ThemeProvider';
+
+interface UserMacro {
+  name: string;
+  sequence: string[];
+  keyMap: string;
+}
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -14,13 +24,34 @@ interface CommandPaletteProps {
   onExportWorkspace?: () => void;
 }
 
+const navigationShortcutModules = [
+  { id: 'action-store', moduleId: 'store_dashboard' },
+  { id: 'action-settings', moduleId: 'settings' },
+  { id: 'action-dashboard', moduleId: 'dashboard' },
+] as const satisfies readonly { id: string; moduleId: ModuleId }[];
+
 export function CommandPalette({ isOpen, onClose, onNavigate, onToggleFocusMode, activeModule, onExportWorkspace }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [macroSequence, setMacroSequence] = useState<string[]>([]);
-  const [savedMacros, setSavedMacros] = useState<{name: string, sequence: string[], keyMap: string}[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const { setTheme } = useTheme();
+  const session = useSaasSession();
+  const settingsContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const accessibleNavGroups = useMemo(
+    () => getProductNavGroupsForRole(session.membership.role),
+    [session.membership.role],
+  );
+  const accessibleModuleIds = useMemo(
+    () => new Set(accessibleNavGroups.flatMap((group) => group.items.map((item) => item.id))),
+    [accessibleNavGroups],
+  );
+  const [savedMacros, setSavedMacros] = useState<UserMacro[]>(() =>
+    getSetting<UserMacro[]>('user_macros', [], settingsContext),
+  );
 
   useEffect(() => {
     if (isOpen) {
@@ -30,15 +61,22 @@ export function CommandPalette({ isOpen, onClose, onNavigate, onToggleFocusMode,
   }, [isOpen]);
 
   useEffect(() => {
-    const storedMacros = localStorage.getItem('user_macros');
-    if (storedMacros) {
-      try { setSavedMacros(JSON.parse(storedMacros)); } catch(e) {}
-    }
-  }, []);
+    const refreshMacros = () => setSavedMacros(getSetting<UserMacro[]>('user_macros', [], settingsContext));
+    const handleSettingsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string; userId?: string }>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== settingsContext.workspaceId) return;
+      if (detail?.userId && detail.userId !== settingsContext.userId) return;
+      refreshMacros();
+    };
 
-  const saveMacros = (macros: any[]) => {
+    refreshMacros();
+    window.addEventListener('settings_updated', handleSettingsUpdated);
+    return () => window.removeEventListener('settings_updated', handleSettingsUpdated);
+  }, [settingsContext]);
+
+  const saveMacros = (macros: UserMacro[]) => {
     setSavedMacros(macros);
-    localStorage.setItem('user_macros', JSON.stringify(macros));
+    saveSetting('user_macros', macros, settingsContext);
   };
 
   useEffect(() => {
@@ -93,12 +131,9 @@ export function CommandPalette({ isOpen, onClose, onNavigate, onToggleFocusMode,
   const getContextualActions = () => {
     let trending: any[] = [];
     try {
-        const logsStr = localStorage.getItem('activity_logs');
-        if (logsStr) {
-           const logs = JSON.parse(logsStr).filter((l: any) => l.type === 'ai_command');
-           if (logs.length > 5) {
-               trending.push({ id: 'trending-1', title: `Run Last Common Action`, type: 'trending', action: () => toast('Executing trending action...', 'success'), icon: <Activity className="icon-sm text-indigo-500" /> });
-           }
+        const logs = listAuditLogs({ workspaceId: session.workspace.id }).filter((log) => log.action === 'ai_command');
+        if (logs.length > 5) {
+            trending.push({ id: 'trending-1', title: `Run Last Common Action`, type: 'trending', action: () => toast('Executing trending action...', 'success'), icon: <Activity className="icon-sm text-indigo-500" /> });
         }
     } catch(e) {}
 
@@ -128,6 +163,20 @@ export function CommandPalette({ isOpen, onClose, onNavigate, onToggleFocusMode,
     }
   };
 
+  const navigationShortcuts = navigationShortcutModules.flatMap(({ id, moduleId }) => {
+    if (!accessibleModuleIds.has(moduleId)) return [];
+    const feature = getProductFeature(moduleId);
+    if (!feature) return [];
+    const Icon = iconMap[feature.icon] || LayoutDashboard;
+    return [{
+      id,
+      title: feature.label,
+      type: `${feature.domain} shortcut`,
+      moduleId,
+      icon: <Icon className="icon-sm" />,
+    }];
+  });
+
   const genericActions = [
     { id: 'action-macro-record', title: isRecording ? 'Stop Recording Macro' : 'Start Macro Recording', type: 'system action', action: () => {
        if (isRecording) {
@@ -145,16 +194,29 @@ export function CommandPalette({ isOpen, onClose, onNavigate, onToggleFocusMode,
          toast('Recording started... select commands to record', 'info');
        }
     }, icon: isRecording ? <CheckCircle2 className="icon-sm text-green-500" /> : <Video className="icon-sm text-red-500 animate-pulse" /> },
-    { id: 'action-store', title: 'Open Store Dashboard', type: 'navigation shortcut', moduleId: 'store_dashboard' as ModuleId, icon: <LayoutDashboard className="icon-sm" /> },
-    { id: 'action-settings', title: 'Open Settings', type: 'navigation shortcut', moduleId: 'settings' as ModuleId, icon: <Settings className="icon-sm" /> },
-    { id: 'action-dashboard', title: 'Go to Dashboard', type: 'navigation shortcut', moduleId: 'dashboard' as ModuleId, icon: <LayoutDashboard className="icon-sm" /> },
+    ...navigationShortcuts,
     { id: 'action-focus', title: 'Toggle Focus Mode', type: 'system action', action: () => { if(onToggleFocusMode) onToggleFocusMode(); toast('Toggled Focus Mode', 'success'); }, icon: <Monitor className="icon-sm" /> },
     { id: 'theme-midnight', title: 'Midnight Dark Theme', type: 'theme setting', action: () => { setTheme('midnight'); toast('Theme switched to Midnight Dark', 'success'); }, icon: <Palette className="icon-sm" /> },
     { id: 'theme-Sepia', title: 'Sepia Reading Theme', type: 'theme setting', action: () => { setTheme('sepia'); toast('Theme switched to Sepia', 'success'); }, icon: <Palette className="icon-sm" /> },
     { id: 'action-export-workspace', title: 'Export Workspace State', type: 'system action', action: () => { if(onExportWorkspace) onExportWorkspace(); onClose(); }, icon: <Download className="icon-sm" /> },
   ];
 
-  const actions = [...getContextualActions(), ...genericActions];
+  const moduleNavigationActions = accessibleNavGroups.flatMap((group) =>
+    group.items.map((item) => {
+      const feature = getProductFeature(item.id);
+      const Icon = iconMap[item.icon] || LayoutDashboard;
+      return {
+        id: `module-${item.id}`,
+        title: item.label,
+        type: feature?.domain ?? group.title,
+        moduleId: item.id,
+        icon: <Icon className="icon-sm" />,
+      };
+    }),
+  );
+
+  const contextualActions = getContextualActions();
+  const actions = [...contextualActions, ...genericActions, ...moduleNavigationActions];
   
   // also add saved macros for execution
   const macroExecActions = savedMacros.map(m => ({
@@ -172,7 +234,8 @@ export function CommandPalette({ isOpen, onClose, onNavigate, onToggleFocusMode,
     }, icon: <Play className="icon-sm text-green-500" />
   }));
 
-  const allFilteredActions = [...actions, ...macroExecActions];
+  const paletteActions = query ? actions : [...contextualActions, ...genericActions];
+  const allFilteredActions = [...paletteActions, ...macroExecActions];
 
   const filteredItems = query 
     ? allFilteredActions.filter(a => a.title.toLowerCase().includes(query.toLowerCase()) || a.type.toLowerCase().includes(query.toLowerCase()))

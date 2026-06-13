@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, LineChart, Line } from 'recharts';
 import { Download, Calendar, ArrowUpRight, ArrowDownRight, FileText, Video, ImageIcon, Mic, X } from 'lucide-react';
+import jsPDF from 'jspdf';
+import { saveAs } from 'file-saver';
 import { AgentInteractionHeatmap } from './AgentInteractionHeatmap';
+import { toast } from './Toast';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
 
 const visitData = [
   { name: 'Mon', pv: 2400, uv: 1400 },
@@ -13,11 +18,104 @@ const visitData = [
   { name: 'Sun', pv: 4300, uv: 3800 },
 ];
 
+type AnalyticsExportFormat = 'pdf' | 'excel';
+
+const dateRangeLabels: Record<string, string> = {
+  '7days': 'Last 7 days',
+  '30days': 'Last 30 days',
+  thisMonth: 'This month',
+  custom: 'Custom range',
+};
+
+const tabLabels: Record<string, string> = {
+  overview: 'Agent contribution overview',
+  nfc: 'Matrix conversion tracking',
+  saas: 'SaaS user analytics',
+};
+
+function createAnalyticsReportRows(activeTab: string, dateRange: string) {
+  const totalApiRequests = visitData.reduce((sum, item) => sum + item.pv, 0);
+  const totalActiveUsers = visitData.reduce((sum, item) => sum + item.uv, 0);
+  const avgActiveUsers = Math.round(totalActiveUsers / visitData.length);
+
+  return [
+    ['Report section', tabLabels[activeTab] ?? activeTab],
+    ['Date range', dateRangeLabels[dateRange] ?? dateRange],
+    ['Total API requests', totalApiRequests.toString()],
+    ['Total active users', totalActiveUsers.toString()],
+    ['Average active users per day', avgActiveUsers.toString()],
+    ['Generated assets', '45231'],
+    ['Estimated hours saved', '1280'],
+    ['API error rate', '0.02%'],
+    ...visitData.map((item) => [`${item.name} API requests`, item.pv.toString()]),
+    ...visitData.map((item) => [`${item.name} active users`, item.uv.toString()]),
+  ];
+}
+
+function toCsvValue(value: string) {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
 export function DataAnalyticsView() {
+  const session = useSaasSession();
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [dateRange, setDateRange] = useState('7days');
-  const [exportFormat, setExportFormat] = useState('pdf');
+  const [exportFormat, setExportFormat] = useState<AnalyticsExportFormat>('pdf');
   const [activeTab, setActiveTab] = useState('overview');
+
+  const handleConfirmExport = () => {
+    const exportedAt = Date.now();
+    const reportId = `analytics_${session.workspace.slug}_${activeTab}_${exportedAt}`;
+    const reportRows = createAnalyticsReportRows(activeTab, dateRange);
+
+    if (exportFormat === 'pdf') {
+      const doc = new jsPDF();
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(16);
+      doc.text('AI Studio Analytics Report', 14, 18);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.text(`Workspace: ${session.workspace.name}`, 14, 28);
+      doc.text(`Generated: ${new Date(exportedAt).toISOString()}`, 14, 34);
+
+      let y = 46;
+      reportRows.forEach(([label, value]) => {
+        if (y > 280) {
+          doc.addPage();
+          y = 18;
+        }
+        doc.setFont('helvetica', 'bold');
+        doc.text(label, 14, y);
+        doc.setFont('helvetica', 'normal');
+        doc.text(value, 92, y);
+        y += 8;
+      });
+      doc.save(`${reportId}.pdf`);
+    } else {
+      const csv = [
+        ['Metric', 'Value'].map(toCsvValue).join(','),
+        ...reportRows.map((row) => row.map(toCsvValue).join(',')),
+      ].join('\n');
+      const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+      saveAs(blob, `${reportId}.csv`);
+    }
+
+    logAuditEvent({
+      action: 'data_snapshot_export',
+      moduleId: 'data',
+      targetType: 'module',
+      targetId: activeTab,
+      metadata: {
+        reportId,
+        format: exportFormat,
+        dateRange,
+        rowCount: reportRows.length,
+      },
+    }, { session });
+
+    toast(`Analytics report exported as ${exportFormat.toUpperCase()}`, 'success');
+    setIsExportOpen(false);
+  };
 
   return (
     <div className="p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] max-w-[1600px] mx-auto space-y-8 bg-[var(--bg-app)] min-h-[calc(100vh-4rem)] relative animate-in fade-in duration-300">
@@ -115,8 +213,8 @@ export function DataAnalyticsView() {
                    </div>
                  </div>
 
-                 <button 
-                   onClick={() => { setIsExportOpen(false); alert('报表导出任务已提交，完成后将通过系统通知您。'); }}
+                 <button
+                   onClick={handleConfirmExport}
                    className="w-full py-2.5 bg-[var(--color-primary)] text-white rounded-[var(--radius-lg)] text-sm font-bold hover:bg-gray-800 transition-colors"
                  >
                    确认导出
@@ -153,7 +251,7 @@ export function DataAnalyticsView() {
         <div className="bg-[var(--bg-panel)] rounded-[24px] p-[var(--spacing-lg)] border border-[var(--border-color)] shadow-sm">
           <h3 className="text-lg font-bold text-[var(--text-main)] mb-[var(--spacing-md)]">访问与使用趋势</h3>
           <div className="h-80 w-full">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
               <AreaChart data={visitData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorPv" x1="0" y1="0" x2="0" y2="1">
@@ -208,7 +306,7 @@ export function DataAnalyticsView() {
         <div className="bg-[var(--bg-panel)] rounded-[24px] p-[var(--spacing-lg)] border border-[var(--border-color)] shadow-sm">
            <h3 className="text-lg font-bold text-[var(--text-main)] mb-[var(--spacing-md)]">资源成本消耗 (Est)</h3>
            <div className="h-64 w-full">
-             <ResponsiveContainer width="100%" height="100%">
+             <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
                 <BarChart data={visitData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#9CA3AF', fontSize: 12, fontWeight: 600}} dy={10} />
@@ -279,7 +377,7 @@ export function DataAnalyticsView() {
             <div className="lg:col-span-2 bg-[var(--bg-panel)] rounded-[24px] p-[var(--spacing-lg)] border border-[var(--border-color)] shadow-sm">
                <h3 className="text-lg font-bold text-[var(--text-main)] mb-[var(--spacing-md)] font-sans tracking-tight">各点位设备互动漏斗转化</h3>
                <div className="h-72 w-full">
-                 <ResponsiveContainer width="100%" height="100%">
+                 <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
                     <BarChart data={[
                        { name: '桌面点餐贴', pv: 4200, cv: 2400 },
                        { name: '收银台展牌', pv: 3300, cv: 1800 },
@@ -357,7 +455,7 @@ export function DataAnalyticsView() {
             <div className="bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm p-[var(--spacing-lg)] col-span-2">
                <h3 className="text-lg font-bold text-[var(--text-main)] mb-[var(--spacing-md)] tracking-tight">各子账户 AI 模型调用分布 (Token/积分占比)</h3>
                <div className="h-80 w-full">
-                 <ResponsiveContainer width="100%" height="100%">
+                 <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
                     <BarChart data={[
                        { name: '电商一部', 'Gemini 3.1 Pro': 45, 'Imagen 3': 30, 'Sora v1': 15, 'HeyGen': 10 },
                        { name: '内容矩阵', 'Gemini 3.1 Pro': 20, 'Imagen 3': 15, 'Sora v1': 45, 'HeyGen': 20 },

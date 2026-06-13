@@ -1,5 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Image as ImageIcon, Sparkles, Wand2, Download, Copy, Play, Check, ImageOff, Plus, Minus, Upload, Video, LayoutTemplate, RotateCcw, Clock, Trash2, Save, X, Smartphone, Monitor, ChevronDown, ChevronRight, AlignLeft, Tags, Layers } from 'lucide-react';
+import type { ModuleId } from '../types';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import {
+  createGenerationJob,
+  failGenerationJob,
+  listGenerationJobs,
+  updateGenerationJob,
+  type GenerationJob,
+} from '../lib/data/generationJobRepository';
+import { createWorkspaceAsset, recordWorkspaceAssetExport, type WorkspaceAsset } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
+import { GenerationFailureRecoveryPanel } from './GenerationFailureRecoveryPanel';
 
 interface ECommerceViewProps {
   title: string;
@@ -123,6 +136,9 @@ const getPreviewStyle = (aspectRatio: string) => {
   return 'aspect-square'; 
 };
 
+const GENERATED_ECOMMERCE_IMAGE_URL = 'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?auto=format&fit=crop&q=80&w=1600';
+const GENERATED_ECOMMERCE_VIDEO_URL = 'https://assets.mixkit.co/videos/preview/mixkit-futuristic-neon-light-tunnel-34686-large.mp4';
+
 // ----------------------------------------------------------------------
 // Modular UI Components
 // ----------------------------------------------------------------------
@@ -239,6 +255,11 @@ const SelectableGrid = ({ options, selectedValues, onSelect, columns = 2, isMult
 // ----------------------------------------------------------------------
 
 export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
+  const session = useSaasSession();
+  const jobContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const flags = useMemo(() => getModuleFlags(moduleId), [moduleId]);
   const config = useMemo(() => getModuleConfig(moduleId), [moduleId]);
 
@@ -271,10 +292,11 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<string | null>(null);
+  const [exportAsset, setExportAsset] = useState<WorkspaceAsset | null>(null);
   const [hasError, setHasError] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [mockHistory, setMockHistory] = useState([1, 2, 3]);
+  const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>(() => listGenerationJobs(jobContext));
 
   // Extra states for requested features
   const [compareSliderValue, setCompareSliderValue] = useState(50);
@@ -318,19 +340,52 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
     setProductName('');
     setSellingPoints('');
     setResult(null);
+    setExportAsset(null);
   }, [flags]);
+
+  useEffect(() => {
+    const refreshGenerationJobs = () => setGenerationJobs(listGenerationJobs(jobContext));
+    const handleJobsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== session.workspace.id) return;
+      refreshGenerationJobs();
+    };
+    refreshGenerationJobs();
+    window.addEventListener('generation_jobs_updated', handleJobsUpdated);
+    return () => window.removeEventListener('generation_jobs_updated', handleJobsUpdated);
+  }, [jobContext, session.workspace.id]);
+
+  const generationHistory = useMemo(
+    () => generationJobs.filter((job) => job.moduleId === moduleId).slice(0, 8),
+    [generationJobs, moduleId],
+  );
 
   const handleReset = () => {
     initDefaults();
     setProductName('');
     setSellingPoints('');
     setResult(null);
+    setExportAsset(null);
     setReferenceFiles([]);
     setProductFiles([]);
   };
 
   const handleSaveDraft = () => {
-    setMockHistory(prev => [prev.length + 1, ...prev]);
+    createGenerationJob({
+      title: `Draft: ${productName || config.namePlaceholder}`,
+      prompt: sellingPoints || config.textPlaceholder,
+      status: 'queued',
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      moduleId: moduleId as ModuleId,
+      progress: 0,
+      metadata: {
+        draft: true,
+        selectedTypes,
+        aspectRatio,
+        selectedTone,
+      },
+    }, jobContext);
     triggerToast();
   };
 
@@ -360,46 +415,245 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
     triggerToast();
   };
 
+  const handleGenerationFailure = (job: GenerationJob, error: unknown, metadata: Record<string, unknown>) => {
+    const message = error instanceof Error ? error.message : 'Provider failed before returning an output.';
+    failGenerationJob(job.id, {
+      error: message,
+      metadata,
+    }, jobContext);
+    logAuditEvent({
+      action: 'generation_job_failed',
+      moduleId: moduleId as ModuleId,
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        ...metadata,
+        error: message,
+      },
+    }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+    setHasError(true);
+  };
+
   const handleGenerate = () => {
     if (isGenerating) return;
     setIsGenerating(true);
     setProgress(0);
     setResult(null);
+    setExportAsset(null);
     setHasError(false);
 
-    const interval = setInterval(() => {
-      setProgress(prev => {
-         // simulate varied progress speed
-        const jump = Math.floor(Math.random() * 8) + 2; 
-        if (prev + jump >= 100) {
-          clearInterval(interval);
-          setIsGenerating(false);
-          
-          if (Math.random() < 0.2) {
-             setHasError(true);
-          } else {
-             setResult('Generated');
-             triggerToast();
-          }
-          return 100;
-        }
-        return prev + jump;
+    const job = createGenerationJob({
+      title: `${title} - ${productName || config.namePlaceholder}`,
+      prompt: sellingPoints || config.textPlaceholder,
+      status: 'running',
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      moduleId: moduleId as ModuleId,
+      progress: 0,
+      metadata: {
+        genMethod,
+        selectedTypes,
+        aspectRatio,
+        selectedTone,
+        selectedLighting,
+        selectedAngle,
+        batchCount,
+      },
+    }, jobContext);
+    logAuditEvent({
+      action: 'generation_job_start',
+      moduleId: moduleId as ModuleId,
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        title,
+        productName,
+        selectedTypes,
+      },
+    }, { session });
+
+    try {
+      updateGenerationJob(job.id, {
+        progress: 100,
+        status: 'succeeded',
+      }, jobContext);
+      const generatedAssetUrl = flags.isVideo ? GENERATED_ECOMMERCE_VIDEO_URL : GENERATED_ECOMMERCE_IMAGE_URL;
+      const asset = createWorkspaceAsset({
+      name: `${productName || config.namePlaceholder}_${Date.now()}.${flags.isVideo ? 'mp4' : 'png'}`,
+      type: flags.isVideo ? 'video' : 'image',
+      size: flags.isVideo ? videoDuration : `${batchCount} variants`,
+      source: 'generated',
+      moduleId: moduleId as ModuleId,
+      generationJobId: job.id,
+      url: generatedAssetUrl,
+      previewUrl: generatedAssetUrl,
+      tags: selectedTypes,
+      metadata: {
+        productName,
+        sellingPoints,
+        genMethod,
+        platform,
+        selectedTone,
+        selectedLighting,
+        selectedAngle,
+      },
+    }, jobContext);
+    setExportAsset(asset);
+    createPricedWorkspaceUsageEvent({
+      moduleId: moduleId as ModuleId,
+      pricingAction: 'generation',
+      kind: 'generation',
+      targetType: 'generation_job',
+      targetId: job.id,
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      unitCount: flags.isVideo ? 1 : Math.max(1, batchCount),
+      metadata: {
+        assetId: asset.id,
+        assetType: asset.type,
+        productName,
+        platform,
+        selectedTypes,
+        batchCount,
+      },
+    }, jobContext);
+    logAuditEvent({
+      action: 'generation_job_complete',
+      moduleId: moduleId as ModuleId,
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        productName,
+        generatedAsset: true,
+        assetId: asset.id,
+        assetType: asset.type,
+      },
+    }, { session });
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: moduleId as ModuleId,
+      targetType: 'asset',
+      targetId: asset.id,
+      metadata: {
+        generationJobId: job.id,
+        assetType: asset.type,
+        productName,
+      },
+    }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+    setProgress(100);
+    setResult('Generated');
+      triggerToast();
+    } catch (error) {
+      handleGenerationFailure(job, error, {
+        productName,
+        sellingPoints,
+        genMethod,
+        platform,
+        selectedTypes,
+        batchCount,
+        selectedTone,
+        selectedLighting,
+        selectedAngle,
       });
-    }, 400);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleGenerateSeo = () => {
      if (isGeneratingSeo) return;
      setIsGeneratingSeo(true);
-     // Mock Gemini API call
-     setTimeout(() => {
-        setIsGeneratingSeo(false);
-        setSeoMetadata({
-           title: `【高能降压】${productName || '多功能新品'} | ${sellingPoints || '轻量透气 · 智能防静电'} (官方正品)`,
-           keywords: '百搭, 治愈系, 销量冠军, 高端平替',
-           desc: '这款宝贝绝对是今年最大的黑马！结合了顶级材质与智能设计，不仅解决受众痛点，还能在各种场合展示独特质感。'
-        });
-     }, 1500);
+
+     const job = createGenerationJob({
+       title: `SEO - ${productName || config.namePlaceholder}`,
+       prompt: sellingPoints || config.textPlaceholder,
+       status: 'running',
+       providerKind: 'mock',
+       runtimeMode: 'web',
+       moduleId: moduleId as ModuleId,
+       progress: 0,
+       metadata: {
+         output: 'seo_metadata',
+         productName,
+         platform,
+         selectedTone,
+       },
+     }, jobContext);
+     logAuditEvent({
+       action: 'generation_job_start',
+       moduleId: moduleId as ModuleId,
+       targetType: 'generation_job',
+       targetId: job.id,
+       metadata: {
+         output: 'seo_metadata',
+         productName,
+       },
+     }, { session });
+
+     try {
+       const generatedSeoMetadata = {
+        title: `【高能降压】${productName || '多功能新品'} | ${sellingPoints || '轻量透气 · 智能防静电'} (官方正品)`,
+        keywords: '百搭, 治愈系, 销量冠军, 高端平替',
+        desc: '这款宝贝绝对是今年最大的黑马！结合了顶级材质与智能设计，不仅解决受众痛点，还能在各种场合展示独特质感。'
+     };
+     setSeoMetadata(generatedSeoMetadata);
+     updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+     const asset = createWorkspaceAsset({
+       name: `seo-metadata-${Date.now()}.json`,
+       type: 'text',
+       size: `${JSON.stringify(generatedSeoMetadata).length} chars`,
+       source: 'generated',
+       moduleId: moduleId as ModuleId,
+       generationJobId: job.id,
+       tags: ['seo_metadata', platform, selectedTone],
+       metadata: {
+         seoMetadata: generatedSeoMetadata,
+         productName,
+         sellingPoints,
+         platform,
+       },
+     }, jobContext);
+     setExportAsset(asset);
+     createPricedWorkspaceUsageEvent({
+       moduleId: moduleId as ModuleId,
+       pricingAction: 'generation',
+       kind: 'generation',
+       targetType: 'generation_job',
+       targetId: job.id,
+       providerKind: 'mock',
+       runtimeMode: 'web',
+       metadata: {
+         assetId: asset.id,
+         assetType: asset.type,
+         output: 'seo_metadata',
+         productName,
+         platform,
+       },
+     }, jobContext);
+     logAuditEvent({
+       action: 'generation_job_complete',
+       moduleId: moduleId as ModuleId,
+       targetType: 'generation_job',
+       targetId: job.id,
+       metadata: {
+         productName,
+         output: 'seo_metadata',
+         assetType: 'text',
+       },
+     }, { session });
+     triggerToast();
+     } catch (error) {
+       handleGenerationFailure(job, error, {
+         output: 'seo_metadata',
+         productName,
+         platform,
+         selectedTone,
+       });
+     } finally {
+       setIsGeneratingSeo(false);
+     }
   };
 
   const isImgMethod = genMethod === 'img2img' || genMethod === 'img2video';
@@ -417,11 +671,36 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
       : "https://images.unsplash.com/photo-1627384113743-6bd5a479fffd?auto=format&fit=crop&q=80&w=1200";
   }, [previewImageSrc, flags.isDetailPage]);
 
-  // Mock generated social copy
   const generatedCopy = useMemo(() => {
      if (!result) return null;
      return `🔥 ${productName || '神仙开挂单品'}终于被我找到了！\n\n✨ ${sellingPoints || '质感无敌，包装直接拉满高级感！不仅颜值抗打，实力也完全在线。'}\n\n💡 这波设计风格走的【${selectedLighting}】+【${selectedAngle}】，完全长在我的审美点上！不得不说这品控绝了，细节控福音～\n\n🛒 ${flags.isPoster ? '大促马上开启，赶紧冲别犹豫！' : '已经加入购物车，家人们谁懂啊！'}\n\n#${productName ? productName.slice(0,4) : '好物推荐'} #购物分享 #高颜值实用 #神仙设计`;
   }, [result, productName, sellingPoints, selectedLighting, selectedAngle, flags.isPoster]);
+
+  const handleExportResult = () => {
+    if (!exportAsset) return;
+    recordWorkspaceAssetExport({
+      asset: exportAsset,
+      moduleId: moduleId as ModuleId,
+      format: flags.isVideo ? 'mp4' : exportAsset.type === 'text' ? 'json' : 'png',
+      fileName: exportAsset.name,
+      sourceAction: flags.isVideo ? 'download_video_result' : 'save_generated_result',
+      metered: true,
+      unitCount: flags.isVideo ? 1 : Math.max(1, batchCount),
+      metadata: {
+        pricingAction: 'export',
+        kind: 'export',
+        productName,
+        platform,
+        selectedTypes,
+        genMethod,
+      },
+    }, {
+      ...jobContext,
+      session,
+    });
+    window.dispatchEvent(new Event('activity_logged'));
+    triggerToast();
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] xl:grid-cols-[380px_1fr] h-auto min-h-[calc(100vh-4rem)] lg:h-[calc(100vh-4rem)] bg-[var(--bg-app)] overflow-y-auto custom-scrollbar lg:overflow-hidden">
@@ -457,6 +736,9 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
         </div>
 
         <div className="flex-1 overflow-y-auto w-full px-5 py-2 custom-scrollbar pb-40 bg-[#FDFDFE]">
+          <div className="py-3">
+            <GenerationFailureRecoveryPanel moduleId={moduleId as ModuleId} session={session} context={jobContext} />
+          </div>
           
           {config.hasGenMethod && (
             <FormSection title="内容创作方式" className="pb-6">
@@ -740,18 +1022,24 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
                   </button>
                </div>
                <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                 {mockHistory.map(i => (
-                    <div key={i} className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-3 shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group">
+                 {generationHistory.length === 0 && (
+                    <div className="p-6 text-center border border-dashed border-[var(--border-color)] rounded-[var(--radius-xl)] bg-gray-50">
+                       <p className="text-sm font-bold text-[var(--text-main)]">暂无生成档案</p>
+                       <p className="text-xs text-[var(--text-muted)] mt-1">完成一次生成或保存草稿后会出现在这里。</p>
+                    </div>
+                 )}
+                 {generationHistory.map(job => (
+                    <div key={job.id} className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-3 shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group">
                        <div className="flex space-x-3">
                           <div className="w-20 h-20 bg-gray-100 rounded-[var(--radius-lg)] flex-shrink-0 flex items-center justify-center border border-[var(--border-color)] overflow-hidden relative">
                              <img src={`https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&q=80&w=200&h=200&crop=faces`} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="Draft" />
                              {flags.isVideo && <div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Play className="icon-lg text-white" fill="currentColor"/></div>}
                           </div>
                           <div className="flex-1 flex flex-col justify-center">
-                             <p className="text-[13px] font-bold text-[var(--text-main)] line-clamp-1">{config.namePlaceholder}尝试_{i}</p>
-                             <p className="text-[11px] text-gray-400 mt-1 flex items-center"><Clock className="w-3 h-3 mr-1"/> 2026-05-{29-i} 14:00</p>
+                             <p className="text-[13px] font-bold text-[var(--text-main)] line-clamp-1">{job.title}</p>
+                             <p className="text-[11px] text-gray-400 mt-1 flex items-center"><Clock className="w-3 h-3 mr-1"/> {new Date(job.updatedAt).toLocaleString()}</p>
                              <div className="mt-2 text-left">
-                               <span className="text-[10px] text-[var(--text-main)] font-black bg-gray-100 px-2 py-0.5 rounded-md uppercase tracking-wider">{flags.isVideo ? 'HD VIDEO' : 'STATIC IMG'}</span>
+                               <span className="text-[10px] text-[var(--text-main)] font-black bg-gray-100 px-2 py-0.5 rounded-md uppercase tracking-wider">{job.status}</span>
                              </div>
                           </div>
                        </div>
@@ -861,7 +1149,7 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
                       <button onClick={handleReset} className="px-4 py-2 bg-gray-50 hover:bg-red-50 text-gray-600 hover:text-red-600 text-[13px] font-bold rounded-[var(--radius-lg)] transition-colors flex items-center">
                         <Trash2 className="icon-sm mr-1.5" /> 清除
                       </button>
-                      <button onClick={triggerToast} className="px-4 py-2 bg-[var(--color-primary)] text-white hover:bg-black text-[13px] font-bold rounded-[var(--radius-lg)] transition-colors flex items-center shadow-md">
+                      <button onClick={handleExportResult} className="px-4 py-2 bg-[var(--color-primary)] text-white hover:bg-black text-[13px] font-bold rounded-[var(--radius-lg)] transition-colors flex items-center shadow-md">
                         <Download className="icon-sm mr-1.5" /> 存至资产库
                       </button>
                     </div>

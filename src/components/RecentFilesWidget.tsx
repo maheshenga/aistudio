@@ -1,35 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { FileText, Image as ImageIcon, Video, Clock } from 'lucide-react';
-
-interface RecentAsset {
-  id: string;
-  title: string;
-  type: string;
-  timestamp: number;
-}
+import { useWorkspaceAssets } from '../hooks/useWorkspaceAssets';
 
 export function RecentFilesWidget() {
-  const [recentFiles, setRecentFiles] = useState<RecentAsset[]>([]);
-
-  useEffect(() => {
-    let stored = localStorage.getItem('recent_ai_assets');
-    if (!stored) {
-      const mockFiles = [
-        { id: '1', title: 'Q3 Marketing Copy', type: 'text', timestamp: Date.now() - 3600000 },
-        { id: '2', title: 'Summer Campaign Hero', type: 'image', timestamp: Date.now() - 86400000 },
-        { id: '3', title: 'Product Launch Teaser', type: 'video', timestamp: Date.now() - 172800000 },
-      ];
-      localStorage.setItem('recent_ai_assets', JSON.stringify(mockFiles));
-      stored = JSON.stringify(mockFiles);
-    }
-    
-    try {
-      const files: RecentAsset[] = JSON.parse(stored);
-      setRecentFiles(files.sort((a, b) => b.timestamp - a.timestamp));
-    } catch (e) {
-      console.error('Failed to load recent files');
-    }
-  }, []);
+  const assets = useWorkspaceAssets();
+  const recentFiles = useMemo(
+    () => [...assets]
+      .sort((a, b) => (b.lastAccessedAt ?? b.updatedAt) - (a.lastAccessedAt ?? a.updatedAt))
+      .slice(0, 3)
+      .map((asset) => ({
+        id: asset.id,
+        title: asset.name,
+        type: asset.type === 'document' ? 'text' : asset.type,
+        timestamp: asset.lastAccessedAt ?? asset.updatedAt,
+      })),
+    [assets],
+  );
 
   const formatTime = (ts: number) => {
     const diff = (Date.now() - ts) / 1000;

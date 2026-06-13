@@ -1,39 +1,36 @@
-import React, { useEffect, useState } from 'react';
-import { navGroups } from './Sidebar';
+import React, { useMemo } from 'react';
 import { Clock, Star, Zap, Activity } from 'lucide-react';
 import { ModuleId } from '../types';
+import { canViewProductModule, getProductFeature } from '../product/registry';
+import { iconMap } from '../product/icons';
+import { getSetting, saveSetting } from '../lib/data/settingsRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { useWorkspaceUsage } from '../hooks/useWorkspaceUsage';
+import { toast } from './Toast';
 
 export function FrequentWorkflowsWidget() {
-  const [topModules, setTopModules] = useState<{ id: string; name: string; time: number; icon: any }[]>([]);
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('module_time_tracker');
-      if (stored) {
-        const data = JSON.parse(stored);
-        const sorted = Object.entries(data)
-          .sort(([, a], [, b]) => (b as number) - (a as number))
+  const session = useSaasSession();
+  const settingsContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const moduleTimes = useWorkspaceUsage();
+  const topModules = useMemo(
+    () => Object.entries(moduleTimes)
           .map(([id, time]) => {
-            // Find module info
-            let name = id;
-            let icon = 'Activity';
-            for (const group of navGroups) {
-              const item = group.items.find((i: any) => i.id === id);
-              if (item) {
-                name = item.label;
-                icon = item.icon;
-                break;
-              }
-            }
-            return { id, name, time: time as number, icon };
+            const seconds = time ?? 0;
+            const feature = getProductFeature(id as ModuleId);
+            const name = feature?.label ?? id;
+            const icon = feature?.icon ?? 'Activity';
+            return { id: id as ModuleId, name, time: seconds, icon };
           })
+          .filter(t => canViewProductModule(t.id, session.membership.role))
+          .filter(t => t.time > 0)
+          .sort((a, b) => b.time - a.time)
           .filter(t => t.id !== 'dashboard' && t.id !== 'activity_logs')
-          .slice(0, 3);
-          
-        setTopModules(sorted);
-      }
-    } catch {}
-  }, []);
+          .slice(0, 3),
+    [moduleTimes, session.membership.role],
+  );
 
   const formatTime = (seconds: number) => {
     if (seconds < 60) return `${Math.floor(seconds)}秒`;
@@ -42,7 +39,7 @@ export function FrequentWorkflowsWidget() {
   };
 
   const getIcon = (iconName: string) => {
-    const icons: any = { Activity, Star, Zap, Clock };
+    const icons: any = { ...iconMap, Activity, Star, Zap, Clock };
     const Icon = icons[iconName] || Activity;
     return <Icon className="w-5 h-5" />;
   };
@@ -74,16 +71,12 @@ export function FrequentWorkflowsWidget() {
               onClick={() => {
                 // Pin module
                 try {
-                  const stored = localStorage.getItem('pinned_modules');
-                  let pins = stored ? JSON.parse(stored) : [];
+                  const pins = getSetting<ModuleId[]>('pinned_modules', ['dashboard'], settingsContext);
                   if (!pins.includes(mod.id)) {
-                    pins.push(mod.id);
-                    localStorage.setItem('pinned_modules', JSON.stringify(pins));
-                    import('./Toast').then(({ toast }) => toast(`已将 ${mod.name} 固钉到顶部`, 'success'));
-                    // Dispatch an event to refresh pins in App
-                    window.dispatchEvent(new Event('app:restore-preset'));
-                  }
-                } catch(e) {}
+                    if (!canViewProductModule(mod.id, session.membership.role)) return;
+                    saveSetting('pinned_modules', [...pins, mod.id], settingsContext);
+                    toast(`已将 ${mod.name} 固定到顶部`, 'success');
+                  }                } catch(e) {}
               }}
               className="text-white hover:text-white bg-emerald-600 hover:bg-emerald-700 p-1.5 rounded-[var(--radius-md)] opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
               title="固钉到顶部"

@@ -29,7 +29,7 @@ export function TeamLoadView() {
             <div className="lg:col-span-2 bg-white rounded-[20px] shadow-sm border border-[var(--border-color)] p-6">
                <h4 className="text-[14px] font-bold text-gray-800 mb-6">团队实时工作状态饱和度</h4>
                <div className="h-[350px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
                      <BarChart data={LOAD_DATA} margin={{ top: 20, right: 30, left: -20, bottom: 5 }} barSize={30}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 13, fontWeight: 'bold', fill: '#6b7280' }} />

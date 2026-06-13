@@ -1,259 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  BarChart2, 
-  Briefcase, 
-  Film, 
-  Folder, 
-  Image as ImageIcon, 
-  LayoutDashboard, 
-  ListTodo, 
-  MessageSquare, 
-  Mic, 
-  PenTool, 
-  Scissors, 
-  Settings, 
-  Share2, 
-  Shield, 
-  UserCircle2, 
-  Users,
-  ShoppingCart,
-  LayoutTemplate,
-  MonitorPlay,
-  PanelTop,
-  Palette,
-  ImageMinus,
-  Copy,
-  ChevronDown,
-  ChevronRight,
-  Video,
-  Wand2,
-  Layers,
-  Type,
-  LogOut,
-  Sparkles,
-  CreditCard,
-  BookType,
-  Wrench,
-  ScanLine,
-  SmartphoneNfc,
-  Globe,
-  Building2,
-  Home,
-  Network,
-  Package,
-  Megaphone,
-  Shirt,
-  Key,
-  Store,
-  UsersRound,
-  Gift,
-  Split,
-  Smartphone,
-  ShoppingBag,
-  Headphones,
-  Activity,
-  HeartPulse,
-  Calculator,
-  Zap,
-  Wallet
-} from 'lucide-react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { ChevronDown, LogOut, Sparkles, Zap } from 'lucide-react';
 import { ModuleId, NavGroupType } from '../types';
+import { getProductNavGroupsForRole, productNavGroups } from '../product/registry';
+import { iconMap } from '../product/icons';
 import { GoogleLogo } from './Logo';
+import { useWorkspaceUsage } from '../hooks/useWorkspaceUsage';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
-export const iconMap: Record<string, React.ElementType> = {
-  LayoutDashboard,
-  Film,
-  ImageIcon,
-  UserCircle2,
-  PenTool,
-  MessageSquare,
-  Mic,
-  Scissors,
-  BarChart2,
-  Folder,
-  Briefcase,
-  ListTodo,
-  Users,
-  Share2,
-  Settings,
-  Shield,
-  LayoutTemplate,
-  MonitorPlay,
-  PanelTop,
-  Palette,
-  ImageMinus,
-  Copy,
-  Video,
-  Wand2,
-  Layers,
-  Type,
-  Sparkles,
-  CreditCard,
-  BookType,
-  Wrench,
-  ScanLine,
-  SmartphoneNfc,
-  Globe,
-  Building2,
-  Home,
-  Network,
-  Package,
-  Megaphone,
-  Shirt,
-  Key,
-  Store,
-  UsersRound,
-  Gift,
-  Split,
-  Smartphone,
-  ShoppingBag,
-  Headphones,
-  Activity,
-  HeartPulse,
-  Zap,
-  Calculator,
-  Wallet
-};
+export { iconMap };
 
-export const navGroups: NavGroupType[] = [
-  {
-    title: '我的 Agent 看板',
-    items: [
-      { id: 'dashboard', label: '全域指挥概览', icon: 'LayoutDashboard' },
-      { id: 'workflow', label: 'Agent 集群状态', icon: 'Network' },
-      { id: 'tasks', label: '全局任务调度', icon: 'ListTodo' },
-      { id: 'agent_status', label: 'Agent 状态监测', icon: 'HeartPulse' },
-    ]
-  },
-  {
-    title: '主理人：电商操盘',
-    items: [
-      { id: 'e_main_image', label: '主图设计', icon: 'LayoutTemplate' },
-      { id: 'e_video', label: '商品视频', icon: 'MonitorPlay' },
-      { id: 'e_detail_page', label: '详情页设计助理', icon: 'PanelTop' },
-      { id: 'e_poster', label: '创意海报', icon: 'Palette' },
-      { id: 'ai_image_edit', label: 'AI图像编辑', icon: 'Sparkles' },
-      { id: 'e_clone', label: '克隆设计', icon: 'Copy' },
-    ]
-  },
-  {
-    title: '主理人：无界创作',
-    items: [
-      { id: 'video', label: '视频创作引擎', icon: 'Film' },
-      { id: 'image', label: '商用级图像生成', icon: 'ImageIcon' },
-      { id: 'ai_canvas', label: '无限模态 AI 画布', icon: 'Palette' },
-      { id: 'chat', label: '全能顾问对话', icon: 'MessageSquare' },
-      { id: 'speech', label: '多语种语音引擎', icon: 'Mic' },
-    ]
-  },
-  {
-    title: '主理人：文案营销',
-    items: [
-      { id: 'copywriting_create', label: '文案创作', icon: 'PenTool' },
-      { id: 'copywriting_tools', label: '创作工具', icon: 'Wrench' },
-      { id: 'copywriting_keywords', label: '关键词库', icon: 'BookType' },
-    ]
-  },
-  {
-    title: '主理人：视频工业',
-    items: [
-      { id: 'remix_home', label: '混剪首页', icon: 'Home' },
-      { id: 'remix_smart', label: '智能混剪', icon: 'Wand2' },
-      { id: 'remix_viral', label: '爆款视频复刻', icon: 'Sparkles' },
-      { id: 'remix_materials', label: '混剪素材', icon: 'Layers' },
-      { id: 'remix_titles', label: '标题模板', icon: 'Type' },
-      { id: 'remix_templates', label: '视频模板', icon: 'LayoutTemplate' },
-    ]
-  },
-  {
-    title: '主理人：分身直播',
-    items: [
-      { id: 'avatar_home', label: '分身管理', icon: 'LayoutDashboard' },
-      { id: 'avatar_create', label: '克隆声音与形象', icon: 'Video' },
-      { id: 'avatar_voice', label: '声音资产', icon: 'Mic' },
-      { id: 'avatar_space', label: '数字人空间', icon: 'UserCircle2' },
-    ]
-  },
-  {
-    title: '主理人：私域与客户',
-    items: [
-      { id: 'crm', label: '智能客户管家 (CRM)', icon: 'UsersRound' },
-      { id: 'customer_service', label: '全天候 AI 客服', icon: 'Headphones' },
-    ]
-  },
-  {
-    title: '大航海：全域裂变',
-    items: [
-      { id: 'marketing_viral', label: '爆店码', icon: 'ScanLine' },
-      { id: 'marketing_nfc', label: '碰一碰', icon: 'SmartphoneNfc' },
-      { id: 'marketing_website', label: '智能官网', icon: 'Globe' },
-    ]
-  },
-  {
-    title: '导演台与分镜流',
-    items: [
-      { id: 'director_desk', label: '全局导演台', icon: 'Video' },
-    ]
-  },
-  {
-    title: '主理人：包揽设计',
-    items: [
-      { id: 'design_logo', label: '智能 LOGO', icon: 'Palette' },
-      { id: 'design_packaging', label: 'AI 包装设计', icon: 'Package' },
-      { id: 'design_ads', label: '广告创意', icon: 'Megaphone' },
-      { id: 'design_interior', label: 'AI 家装设计', icon: 'Home' },
-      { id: 'design_fashion', label: 'AI 服装设计', icon: 'Shirt' },
-    ]
-  },
-  {
-    title: '我的数字资产库',
-    items: [
-      { id: 'data', label: '业务数据罗盘', icon: 'BarChart2' },
-      { id: 'assets', label: '数字资产保险库', icon: 'Folder' },
-      { id: 'projects', label: '品牌知识库', icon: 'Briefcase' },
-    ]
-  },
-  {
-    title: '虚拟数字员工',
-    items: [
-      { id: 'team', label: '数字员工概览', icon: 'Building2' },
-      { id: 'sub_accounts', label: '分发矩阵账号', icon: 'Users' },
-      { id: 'team_write', label: '人机推演协作', icon: 'PenTool' },
-      { id: 'team_tasks', label: '异步协同任务', icon: 'ListTodo' },
-      { id: 'team_assets', label: '共享给Agent的库', icon: 'Folder' },
-      { id: 'team_more', label: '主理人审批流', icon: 'Layers' },
-    ]
-  },
-  {
-    title: '云连锁与小店群',
-    items: [
-      { id: 'store_dashboard', label: '多店全盘看板', icon: 'LayoutDashboard' },
-      { id: 'store_list', label: '门店官网与分店', icon: 'Store' },
-      { id: 'store_orders', label: '统一订单管理', icon: 'ShoppingBag' },
-      { id: 'store_inventory', label: '智能调拨与库存', icon: 'Package' },
-      { id: 'store_design', label: '门店网页设计', icon: 'LayoutTemplate' },
-      { id: 'store_staff', label: '虚拟导购与巡店', icon: 'UsersRound' },
-      { id: 'store_marketing', label: '自动营销策略', icon: 'Megaphone' },
-      { id: 'store_distribution', label: '分销代理网络', icon: 'Split' },
-      { id: 'store_events', label: '活动与引流', icon: 'Gift' },
-      { id: 'store_miniapp', label: '小程序端管理', icon: 'Smartphone' },
-    ]
-  },
-  {
-    title: '系统引擎与权限',
-    items: [
-      { id: 'media', label: '社媒矩阵挂载', icon: 'Share2' },
-      { id: 'employee_accounts', label: '兼职员工账号池', icon: 'UserCircle2' },
-      { id: 'billing', label: '算力与 Token 监控', icon: 'CreditCard' },
-      { id: 'saas_api_keys', label: 'API 密钥与开发者', icon: 'Key' },
-      { id: 'settings', label: '全局偏好配置', icon: 'Settings' },
-      { id: 'admin', label: '系统管理', icon: 'Shield' },
-      { id: 'finance', label: '财务与票据管理', icon: 'Wallet' },
-      { id: 'tax', label: '税务筹划与计算', icon: 'Calculator' },
-      { id: 'activity_logs', label: '全站操作审计日志', icon: 'Activity' },
-    ]
-  }
-];
+export const navGroups: NavGroupType[] = productNavGroups;
 
 interface SidebarProps {
   activeModule: ModuleId;
@@ -263,6 +19,11 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeModule, onSelect, isCollapsed, onOpenCopilot }: SidebarProps) {
+  const session = useSaasSession();
+  const accessibleNavGroups = useMemo(
+    () => getProductNavGroupsForRole(session.membership.role),
+    [session.membership.role],
+  );
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => {
     const initialState: Record<string, boolean> = {};
     navGroups.forEach(group => {
@@ -272,21 +33,22 @@ export function Sidebar({ activeModule, onSelect, isCollapsed, onOpenCopilot }: 
   });
 
   const [sortByUsage, setSortByUsage] = useState(false);
-  const [usageData, setUsageData] = useState<Record<string, number>>({});
+  const usageData = useWorkspaceUsage();
 
   useEffect(() => {
-    if (sortByUsage) {
-      try {
-        const stored = localStorage.getItem('module_time_tracker');
-        if (stored) setUsageData(JSON.parse(stored));
-      } catch {}
-    }
-  }, [sortByUsage, activeModule]);
+    setExpandedGroups((prev) => {
+      const next = { ...prev };
+      for (const group of accessibleNavGroups) {
+        if (next[group.title] === undefined) next[group.title] = true;
+      }
+      return next;
+    });
+  }, [accessibleNavGroups]);
 
   // Ensure active module's group is expanded when it changes
   useEffect(() => {
     let groupTitleToExpand = '';
-    for (const group of navGroups) {
+    for (const group of accessibleNavGroups) {
       if (group.items.some(item => item.id === activeModule)) {
         groupTitleToExpand = group.title;
         break;
@@ -295,7 +57,7 @@ export function Sidebar({ activeModule, onSelect, isCollapsed, onOpenCopilot }: 
     if (groupTitleToExpand && (!expandedGroups[groupTitleToExpand] || sortByUsage)) {
       setExpandedGroups(prev => ({ ...prev, [groupTitleToExpand]: true }));
     }
-  }, [activeModule]);
+  }, [accessibleNavGroups, activeModule, expandedGroups, sortByUsage]);
 
   const toggleGroup = (title: string) => {
     setExpandedGroups(prev => ({
@@ -307,9 +69,9 @@ export function Sidebar({ activeModule, onSelect, isCollapsed, onOpenCopilot }: 
   const displayGroups = sortByUsage 
     ? [{
         title: '常用应用智能排序 (Usage)',
-        items: navGroups.flatMap(g => g.items).sort((a, b) => (usageData[b.id] || 0) - (usageData[a.id] || 0))
+        items: accessibleNavGroups.flatMap(g => g.items).sort((a, b) => (usageData[b.id] || 0) - (usageData[a.id] || 0))
       }]
-    : navGroups;
+    : accessibleNavGroups;
 
   return (
     <div className={`flex flex-col bg-[var(--bg-panel)] border-r border-[#E5E7EB] shadow-[1px_0_10px_rgba(0,0,0,0.02)] h-full transition-all duration-300 ease-in-out ${isCollapsed ? 'w-[#5.5rem]' : 'w-64'}`}>

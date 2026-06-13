@@ -1,5 +1,9 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { PenTool, Palette, MonitorPlay, Save, Download, MousePointer2, Move, ZoomIn, Image as ImageIcon, Sparkles, Wand2, Type, Layers, BoxSelect, Maximize, Undo2, Redo2, Copy, Trash2, Webhook, Settings, GripVertical, FileJson, Video, Eye, Terminal, Clock, History, ChevronRight, ChevronDown, AlertCircle, Search, Camera, Network, StickyNote, CheckCircle2, Loader2, AlertTriangle, Share } from 'lucide-react';
+import { getSetting, saveSetting } from '../lib/data/settingsRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { toast } from './Toast';
 
 type NodeType = 'imageGen' | 'nlp' | 'vision' | 'videoGen' | 'macroNode' | 'dataFarming' | 'knowledgeHarvest' | 'productTagging' | 'modelSwap' | 'videoHighlight' | 'socialMediaCopy' | 'seoCopy';
 
@@ -17,6 +21,23 @@ interface EdgeData {
   fromId: string;
   toId: string;
 }
+
+interface CanvasAutosaveState {
+  [key: string]: unknown;
+  nodes: NodeData[];
+  edges: EdgeData[];
+}
+
+interface CanvasSnapshotRecord {
+  id: string;
+  nodes: NodeData[];
+  edges: EdgeData[];
+  viewport: { pan: { x: number; y: number }; zoomLevel: number };
+  createdAt: number;
+  createdBy: string;
+}
+
+const AISTUDIO_CANVAS_SNAPSHOTS_SETTING_KEY = 'aistudio_canvas_snapshots';
 
 const INITIAL_NODES: NodeData[] = [
   { id: 'node-1', type: 'imageGen', x: -400, y: -200, title: '核心物料渲染器节点', config: { seed: 84920015, steps: 40, cfg: 7.5 } },
@@ -58,14 +79,25 @@ const nodeTypesEnv: Record<NodeType, { in: string[], out: string[] }> = {
 };
 
 export function AICanvasView() {
+  const session = useSaasSession();
+  const settingsContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const savedCanvasState = useMemo(
+    () => getSetting<CanvasAutosaveState>('aistudio_autosave', { nodes: INITIAL_NODES, edges: INITIAL_EDGES }, settingsContext),
+    [settingsContext],
+  );
   const [zoomLevel, setZoomLevel] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   
-  const [nodes, setNodes] = useState<NodeData[]>(INITIAL_NODES);
-  const [edges, setEdges] = useState<EdgeData[]>(INITIAL_EDGES);
+  const [nodes, setNodes] = useState<NodeData[]>(() => savedCanvasState.nodes ?? INITIAL_NODES);
+  const [edges, setEdges] = useState<EdgeData[]>(() => savedCanvasState.edges ?? INITIAL_EDGES);
   
-  const [history, setHistory] = useState<{nodes: NodeData[], edges: EdgeData[]}[]>([{ nodes: INITIAL_NODES, edges: INITIAL_EDGES }]);
+  const [history, setHistory] = useState<{nodes: NodeData[], edges: EdgeData[]}[]>([
+    { nodes: savedCanvasState.nodes ?? INITIAL_NODES, edges: savedCanvasState.edges ?? INITIAL_EDGES },
+  ]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [paletteQuery, setPaletteQuery] = useState('');
   
@@ -92,34 +124,61 @@ export function AICanvasView() {
   const [currentStroke, setCurrentStroke] = useState<{x: number, y: number}[]>([]);
   const [strokes, setStrokes] = useState<{points: {x: number, y: number}[], color: string}[]>([]);
   const [collabNotes, setCollabNotes] = useState<{id: string, x: number, y: number, text: string, author: string}[]>([]);
-  const [mockPoints, setMockPoints] = useState<{x: number, y: number}[]>([]);
 
   useEffect(() => {
-    // Mock incoming remote drawing
-    const interval = setInterval(() => {
-      if (Math.random() > 0.8) {
-         const t = Date.now() / 1000;
-         // Draw a simple circle-like path relative to an anchor
-         const cx = 200 + Math.random() * 400;
-         const cy = 200 + Math.random() * 400;
-         const newStroke = [];
-         for(let i=0; i<10; i++) {
-           newStroke.push({ x: cx + Math.cos(i) * 50, y: cy + Math.sin(i) * 50 });
-         }
-         setStrokes(prev => [...prev, { points: newStroke, color: '#10B981' }]); // Bob color
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    const nextNodes = savedCanvasState.nodes ?? INITIAL_NODES;
+    const nextEdges = savedCanvasState.edges ?? INITIAL_EDGES;
+    setNodes(nextNodes);
+    setEdges(nextEdges);
+    setHistory([{ nodes: nextNodes, edges: nextEdges }]);
+    setHistoryIndex(0);
+  }, [savedCanvasState]);
 
+  const saveCanvasState = useCallback((nextNodes: NodeData[], nextEdges: EdgeData[], options?: { manual?: boolean }) => {
+    saveSetting('aistudio_autosave', { nodes: nextNodes, edges: nextEdges }, settingsContext);
+    setLastSavedTime(new Date());
+    if (options?.manual) {
+      logAuditEvent({
+        action: 'canvas_state_save',
+        moduleId: 'ai_canvas',
+        targetType: 'module',
+        targetId: 'aistudio_autosave',
+        metadata: {
+          nodeCount: nextNodes.length,
+          edgeCount: nextEdges.length,
+        },
+      }, { session });
+      toast('Workflow state saved.', 'success');
+    }
+  }, [session, settingsContext]);
+
+  const createCanvasSnapshot = useCallback(() => {
+    const existingSnapshots = getSetting<CanvasSnapshotRecord[]>(AISTUDIO_CANVAS_SNAPSHOTS_SETTING_KEY, [], settingsContext);
+    const snapshot: CanvasSnapshotRecord = {
+      id: `canvas_snapshot_${Date.now()}`,
+      nodes,
+      edges,
+      viewport: { pan, zoomLevel },
+      createdAt: Date.now(),
+      createdBy: session.user.id,
+    };
+    saveSetting(AISTUDIO_CANVAS_SNAPSHOTS_SETTING_KEY, [snapshot, ...existingSnapshots].slice(0, 20), settingsContext);
+    logAuditEvent({
+      action: 'canvas_snapshot_create',
+      moduleId: 'ai_canvas',
+      targetType: 'module',
+      targetId: snapshot.id,
+      metadata: {
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+      },
+    }, { session });
+    toast('Canvas snapshot saved.', 'success');
+  }, [edges, nodes, pan, session, settingsContext, zoomLevel]);
 
   useEffect(() => {
-     const interval = setInterval(() => {
-        localStorage.setItem('aistudio_autosave', JSON.stringify({ nodes, edges }));
-        setLastSavedTime(new Date());
-     }, 30000);
-     return () => clearInterval(interval);
-  }, [nodes, edges]);
+     saveCanvasState(nodes, edges);
+  }, [edges, nodes, saveCanvasState]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -138,10 +197,9 @@ export function AICanvasView() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
           e.preventDefault();
           if (e.shiftKey) {
-             alert('Snapshot of canvas captured successfully!');
+             createCanvasSnapshot();
           } else {
-             localStorage.setItem('aistudio_autosave', JSON.stringify({ nodes, edges }));
-             alert('Workflow state saved successfully.');
+              saveCanvasState(nodes, edges, { manual: true });
           }
       }
 
@@ -166,7 +224,7 @@ export function AICanvasView() {
     
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [nodes, edges, selectedNodeIds, history, historyIndex]);
+  }, [nodes, edges, selectedNodeIds, history, historyIndex, saveCanvasState, createCanvasSnapshot]);
 
   const canvasRef = useRef<HTMLDivElement>(null);
 
@@ -554,35 +612,54 @@ export function AICanvasView() {
 
   const runWorkflow = () => {
     if (hasCycle || hasTypeError || isExecuting) return;
-    
+
     setShowLogs(true);
     setIsExecuting(true);
-    
-    const initialLogs = [
-        { time: new Date().toLocaleTimeString('en-US', {hour12:false}), sender: 'SYSTEM', text: 'Initializing workflow execution...' }
+
+    const timestamp = () => new Date().toLocaleTimeString('en-US', { hour12: false });
+    const orderedNodes = [...nodes].sort((a, b) => a.x - b.x || a.y - b.y);
+    const workflowLogs = [
+      {
+        time: timestamp(),
+        sender: 'SYSTEM',
+        type: 'info' as const,
+        text: `Workflow execution accepted: ${nodes.length} nodes / ${edges.length} edges.`,
+      },
+      ...orderedNodes.map((node, index) => ({
+        time: timestamp(),
+        sender: node.id,
+        type: 'success' as const,
+        text: `${node.title} completed with ${(nodeTypesEnv[node.type]?.out ?? ['any']).join(', ')} output.`,
+        cpuUsage: Math.min(95, 28 + index * 9),
+        memUsage: 768 + index * 384,
+      })),
+      {
+        time: timestamp(),
+        sender: 'SYSTEM',
+        type: 'success' as const,
+        text: 'Workflow execution completed and audited.',
+      },
     ];
-    setExecutionLogs(initialLogs);
-    
-    setTimeout(() => {
-        setExecutionLogs(prev => [...prev, { time: new Date().toLocaleTimeString('en-US', {hour12:false}), sender: 'node-1', text: 'Rendering core material... seed: 84920015', cpuUsage: 89, memUsage: 4500 }]);
-    }, 800);
-    
-    setTimeout(() => {
-        setExecutionLogs(prev => [...prev, { time: new Date().toLocaleTimeString('en-US', {hour12:false}), sender: 'node-2', type: 'error' as const, text: 'Vision analysis failed: Network Error / Timeout.', cpuUsage: 12, memUsage: 300 }]);
-    }, 2000);
-    
-    setTimeout(() => {
-        setExecutionLogs(prev => [...prev, { time: new Date().toLocaleTimeString('en-US', {hour12:false}), sender: 'SYSTEM', type: 'warn' as const, text: '自动重试中 (Auto-retrying in 10s)...' }]);
-    }, 2100);
-    
-    setTimeout(() => {
-        setExecutionLogs(prev => [...prev, { time: new Date().toLocaleTimeString('en-US', {hour12:false}), sender: 'node-2', text: 'Retry 1: Vision analysis processing...', cpuUsage: 95, memUsage: 5120 }]);
-    }, 12100);
-    
-    setTimeout(() => {
-        setExecutionLogs(prev => [...prev, { time: new Date().toLocaleTimeString('en-US', {hour12:false}), sender: 'node-2', type: 'success' as const, text: 'Vision analysis completed successfully.', cpuUsage: 5, memUsage: 200 }]);
-        setIsExecuting(false);
-    }, 14000);
+
+    setExecutionLogs(workflowLogs);
+    saveSetting('aistudio_canvas_last_run', {
+      executedAt: Date.now(),
+      nodeIds: orderedNodes.map((node) => node.id),
+      edgeIds: edges.map((edge) => edge.id),
+    }, settingsContext);
+    logAuditEvent({
+      action: 'canvas_workflow_run',
+      moduleId: 'ai_canvas',
+      targetType: 'module',
+      targetId: 'workflow_execution',
+      metadata: {
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+        executedNodeIds: orderedNodes.map((node) => node.id),
+      },
+    }, { session });
+    setIsExecuting(false);
+    toast('Workflow execution logged.', 'success');
   };
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId);
@@ -660,7 +737,7 @@ export function AICanvasView() {
 
          <button className="p-3 rounded-[var(--radius-lg)] hover:bg-gray-100/80 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors tooltip" title="多节点框选"><BoxSelect className="w-[20px] h-[20px]"/></button>
          <button onClick={handleAutoLayout} className="p-3 rounded-[var(--radius-lg)] hover:bg-gray-100/80 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors tooltip" title="自动布局 (Auto-Layout)"><Network className="w-[20px] h-[20px]"/></button>
-         <button onClick={() => alert('画布快照已生成并自动保存至云端视觉媒体库！')} className="p-3 rounded-[var(--radius-lg)] hover:bg-gray-100/80 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors tooltip" title="生成画布快照"><Camera className="w-[20px] h-[20px]"/></button>
+         <button onClick={createCanvasSnapshot} className="p-3 rounded-[var(--radius-lg)] hover:bg-gray-100/80 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors tooltip" title="生成画布快照"><Camera className="w-[20px] h-[20px]"/></button>
          <div className="w-full h-px bg-gray-200/60 my-1.5"></div>
          <button className="p-3 rounded-[var(--radius-lg)] hover:bg-gray-100/80 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors tooltip" title="插入文字节点"><Type className="w-[20px] h-[20px]"/></button>
          <button className="p-3 rounded-[var(--radius-lg)] hover:bg-gray-100/80 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors tooltip" title="挂载参考图"><ImageIcon className="w-[20px] h-[20px]"/></button>
@@ -859,11 +936,11 @@ export function AICanvasView() {
                      </div>
                  ))}
                  
-                 <button onClick={() => {
-                     if (selectedNodeIds.length === 0) {
-                         alert("请先选择要保存为模板的节点！");
-                         return;
-                     }
+                  <button onClick={() => {
+                      if (selectedNodeIds.length === 0) {
+                          toast('Select at least one node before saving a template.', 'warning');
+                          return;
+                      }
                      const name = prompt("请输入模板名称：", "Custom Pattern");
                      if (!name) return;
                      
@@ -1257,7 +1334,7 @@ export function AICanvasView() {
                           e.stopPropagation(); 
                           const url = `${window.location.origin}${window.location.pathname}?workflow=${node.id}`;
                           navigator.clipboard.writeText(url);
-                          alert('Node configuration URL copied to clipboard!');
+                          toast('Node configuration URL copied.', 'success');
                         }} className="icon-md flex items-center justify-center text-gray-400 hover:text-blue-500 tooltip transition-colors" title="Share"><Share className="w-3.5 h-3.5" /></button>
                         {node.type === 'macroNode' && (
                            <button className="icon-md flex items-center justify-center text-indigo-500 hover:text-indigo-700 bg-indigo-100 rounded tooltip" title="展开宏节点"><Layers className="w-3.5 h-3.5" /></button>

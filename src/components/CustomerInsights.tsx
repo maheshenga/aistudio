@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Newspaper, Lightbulb, Receipt, Building2, ExternalLink, Mail, CheckCircle2, RefreshCcw } from 'lucide-react';
 import { toast } from './Toast';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
 
 export function CustomerInsights({ customerId, customerName }: { customerId: string, customerName: string }) {
+    const session = useSaasSession();
     const [isSendingSurvey, setIsSendingSurvey] = useState(false);
 
     const AI_RECOMMENDATIONS = [
@@ -22,13 +25,31 @@ export function CustomerInsights({ customerId, customerName }: { customerId: str
         pendingPayment: "¥ 12,500"
     };
 
-    const handleSendSurvey = () => {
+    const handleSendSurvey = useCallback(() => {
         setIsSendingSurvey(true);
-        setTimeout(() => {
-            setIsSendingSurvey(false);
+        try {
+            logAuditEvent(
+                {
+                    action: 'crm_survey_send',
+                    moduleId: 'crm',
+                    targetType: 'workspace',
+                    targetId: customerId,
+                    metadata: {
+                        customerId,
+                        customerName,
+                        channel: 'email',
+                        surveyType: 'csat',
+                        status: 'sent',
+                    },
+                },
+                { session },
+            );
+            window.dispatchEvent(new Event('activity_logged'));
             toast('满意度问卷已通过邮件发送至客户', 'success');
-        }, 1500);
-    };
+        } finally {
+            setIsSendingSurvey(false);
+        }
+    }, [customerId, customerName, session]);
 
     return (
         <div className="space-y-6 mt-8">

@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
+import { getSetting, saveSetting } from '../lib/data/settingsRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
 export type ThemeType = 'light' | 'midnight' | 'sepia' | 'neon' | 'cyberpunk' | 'google';
 
@@ -9,27 +11,45 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType>({ theme: 'light', setTheme: () => {} });
 
-const THEME_STORAGE_KEY = 'aistudio_ui_theme';
+const themeOptions: ThemeType[] = ['light', 'midnight', 'sepia', 'neon', 'cyberpunk', 'google'];
+
+function normalizeTheme(value: unknown): ThemeType {
+  return themeOptions.includes(value as ThemeType) ? (value as ThemeType) : 'light';
+}
+
+function getPreferredTheme(): ThemeType {
+  if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    return 'midnight';
+  }
+  return 'light';
+}
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<ThemeType>(() => {
-    if (typeof window !== 'undefined') {
-      const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) as ThemeType;
-      if (savedTheme) {
-        return savedTheme;
-      }
-      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        return 'midnight';
-      }
-    }
-    return 'light';
-  });
+  const session = useSaasSession();
+  const settingsContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const contextKey = `${settingsContext.workspaceId}:${settingsContext.userId}`;
+  const skipNextSaveRef = useRef(false);
+  const [theme, setTheme] = useState<ThemeType>(() =>
+    normalizeTheme(getSetting('aistudio_ui_theme', getPreferredTheme(), settingsContext)),
+  );
+
+  useEffect(() => {
+    skipNextSaveRef.current = true;
+    setTheme(normalizeTheme(getSetting('aistudio_ui_theme', getPreferredTheme(), settingsContext)));
+  }, [contextKey, settingsContext]);
 
   useEffect(() => {
     // Apply theme data attribute to body
     document.body.setAttribute('data-theme', theme);
-    localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme]);
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    saveSetting('aistudio_ui_theme', theme, settingsContext);
+  }, [contextKey, settingsContext, theme]);
 
   // Framer motion wrap can be added in App
   return (

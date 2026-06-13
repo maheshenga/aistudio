@@ -1,8 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Mic, MicOff, FileText, CheckSquare, Calendar, Loader2 } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createWorkspaceTask } from '../lib/data/taskRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { toast } from './Toast';
 
 export function MeetingAssistant({ customerId, customerName }: { customerId: string, customerName: string }) {
+   const session = useSaasSession();
+   const taskContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
    const [isRecording, setIsRecording] = useState(false);
    const [transcript, setTranscript] = useState('');
    const [isProcessing, setIsProcessing] = useState(false);
@@ -42,28 +47,46 @@ export function MeetingAssistant({ customerId, customerName }: { customerId: str
 
    const handleProcessMeeting = () => {
       setIsProcessing(true);
-      setTimeout(() => {
-         setIsProcessing(false);
-         setSummary({
-            summary: "讨论了自动化方案的落地周期及阶梯折扣。确认一周内可以部署测试，客户要求确认费用折扣细则。",
-            actionItems: [
-                "安排技术对接自动化方案的测试部署准备",
-                "发送阶段折扣的正式邮件给客户"
-            ]
-         });
-         toast("会议记录已转写完毕", "success");
-         
-         // Push task
-         window.dispatchEvent(new CustomEvent('SYNC_CRM_TASKS', { 
-            detail: [{
-               id: Date.now().toString(),
-               title: `发送阶段折扣正式邮件 - ${customerName}`,
-               dueDate: new Date(Date.now() + 86400000), // tomorrow
-               priority: 'high',
-               type: '客户跟进'
-            }]
-         }));
-      }, 2000);
+      const meetingSummary = {
+         summary: "讨论了自动化方案的落地周期及阶梯折扣。确认一周内可以部署测试，客户要求确认费用折扣细则。",
+         actionItems: [
+             "安排技术对接自动化方案的测试部署准备",
+             "发送阶段折扣的正式邮件给客户"
+         ]
+      };
+      const task = createWorkspaceTask({
+         title: `发送阶段折扣正式邮件 - ${customerName}`,
+         date: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+         priority: 'High',
+         type: '客户跟进',
+         column: 'todo',
+         isAuto: true,
+      }, taskContext);
+      setIsProcessing(false);
+      setSummary(meetingSummary);
+      logAuditEvent({
+         action: 'crm_meeting_summary_generate',
+         moduleId: 'crm',
+         targetType: 'module',
+         targetId: customerId,
+         metadata: {
+            customerName,
+            actionItemCount: meetingSummary.actionItems.length,
+         },
+      }, { session });
+      logAuditEvent({
+         action: 'crm_followup_task_sync',
+         moduleId: 'crm',
+         targetType: 'task',
+         targetId: task.id,
+         metadata: {
+            customerId,
+            customerName,
+            source: 'meeting_assistant',
+         },
+      }, { session });
+      window.dispatchEvent(new Event('activity_logged'));
+      toast("会议记录已转写完毕", "success");
    };
 
    useEffect(() => {

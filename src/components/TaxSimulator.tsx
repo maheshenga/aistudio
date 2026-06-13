@@ -2,8 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Calculator, ArrowRight, BrainCircuit, TrendingUp, TrendingDown, Target, HelpCircle, Sparkles } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { CurrencyConverter, CurrencyCode } from '../utils/currency';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
 
 export function TaxSimulator() {
+  const session = useSaasSession();
   const [currency, setCurrency] = useState<CurrencyCode>(CurrencyConverter.getCurrency());
   useEffect(() => {
     return CurrencyConverter.subscribe((newCurrency) => {
@@ -18,9 +21,8 @@ export function TaxSimulator() {
 
   const handleSimulate = () => {
     setIsSimulating(true);
-    setTimeout(() => {
-      setIsSimulating(false);
-      
+    const startedAt = Date.now();
+
       const strategies = [
           { 
              name: '基准场景 (维持现状)', 
@@ -71,7 +73,26 @@ export function TaxSimulator() {
             { month: '12月', 基准税负: 58000, 优化税负: aiAdvisorEnabled ? 12000 : 16000 }
         ]
       });
-    }, 2000);
+      logAuditEvent(
+        {
+          action: 'tax_simulation_run',
+          moduleId: 'tax',
+          targetType: 'workspace',
+          targetId: session.workspace.id,
+          metadata: {
+            incomeGrowth,
+            expenseGrowth,
+            aiAdvisorEnabled,
+            projectedTax: 158000,
+            bestImpact: maxImpact,
+            scenarioCount: strategies.length,
+            durationMs: Date.now() - startedAt,
+          },
+        },
+        { session },
+      );
+      window.dispatchEvent(new Event('activity_logged'));
+      setIsSimulating(false);
   };
 
   return (
@@ -164,7 +185,7 @@ export function TaxSimulator() {
 
                     <div className="bg-white border border-gray-100 rounded-xl p-4 h-[220px]">
                        <h4 className="text-[11px] font-bold text-gray-500 mb-2">下半年税负走势预测 (基准 vs 优化)</h4>
-                       <ResponsiveContainer width="100%" height="100%">
+                       <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
                          <AreaChart data={report.chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                             <defs>
                               <linearGradient id="colorO" x1="0" y1="0" x2="0" y2="1">

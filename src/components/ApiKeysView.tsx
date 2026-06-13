@@ -1,196 +1,591 @@
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts';
-import { Key, Plus, Copy, Trash2, Eye, EyeOff, Activity, Code, Webhook, Shield, CheckCircle2, AlertCircle, RefreshCcw, Download, X, AlertTriangle } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Code,
+  Copy,
+  Download,
+  Key,
+  Plus,
+  RefreshCcw,
+  Shield,
+  Trash2,
+  Webhook,
+  X,
+} from 'lucide-react';
+
+import {
+  createWorkspaceApiKey,
+  exportWorkspaceApiKeyRows,
+  loadWorkspaceApiKeys,
+  revokeWorkspaceApiKey,
+  rotateWorkspaceApiKey,
+  type WorkspaceApiKey,
+} from '../lib/data/apiKeyRepository';
+import {
+  createWorkspaceWebhookEndpoint,
+  deleteWorkspaceWebhookEndpoint,
+  exportWorkspaceWebhookEndpointRows,
+  loadWorkspaceWebhookEndpoints,
+  updateWorkspaceWebhookEndpoint,
+  type WorkspaceWebhookEndpoint,
+} from '../lib/data/webhookRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { buildPermissionDeniedMetadata, canManageApiKeys } from '../saas/permissions';
+import { toast } from './Toast';
+
+type ApiKeysTab = 'keys' | 'webhooks' | 'analytics';
+
+const API_KEY_STATUS_LABELS: Record<WorkspaceApiKey['status'], string> = {
+  active: 'Active',
+  rotating: 'Rotating',
+  revoked: 'Revoked',
+  expired: 'Expired',
+};
+
+const API_KEY_STATUS_CLASSES: Record<WorkspaceApiKey['status'], string> = {
+  active: 'bg-green-50 text-green-700 border-green-200',
+  rotating: 'bg-amber-50 text-amber-700 border-amber-200',
+  revoked: 'bg-gray-100 text-gray-600 border-gray-200',
+  expired: 'bg-red-50 text-red-700 border-red-200',
+};
+
+const WEBHOOK_STATUS_LABELS: Record<WorkspaceWebhookEndpoint['status'], string> = {
+  active: 'Active',
+  disabled: 'Paused',
+  failing: 'Failing',
+};
+
+const WEBHOOK_STATUS_CLASSES: Record<WorkspaceWebhookEndpoint['status'], string> = {
+  active: 'bg-green-50 text-green-700 border-green-200',
+  disabled: 'bg-gray-100 text-gray-600 border-gray-200',
+  failing: 'bg-red-50 text-red-700 border-red-200',
+};
+
+const WEBHOOK_EVENT_OPTIONS = [
+  'generation.completed',
+  'generation.failed',
+  'asset.created',
+  'billing.invoice_issued',
+  'agent.task_updated',
+];
+
+function formatDateTime(timestamp: number | null): string {
+  return timestamp ? new Date(timestamp).toLocaleString() : 'Never';
+}
+
+function buildUsageSeries(keys: WorkspaceApiKey[], webhooks: WorkspaceWebhookEndpoint[]) {
+  const activeKeyCount = keys.filter((key) => key.status === 'active').length;
+  const activeWebhookCount = webhooks.filter((endpoint) => endpoint.status === 'active').length;
+  return [
+    { time: '00:00', calls: activeKeyCount * 90 + 120, errors: activeWebhookCount },
+    { time: '04:00', calls: activeKeyCount * 60 + 80, errors: activeWebhookCount },
+    { time: '08:00', calls: activeKeyCount * 140 + 220, errors: activeWebhookCount + 2 },
+    { time: '12:00', calls: activeKeyCount * 260 + 420, errors: activeWebhookCount + 5 },
+    { time: '16:00', calls: activeKeyCount * 220 + 380, errors: activeWebhookCount + 3 },
+    { time: '20:00', calls: activeKeyCount * 180 + 300, errors: activeWebhookCount + 1 },
+  ];
+}
+
+function generateWebhookSigningSecret(): string {
+  return `whsec-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
+function downloadCsv(filename: string, headers: string[], rows: Array<Array<string | number | null | undefined>>): void {
+  if (typeof document === 'undefined') return;
+  const csv = [
+    headers.join(','),
+    ...rows.map((row) => row.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')),
+  ].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 export function ApiKeysView() {
-  const [activeTab, setActiveTab] = useState('keys'); // keys, webhooks, analytics
-  const [keys, setKeys] = useState([
-    { id: '1', name: 'Production Backend', key: 'sk-prod-9a8b7c********************1x2y3z', created: '2026-01-15', lastUsed: '10 分钟前', status: '正常', warning: null },
-    { id: '2', name: 'Testing Env', key: 'sk-test-qwerty********************456789', created: '2026-03-22', lastUsed: '2 天前', status: '正常', warning: '即将过期' },
-    { id: '3', name: 'Jenkins CI/CD', key: 'sk-ci-asdfgh********************098765', created: '2026-05-10', lastUsed: '从未', status: '正常', warning: '30天未使用' },
-  ]);
-
+  const session = useSaasSession();
+  const canManage = canManageApiKeys(session.membership.role);
+  const apiKeyContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
+  const webhookContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
+  const [activeTab, setActiveTab] = useState<ApiKeysTab>('keys');
+  const [keys, setKeys] = useState<WorkspaceApiKey[]>(() => loadWorkspaceApiKeys(apiKeyContext));
+  const [webhooks, setWebhooks] = useState<WorkspaceWebhookEndpoint[]>(() => loadWorkspaceWebhookEndpoints(webhookContext));
   const [showGenModal, setShowGenModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
   const [newlyGeneratedKey, setNewlyGeneratedKey] = useState('');
-  
+  const [generatedKeyName, setGeneratedKeyName] = useState('');
   const [showRotateConfirmModal, setShowRotateConfirmModal] = useState(false);
-  const [keyToRotate, setKeyToRotate] = useState<{id: string, name: string} | null>(null);
-  
-  const [showExportModal, setShowExportModal] = useState(false);
+  const [keyToRotate, setKeyToRotate] = useState<WorkspaceApiKey | null>(null);
+  const [showKeyExportModal, setShowKeyExportModal] = useState(false);
+  const [showWebhookModal, setShowWebhookModal] = useState(false);
+  const [webhookName, setWebhookName] = useState('');
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [webhookEvents, setWebhookEvents] = useState<string[]>(['generation.completed']);
+  const [newWebhookSecret, setNewWebhookSecret] = useState('');
+  const [generatedWebhookName, setGeneratedWebhookName] = useState('');
+  const [showWebhookExportModal, setShowWebhookExportModal] = useState(false);
 
-  const handleGenerateKey = () => {
-    if (!newKeyName) return;
-    const rand = Math.random().toString(36).substring(2, 15);
-    const fullKey = `sk-${newKeyName.toLowerCase().replace(/\s+/g, '-')}-${rand}********************`;
-    
-    setNewlyGeneratedKey(fullKey);
-    setTimeout(() => {
-      setKeys([{ id: Date.now().toString(), name: newKeyName, key: fullKey, created: '刚刚', lastUsed: '从未', status: '正常' }, ...keys]);
-    }, 500);
+  useEffect(() => {
+    const refreshKeys = () => setKeys(loadWorkspaceApiKeys(apiKeyContext));
+    const handleApiKeysUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== session.workspace.id) return;
+      refreshKeys();
+    };
+
+    refreshKeys();
+    window.addEventListener('workspace_api_keys_updated', handleApiKeysUpdated);
+    return () => window.removeEventListener('workspace_api_keys_updated', handleApiKeysUpdated);
+  }, [apiKeyContext, session.workspace.id]);
+
+  useEffect(() => {
+    const refreshWebhooks = () => setWebhooks(loadWorkspaceWebhookEndpoints(webhookContext));
+    const handleWebhooksUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== session.workspace.id) return;
+      refreshWebhooks();
+    };
+
+    refreshWebhooks();
+    window.addEventListener('workspace_webhooks_updated', handleWebhooksUpdated);
+    return () => window.removeEventListener('workspace_webhooks_updated', handleWebhooksUpdated);
+  }, [session.workspace.id, webhookContext]);
+
+  const usageSeries = useMemo(() => buildUsageSeries(keys, webhooks), [keys, webhooks]);
+  const activeKeyCount = keys.filter((key) => key.status === 'active').length;
+  const rotatingKeyCount = keys.filter((key) => key.status === 'rotating').length;
+  const revokedKeyCount = keys.filter((key) => key.status === 'revoked').length;
+  const activeWebhookCount = webhooks.filter((endpoint) => endpoint.status === 'active').length;
+  const failingWebhookCount = webhooks.filter((endpoint) => endpoint.status === 'failing').length;
+
+  const auditDeveloperAction = (
+    action:
+      | 'api_key_create'
+      | 'api_key_rotate'
+      | 'api_key_revoke'
+      | 'api_key_export'
+      | 'webhook_create'
+      | 'webhook_update'
+      | 'webhook_delete'
+      | 'webhook_secret_rotate'
+      | 'webhook_export',
+    targetType: 'api_key' | 'webhook' | 'workspace',
+    targetId: string,
+    metadata: Record<string, unknown>,
+  ) => {
+    logAuditEvent(
+      {
+        action,
+        moduleId: 'saas_api_keys',
+        targetType,
+        targetId,
+        metadata,
+      },
+      { session },
+    );
+    window.dispatchEvent(new Event('activity_logged'));
+  };
+
+  const auditDeveloperPermissionDenied = (
+    operation: string,
+    targetType: 'api_key' | 'webhook' | 'workspace' = 'workspace',
+    targetId = session.workspace.id,
+    metadata: Record<string, unknown> = {},
+  ) => {
+    logAuditEvent(
+      {
+        action: 'permission_denied',
+        moduleId: 'saas_api_keys',
+        targetType,
+        targetId,
+        metadata: {
+          ...buildPermissionDeniedMetadata({
+            role: session.membership.role,
+            permission: 'api_keys.manage',
+            operation,
+            moduleId: 'saas_api_keys',
+          }),
+          ...metadata,
+        },
+      },
+      { session },
+    );
+    window.dispatchEvent(new Event('activity_logged'));
   };
 
   const closeGenModal = () => {
     setShowGenModal(false);
     setNewKeyName('');
     setNewlyGeneratedKey('');
+    setGeneratedKeyName('');
   };
 
   const copyToClipboard = (text: string) => {
-    // In a real app we'd use navigator.clipboard.writeText
-    alert('已复制到剪贴板！');
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      void navigator.clipboard.writeText(text);
+    }
+    toast('Secret copied. Store it now; it will not be shown again.', 'success');
   };
 
-  const confirmRotateKey = (id: string, name: string) => {
-    setKeyToRotate({ id, name });
+  const handleGenerateKey = () => {
+    if (!newKeyName.trim()) return;
+    if (!canManage) {
+      auditDeveloperPermissionDenied('api_key_create');
+      toast('Current role cannot manage API keys.', 'warning');
+      return;
+    }
+
+    const result = createWorkspaceApiKey(
+      { name: newKeyName.trim(), metadata: { source: 'api_keys_view' } },
+      apiKeyContext,
+    );
+    setKeys(loadWorkspaceApiKeys(apiKeyContext));
+    setNewlyGeneratedKey(result.secret);
+    setGeneratedKeyName(result.record.name);
+    auditDeveloperAction('api_key_create', 'api_key', result.record.id, {
+      name: result.record.name,
+      keyPreview: result.record.keyPreview,
+      credentialRef: result.record.credentialRef,
+    });
+  };
+
+  const confirmRotateKey = (key: WorkspaceApiKey) => {
+    if (!canManage) {
+      auditDeveloperPermissionDenied('api_key_rotate', 'api_key', key.id, { status: key.status });
+      return;
+    }
+    if (key.status === 'revoked') return;
+    setKeyToRotate(key);
     setShowRotateConfirmModal(true);
   };
 
   const executeRotateKey = () => {
     if (!keyToRotate) return;
-    const { id, name } = keyToRotate;
-    const rand = Math.random().toString(36).substring(2, 15);
-    const fullKey = `sk-${name.toLowerCase().replace(/\s+/g, '-')}-${rand}********************`;
-    
-    setKeys(keys.map(k => {
-      if (k.id === id) {
-        return { ...k, status: '将在 24s 时后过期', name: `${k.name} (旧)` };
+    const result = rotateWorkspaceApiKey(keyToRotate.id, {}, apiKeyContext);
+    if (!result) {
+      toast('Key is missing or already revoked.', 'warning');
+      return;
+    }
+
+    setKeys(loadWorkspaceApiKeys(apiKeyContext));
+    setShowRotateConfirmModal(false);
+    setKeyToRotate(null);
+    setNewKeyName('');
+    setNewlyGeneratedKey(result.secret);
+    setGeneratedKeyName(result.replacement.name);
+    setShowGenModal(true);
+    auditDeveloperAction('api_key_rotate', 'api_key', result.replacement.id, {
+      previousKeyId: result.previous.id,
+      replacementKeyId: result.replacement.id,
+      graceExpiresAt: result.previous.expiresAt,
+      keyPreview: result.replacement.keyPreview,
+    });
+  };
+
+  const handleRevokeKey = (key: WorkspaceApiKey) => {
+    if (!canManage) {
+      auditDeveloperPermissionDenied('api_key_revoke', 'api_key', key.id, { status: key.status });
+      return;
+    }
+    if (key.status === 'revoked') return;
+    const revoked = revokeWorkspaceApiKey(key.id, apiKeyContext);
+    if (!revoked) return;
+
+    setKeys(loadWorkspaceApiKeys(apiKeyContext));
+    auditDeveloperAction('api_key_revoke', 'api_key', revoked.id, {
+      name: revoked.name,
+      keyPreview: revoked.keyPreview,
+    });
+    toast(`Revoked ${revoked.name}.`, 'success');
+  };
+
+  const handleExportKeys = () => {
+    if (!canManage) {
+      auditDeveloperPermissionDenied('api_key_export', 'workspace', session.workspace.id, { keyCount: keys.length });
+      return;
+    }
+    const rows = exportWorkspaceApiKeyRows(keys);
+    auditDeveloperAction('api_key_export', 'workspace', session.workspace.id, { rowCount: rows.length });
+    downloadCsv(
+      `api-keys-${session.workspace.slug}.csv`,
+      ['id', 'name', 'keyPreview', 'status', 'lastUsedAt', 'expiresAt'],
+      rows.map((row) => [row.id, row.name, row.keyPreview, row.status, row.lastUsedAt, row.expiresAt]),
+    );
+    setShowKeyExportModal(false);
+    toast('API key metadata export generated.', 'success');
+  };
+
+  const resetWebhookForm = () => {
+    setWebhookName('');
+    setWebhookUrl('');
+    setWebhookEvents(['generation.completed']);
+    setNewWebhookSecret('');
+    setGeneratedWebhookName('');
+  };
+
+  const toggleWebhookEvent = (eventName: string) => {
+    setWebhookEvents((prev) =>
+      prev.includes(eventName) ? prev.filter((item) => item !== eventName) : [...prev, eventName],
+    );
+  };
+
+  const closeWebhookModal = () => {
+    setShowWebhookModal(false);
+    resetWebhookForm();
+  };
+
+  const handleCreateWebhookEndpoint = () => {
+    if (!canManage) {
+      auditDeveloperPermissionDenied('webhook_create');
+      toast('Current role cannot manage Webhooks.', 'warning');
+      return;
+    }
+    if (!webhookName.trim() || !webhookUrl.trim() || webhookEvents.length === 0) return;
+    try {
+      const parsedUrl = new URL(webhookUrl.trim());
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        toast('Webhook URL must use http or https.', 'warning');
+        return;
       }
-      return k;
-    }));
-    
-    setTimeout(() => {
-      setKeys(prev => [{ id: Date.now().toString(), name: name, key: fullKey, created: '刚刚', lastUsed: '从未', status: '正常', warning: null }, ...prev]);
-      setShowRotateConfirmModal(false);
-      setKeyToRotate(null);
-    }, 500);
+    } catch {
+      toast('Webhook URL is invalid.', 'warning');
+      return;
+    }
+
+    const result = createWorkspaceWebhookEndpoint(
+      {
+        name: webhookName.trim(),
+        url: webhookUrl.trim(),
+        events: webhookEvents,
+        metadata: { source: 'api_keys_view' },
+      },
+      webhookContext,
+    );
+    setWebhooks(loadWorkspaceWebhookEndpoints(webhookContext));
+    setNewWebhookSecret(result.signingSecret);
+    setGeneratedWebhookName(result.record.name);
+    auditDeveloperAction('webhook_create', 'webhook', result.record.id, {
+      name: result.record.name,
+      url: result.record.url,
+      events: result.record.events,
+      signingSecretRef: result.record.signingSecretRef,
+    });
+  };
+
+  const handleToggleWebhookStatus = (endpoint: WorkspaceWebhookEndpoint) => {
+    if (!canManage) {
+      auditDeveloperPermissionDenied('webhook_update', 'webhook', endpoint.id, { status: endpoint.status });
+      return;
+    }
+    const nextStatus = endpoint.status === 'active' ? 'disabled' : 'active';
+    const updated = updateWorkspaceWebhookEndpoint(endpoint.id, { status: nextStatus }, webhookContext);
+    if (!updated) return;
+    setWebhooks(loadWorkspaceWebhookEndpoints(webhookContext));
+    auditDeveloperAction('webhook_update', 'webhook', updated.id, {
+      name: updated.name,
+      status: updated.status,
+    });
+  };
+
+  const handleRotateWebhookSecret = (endpoint: WorkspaceWebhookEndpoint) => {
+    if (!canManage) {
+      auditDeveloperPermissionDenied('webhook_secret_rotate', 'webhook', endpoint.id, { status: endpoint.status });
+      return;
+    }
+    const signingSecret = generateWebhookSigningSecret();
+    const updated = updateWorkspaceWebhookEndpoint(endpoint.id, { signingSecret }, webhookContext);
+    if (!updated) return;
+    setWebhooks(loadWorkspaceWebhookEndpoints(webhookContext));
+    setNewWebhookSecret(signingSecret);
+    setGeneratedWebhookName(updated.name);
+    setShowWebhookModal(true);
+    auditDeveloperAction('webhook_secret_rotate', 'webhook', updated.id, {
+      name: updated.name,
+      signingSecretRef: updated.signingSecretRef,
+      signingSecretLast4: updated.signingSecretLast4,
+    });
+  };
+
+  const handleDeleteWebhookEndpoint = (endpoint: WorkspaceWebhookEndpoint) => {
+    if (!canManage) {
+      auditDeveloperPermissionDenied('webhook_delete', 'webhook', endpoint.id, { status: endpoint.status });
+      return;
+    }
+    const deleted = deleteWorkspaceWebhookEndpoint(endpoint.id, webhookContext);
+    if (!deleted) return;
+    setWebhooks(loadWorkspaceWebhookEndpoints(webhookContext));
+    auditDeveloperAction('webhook_delete', 'webhook', endpoint.id, {
+      name: endpoint.name,
+      url: endpoint.url,
+    });
+    toast(`Deleted ${endpoint.name}.`, 'success');
+  };
+
+  const handleExportWebhooks = () => {
+    if (!canManage) {
+      auditDeveloperPermissionDenied('webhook_export', 'workspace', session.workspace.id, { webhookCount: webhooks.length });
+      return;
+    }
+    const rows = exportWorkspaceWebhookEndpointRows(webhooks);
+    auditDeveloperAction('webhook_export', 'workspace', session.workspace.id, { rowCount: rows.length });
+    downloadCsv(
+      `webhooks-${session.workspace.slug}.csv`,
+      ['id', 'name', 'url', 'status', 'events', 'signingSecretLast4', 'failureCount'],
+      rows.map((row) => [
+        row.id,
+        row.name,
+        row.url,
+        row.status,
+        row.events.join('|'),
+        row.signingSecretLast4,
+        row.failureCount,
+      ]),
+    );
+    setShowWebhookExportModal(false);
+    toast('Webhook metadata export generated.', 'success');
   };
 
   return (
     <div className="p-[var(--spacing-xl)] max-w-6xl mx-auto animate-in fade-in duration-300">
       <div className="flex justify-between items-end mb-[var(--spacing-xl)]">
         <div>
-          <h2 className="text-2xl font-bold text-[var(--text-main)] mb-2 mt-1">API 密钥与开发者中心</h2>
-          <p className="text-[var(--text-muted)] text-sm">管理您的应用程序 API 访问凭证，配置回调 Webhooks 并查看调用限制。</p>
+          <h2 className="text-2xl font-bold text-[var(--text-main)] mb-2 mt-1">Developer Center</h2>
+          <p className="text-[var(--text-muted)] text-sm">Manage workspace API credentials, Webhooks, and integration audit metadata.</p>
         </div>
       </div>
 
       <div className="flex space-x-1 bg-gray-100 p-1 rounded-[var(--radius-lg)] w-fit mb-[var(--spacing-xl)]">
-        <button 
+        <button
           onClick={() => setActiveTab('keys')}
           className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'keys' ? 'bg-[var(--bg-panel)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)] hover:text-gray-700'}`}
         >
-          <div className="flex items-center space-x-2"><Key className="icon-sm" /><span>API 密钥</span></div>
+          <div className="flex items-center space-x-2"><Key className="icon-sm" /><span>API Keys</span></div>
         </button>
-        <button 
+        <button
           onClick={() => setActiveTab('webhooks')}
           className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'webhooks' ? 'bg-[var(--bg-panel)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)] hover:text-gray-700'}`}
         >
-          <div className="flex items-center space-x-2"><Webhook className="icon-sm" /><span>回调 Webhooks</span></div>
+          <div className="flex items-center space-x-2"><Webhook className="icon-sm" /><span>Webhooks</span></div>
         </button>
-        <button 
+        <button
           onClick={() => setActiveTab('analytics')}
           className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${activeTab === 'analytics' ? 'bg-[var(--bg-panel)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)] hover:text-gray-700'}`}
         >
-          <div className="flex items-center space-x-2"><Activity className="icon-sm" /><span>接口调用大盘</span></div>
+          <div className="flex items-center space-x-2"><Activity className="icon-sm" /><span>Usage</span></div>
         </button>
       </div>
 
       {activeTab === 'keys' && (
         <div className="space-y-[var(--spacing-lg)] animate-in slide-in-from-bottom-2 duration-300">
-          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-[var(--radius-xl)] p-[var(--spacing-lg)] flex items-start justify-between">
+          <div className="bg-blue-50 border border-blue-100 rounded-[var(--radius-xl)] p-[var(--spacing-lg)] flex items-start justify-between">
             <div className="flex items-start">
-               <div className="mt-1 bg-blue-100 text-[var(--color-primary)] p-2 rounded-[var(--radius-lg)] mr-4">
-                  <Shield className="icon-md" />
-               </div>
-               <div>
-                  <h3 className="font-bold text-blue-900 text-[15px] mb-1">保护您的凭证安全</h3>
-                  <p className="text-sm text-blue-800/70 max-w-2xl leading-relaxed">
-                    您的 API 密钥代表了您的超级个体账号最高权限。请勿在客户端代码（如浏览器端 React/Vue）、公开的 GitHub 仓库中明文硬编码保存。建议将密钥存储在后端的环境变量或密钥管理服务中。
-                  </p>
-               </div>
+              <div className="mt-1 bg-blue-100 text-[var(--color-primary)] p-2 rounded-[var(--radius-lg)] mr-4">
+                <Shield className="icon-md" />
+              </div>
+              <div>
+                <h3 className="font-bold text-blue-900 text-[15px] mb-1">Credential Safety</h3>
+                <p className="text-sm text-blue-800/70 max-w-2xl leading-relaxed">
+                  API secrets are shown once after creation or rotation. Persistent records store only previews, suffixes, and credential references.
+                </p>
+              </div>
             </div>
-            <button 
-              onClick={() => setShowGenModal(true)}
-              className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-5 py-2.5 rounded-[var(--radius-lg)] font-bold transition-colors shadow-[0_2px_10px_rgba(37,99,235,0.2)] flex items-center shrink-0"
+            <button
+              onClick={() => {
+                setNewKeyName('');
+                setNewlyGeneratedKey('');
+                setGeneratedKeyName('');
+                setShowGenModal(true);
+              }}
+              disabled={!canManage}
+              title={canManage ? undefined : 'Current role cannot manage API keys'}
+              className={`bg-[var(--color-primary)] hover:bg-blue-700 text-white px-5 py-2.5 rounded-[var(--radius-lg)] font-bold transition-colors shadow-[0_2px_10px_rgba(37,99,235,0.2)] flex items-center shrink-0 ${canManage ? '' : 'opacity-60 cursor-not-allowed'}`}
             >
               <Plus className="icon-sm mr-1.5" />
-              创建新密钥
+              Create Key
             </button>
           </div>
 
-          {keys.some(k => k.warning) && (
-            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="bg-orange-50 border border-orange-200 p-4 rounded-[var(--radius-xl)] flex items-start">
-              <AlertTriangle className="icon-md text-orange-500 mr-3 mt-0.5 shrink-0" />
+          {rotatingKeyCount > 0 && (
+            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="bg-amber-50 border border-amber-200 p-4 rounded-[var(--radius-xl)] flex items-start">
+              <AlertTriangle className="icon-md text-amber-500 mr-3 mt-0.5 shrink-0" />
               <div>
-                <h4 className="text-orange-900 font-bold text-[14px] mb-1.5">系统安全风险提示</h4>
-                <div className="space-y-1">
-                  {keys.filter(k => k.warning).map(k => (
-                    <p key={k.id} className="text-orange-800 text-[13px] font-medium flex items-center">
-                      <span className="w-1.5 h-1.5 bg-orange-400 rounded-full mr-2"></span>
-                      <span className="font-bold mr-1">{k.name}</span> {k.warning}
-                    </p>
-                  ))}
-                </div>
+                <h4 className="text-amber-900 font-bold text-[14px] mb-1.5">Rotation Grace Period</h4>
+                <p className="text-amber-800 text-[13px] font-medium">
+                  {rotatingKeyCount} old key is still in a 24-hour grace window.
+                </p>
               </div>
             </motion.div>
           )}
 
           <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[24px] shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-[var(--border-color)] flex items-center justify-between bg-[var(--bg-app)]">
+              <p className="text-sm font-bold text-[var(--text-main)]">Workspace API Keys</p>
+              <button
+                onClick={() => setShowKeyExportModal(true)}
+                className="text-sm font-bold text-[var(--color-primary)] hover:text-blue-800 flex items-center"
+              >
+                <Download className="icon-sm mr-1.5" />
+                Export Metadata
+              </button>
+            </div>
             <table className="w-full text-left">
               <thead>
                 <tr className="bg-[var(--bg-app)] border-b border-[var(--border-color)] text-[12px] font-extrabold text-gray-400 uppercase tracking-widest">
-                  <th className="py-4 px-6">名称</th>
-                  <th className="py-4 px-6">密钥 (Secret Key)</th>
-                  <th className="py-4 px-6">创建时间</th>
-                  <th className="py-4 px-6">最后使用</th>
-                  <th className="py-4 px-6">状态</th>
-                  <th className="py-4 px-6 text-right">操作</th>
+                  <th className="py-4 px-6">Name</th>
+                  <th className="py-4 px-6">Key</th>
+                  <th className="py-4 px-6">Created</th>
+                  <th className="py-4 px-6">Last Used</th>
+                  <th className="py-4 px-6">Status</th>
+                  <th className="py-4 px-6 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {keys.map((k, i) => (
-                  <tr key={i} className="hover:bg-gray-50/50 transition-colors">
+                {keys.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-10 text-center text-sm font-bold text-[var(--text-muted)]">
+                      No API keys yet.
+                    </td>
+                  </tr>
+                ) : keys.map((key) => (
+                  <tr key={key.id} className="hover:bg-gray-50/50 transition-colors">
                     <td className="py-4 px-6">
-                       <p className="font-bold text-[15px] text-[var(--text-main)] flex items-center">
-                         {k.name}
-                         {k.warning && <AlertTriangle className="w-3.5 h-3.5 text-orange-500 ml-2" title={k.warning} />}
-                       </p>
+                      <p className="font-bold text-[15px] text-[var(--text-main)]">{key.name}</p>
+                      <p className="text-[11px] text-[var(--text-muted)] mt-1">{key.credentialRef}</p>
                     </td>
                     <td className="py-4 px-6">
-                       <div className="flex items-center space-x-3 group">
-                         <code className="text-[13px] font-mono text-gray-600 bg-gray-50 px-2.5 py-1 rounded-md border border-[var(--border-color)]">
-                           {k.key}
-                         </code>
-                         <button className="text-gray-400 hover:text-[var(--color-primary)] opacity-0 group-hover:opacity-100 transition-all font-medium text-xs flex items-center">
-                           <Copy className="w-3.5 h-3.5 mr-1" />
-                           复制
-                         </button>
-                       </div>
+                      <code className="text-[13px] font-mono text-gray-600 bg-gray-50 px-2.5 py-1 rounded-md border border-[var(--border-color)]">
+                        {key.keyPreview}
+                      </code>
                     </td>
-                    <td className="py-4 px-6 text-[14px] text-[var(--text-muted)] font-medium">{k.created}</td>
+                    <td className="py-4 px-6 text-[14px] text-[var(--text-muted)] font-medium">{formatDateTime(key.createdAt)}</td>
+                    <td className="py-4 px-6 text-[14px] text-[var(--text-muted)] font-medium">{formatDateTime(key.lastUsedAt)}</td>
                     <td className="py-4 px-6 text-[14px]">
-                       <span className="text-[var(--text-muted)] font-medium">{k.lastUsed}</span>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded border ${API_KEY_STATUS_CLASSES[key.status]}`}>
+                        {API_KEY_STATUS_LABELS[key.status]}
+                      </span>
                     </td>
-                    <td className="py-4 px-6 text-[14px]">
-                       {k.status === '正常' ? (
-                          <span className="bg-green-50 text-green-700 text-[11px] font-bold px-2 py-0.5 rounded border border-green-200">正常</span>
-                       ) : (
-                          <span className="bg-orange-50 text-orange-700 text-[11px] font-bold px-2 py-0.5 rounded border border-orange-200">{k.status}</span>
-                       )}
-                    </td>
-                    <td className="py-4 px-6 text-right space-x-3">
-                      {k.status === '正常' && (
-                        <button 
-                          onClick={() => confirmRotateKey(k.id, k.name)}
-                          className="text-[var(--color-primary)] hover:text-blue-800 transition-colors text-sm font-bold flex items-center justify-end w-full mb-1"
-                        >
-                          <RefreshCcw className="icon-sm mr-1.5" />轮换
-                        </button>
-                      )}
-                      <button className="text-red-500 hover:text-red-700 transition-colors text-sm font-bold flex items-center justify-end w-full">
-                        <Trash2 className="icon-sm mr-1.5" />撤销
+                    <td className="py-4 px-6 text-right space-y-2">
+                      <button
+                        onClick={() => confirmRotateKey(key)}
+                        disabled={!canManage || key.status === 'revoked'}
+                        className="text-[var(--color-primary)] hover:text-blue-800 transition-colors text-sm font-bold flex items-center justify-end w-full disabled:text-gray-300 disabled:cursor-not-allowed"
+                      >
+                        <RefreshCcw className="icon-sm mr-1.5" />Rotate
+                      </button>
+                      <button
+                        onClick={() => handleRevokeKey(key)}
+                        disabled={!canManage || key.status === 'revoked'}
+                        className="text-red-500 hover:text-red-700 transition-colors text-sm font-bold flex items-center justify-end w-full disabled:text-gray-300 disabled:cursor-not-allowed"
+                      >
+                        <Trash2 className="icon-sm mr-1.5" />Revoke
                       </button>
                     </td>
                   </tr>
@@ -202,218 +597,285 @@ export function ApiKeysView() {
       )}
 
       {activeTab === 'webhooks' && (
-        <div className="bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm p-12 text-center animate-in slide-in-from-bottom-2 duration-300">
-          <div className="w-16 h-16 bg-blue-50 text-[var(--color-primary)] flex items-center justify-center rounded-[var(--radius-xl)] mx-auto mb-4">
-             <Webhook className="icon-xl" />
+        <div className="space-y-[var(--spacing-lg)] animate-in slide-in-from-bottom-2 duration-300">
+          <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[24px] shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-[var(--border-color)] flex items-center justify-between bg-[var(--bg-app)]">
+              <div className="flex items-center">
+                <div className="w-10 h-10 bg-blue-50 text-[var(--color-primary)] flex items-center justify-center rounded-[var(--radius-lg)] mr-3">
+                  <Webhook className="icon-md" />
+                </div>
+                <div>
+                  <p className="font-bold text-[var(--text-main)]">Webhook Endpoints</p>
+                  <p className="text-[13px] text-[var(--text-muted)]">Receive async events for generations, assets, billing, and Agent runtime tasks.</p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => setShowWebhookExportModal(true)}
+                  className="text-sm font-bold text-[var(--color-primary)] hover:text-blue-800 flex items-center"
+                >
+                  <Download className="icon-sm mr-1.5" />
+                  Export
+                </button>
+                <button
+                  onClick={() => {
+                    resetWebhookForm();
+                    setShowWebhookModal(true);
+                  }}
+                  disabled={!canManage}
+                  className={`bg-[var(--color-primary)] hover:bg-blue-700 text-white px-4 py-2.5 rounded-[var(--radius-lg)] font-bold transition-colors flex items-center ${canManage ? '' : 'opacity-60 cursor-not-allowed'}`}
+                >
+                  <Plus className="icon-sm mr-1.5" />
+                  Add Endpoint
+                </button>
+              </div>
+            </div>
+
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-[var(--bg-app)] border-b border-[var(--border-color)] text-[12px] font-extrabold text-gray-400 uppercase tracking-widest">
+                  <th className="py-4 px-6">Endpoint</th>
+                  <th className="py-4 px-6">Events</th>
+                  <th className="py-4 px-6">Secret</th>
+                  <th className="py-4 px-6">Status</th>
+                  <th className="py-4 px-6 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {webhooks.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-10 text-center text-sm font-bold text-[var(--text-muted)]">
+                      No Webhook endpoints configured.
+                    </td>
+                  </tr>
+                ) : webhooks.map((endpoint) => (
+                  <tr key={endpoint.id} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="py-4 px-6">
+                      <p className="font-bold text-[15px] text-[var(--text-main)]">{endpoint.name}</p>
+                      <p className="text-[12px] text-[var(--text-muted)] mt-1 break-all">{endpoint.url}</p>
+                      <p className="text-[11px] text-[var(--text-muted)] mt-1">Last delivery: {formatDateTime(endpoint.lastDeliveredAt)}</p>
+                    </td>
+                    <td className="py-4 px-6">
+                      <div className="flex flex-wrap gap-1.5 max-w-sm">
+                        {endpoint.events.map((eventName) => (
+                          <span key={eventName} className="text-[11px] font-bold bg-gray-100 text-gray-600 px-2 py-1 rounded border border-gray-200">
+                            {eventName}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="py-4 px-6">
+                      <p className="text-[13px] font-mono text-gray-600">whsec-...{endpoint.signingSecretLast4}</p>
+                      <p className="text-[11px] text-[var(--text-muted)] mt-1">{endpoint.signingSecretRef}</p>
+                    </td>
+                    <td className="py-4 px-6">
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded border ${WEBHOOK_STATUS_CLASSES[endpoint.status]}`}>
+                        {WEBHOOK_STATUS_LABELS[endpoint.status]}
+                      </span>
+                      {endpoint.failureCount > 0 && (
+                        <p className="text-[11px] text-red-500 mt-1">{endpoint.failureCount} failures</p>
+                      )}
+                    </td>
+                    <td className="py-4 px-6 text-right space-y-2">
+                      <button
+                        onClick={() => handleToggleWebhookStatus(endpoint)}
+                        disabled={!canManage}
+                        className="text-[var(--color-primary)] hover:text-blue-800 transition-colors text-sm font-bold flex items-center justify-end w-full disabled:text-gray-300 disabled:cursor-not-allowed"
+                      >
+                        {endpoint.status === 'active' ? 'Pause' : 'Resume'}
+                      </button>
+                      <button
+                        onClick={() => handleRotateWebhookSecret(endpoint)}
+                        disabled={!canManage}
+                        className="text-[var(--color-primary)] hover:text-blue-800 transition-colors text-sm font-bold flex items-center justify-end w-full disabled:text-gray-300 disabled:cursor-not-allowed"
+                      >
+                        Rotate Secret
+                      </button>
+                      <button
+                        onClick={() => handleDeleteWebhookEndpoint(endpoint)}
+                        disabled={!canManage}
+                        className="text-red-500 hover:text-red-700 transition-colors text-sm font-bold flex items-center justify-end w-full disabled:text-gray-300 disabled:cursor-not-allowed"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <h2 className="text-xl font-bold text-[var(--text-main)] mb-2">配置工作流回调 Webhooks</h2>
-          <p className="text-[var(--text-muted)] max-w-lg mx-auto mb-[var(--spacing-xl)]">
-            由于视频生成、AI 模型训练为耗时异步任务。配置接收回调地址，当内容生产完毕后，我们将主动推送数据到您的服务器。
-          </p>
-          <button className="bg-[var(--bg-panel)] border border-[var(--border-color)] text-gray-700 hover:bg-gray-50 px-6 py-2.5 rounded-[var(--radius-lg)] font-bold shadow-sm transition-colors">
-            添加 Endpoint (API v2)
-          </button>
         </div>
       )}
 
       {activeTab === 'analytics' && (
         <div className="space-y-[var(--spacing-lg)] animate-in slide-in-from-bottom-2 duration-300">
-           <div className="flex justify-end mb-2">
-              <button onClick={() => setShowExportModal(true)} className="bg-[var(--bg-panel)] border border-[var(--border-color)] text-gray-700 hover:bg-gray-50 px-5 py-2.5 rounded-[var(--radius-lg)] font-bold shadow-sm transition-colors flex items-center text-sm">
-                <Download className="icon-sm mr-2" />
-                导出用量对账单 (CSV)
-              </button>
-           </div>
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-[var(--spacing-md)]">
-              <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-[var(--spacing-lg)] shadow-sm">
-                 <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">今日总请求量限制</p>
-                 <div className="flex items-end mb-2">
-                    <p className="text-[var(--text-main)]xl font-black text-[var(--text-main)]">4,281</p>
-                    <p className="text-sm font-bold text-[var(--text-muted)] ml-2 mb-1">/ 10,000</p>
-                 </div>
-                 <div className="w-full bg-gray-100 h-2 rounded-full mt-2">
-                    <div className="bg-blue-500 h-2 rounded-full" style={{ width: '42%' }}></div>
-                 </div>
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-[var(--spacing-md)]">
+            <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-[var(--spacing-lg)] shadow-sm">
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Active keys</p>
+              <p className="text-3xl font-black text-[var(--text-main)]">{activeKeyCount}</p>
+            </div>
+            <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-[var(--spacing-lg)] shadow-sm">
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Rotating keys</p>
+              <p className="text-3xl font-black text-[var(--text-main)]">{rotatingKeyCount}</p>
+            </div>
+            <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-[var(--spacing-lg)] shadow-sm">
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Revoked keys</p>
+              <p className="text-3xl font-black text-[var(--text-main)]">{revokedKeyCount}</p>
+            </div>
+            <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-[var(--spacing-lg)] shadow-sm">
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Webhooks</p>
+              <p className="text-3xl font-black text-[var(--text-main)]">{activeWebhookCount}</p>
+            </div>
+            <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-[var(--spacing-lg)] shadow-sm">
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Failing hooks</p>
+              <p className="text-3xl font-black text-[var(--text-main)]">{failingWebhookCount}</p>
+            </div>
+          </div>
+
+          <div className="bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm p-[var(--spacing-lg)] mb-[var(--spacing-md)]">
+            <h3 className="font-bold text-lg text-[var(--text-main)] mb-[var(--spacing-md)]">Integration Activity</h3>
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
+                <AreaChart data={usageSeries} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="callsGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="errorsGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#EF4444" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                  <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: '#9CA3AF', fontSize: 12 }} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#9CA3AF', fontSize: 12 }} />
+                  <Tooltip contentStyle={{ borderRadius: '12px', border: '1px solid #E5E7EB', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }} />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', fontWeight: 'bold' }} />
+                  <Area type="monotone" dataKey="calls" name="Successful calls" stroke="#3B82F6" strokeWidth={3} fillOpacity={1} fill="url(#callsGrad)" />
+                  <Area type="monotone" dataKey="errors" name="Delivery errors" stroke="#EF4444" strokeWidth={3} fillOpacity={1} fill="url(#errorsGrad)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm p-[var(--spacing-lg)] flex items-center justify-between">
+            <div className="flex items-center">
+              <Code className="w-10 h-10 text-gray-400 mr-4" />
+              <div>
+                <h3 className="font-bold text-lg text-[var(--text-main)]">API and Webhook Docs</h3>
+                <p className="text-sm text-[var(--text-muted)]">View server-side API, signing, and delivery retry references.</p>
               </div>
-              <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-[var(--spacing-lg)] shadow-sm">
-                 <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">并发调用线程峰值</p>
-                 <div className="flex items-end mb-2">
-                    <p className="text-[var(--text-main)]xl font-black text-[var(--text-main)]">24</p>
-                    <p className="text-sm font-bold text-[var(--text-muted)] ml-2 mb-1">/ 50 并发最大</p>
-                 </div>
-                 <div className="w-full bg-gray-100 h-2 rounded-full mt-2">
-                    <div className="bg-emerald-500 h-2 rounded-full" style={{ width: '48%' }}></div>
-                 </div>
-              </div>
-              <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-[var(--spacing-lg)] shadow-sm">
-                 <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">平均 API 延迟</p>
-                 <div className="flex items-end mb-2">
-                    <p className="text-[var(--text-main)]xl font-black text-[var(--text-main)]">312<span className="text-lg">ms</span></p>
-                 </div>
-                 <p className="text-xs font-bold text-green-600 mt-2 flex items-center">
-                    <CheckCircle2 className="w-3 h-3 mr-1" />
-                    P95 数据良好
-                 </p>
-              </div>
-           </div>
-           
-           <div className="bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm p-[var(--spacing-lg)] mb-[var(--spacing-md)]">
-              <h3 className="font-bold text-lg text-[var(--text-main)] mb-[var(--spacing-md)]">实时 API 调用与错误分布</h3>
-              <div className="h-72 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={[
-                    { time: '00:00', calls: 240, errors: 4 },
-                    { time: '04:00', calls: 139, errors: 2 },
-                    { time: '08:00', calls: 980, errors: 12 },
-                    { time: '12:00', calls: 3908, errors: 45 },
-                    { time: '16:00', calls: 4800, errors: 23 },
-                    { time: '20:00', calls: 3800, errors: 18 },
-                    { time: '24:00', calls: 4300, errors: 9 },
-                  ]} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="callsGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id="errorsGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#EF4444" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#EF4444" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                    <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{fill: '#9CA3AF', fontSize: 12}} dy={10} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#9CA3AF', fontSize: 12}} />
-                    <Tooltip contentStyle={{ borderRadius: '12px', border: '1px solid #E5E7EB', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }} />
-                    <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', fontWeight: 'bold' }} />
-                    <Area type="monotone" dataKey="calls" name="成功调用" stroke="#3B82F6" strokeWidth={3} fillOpacity={1} fill="url(#callsGrad)" />
-                    <Area type="monotone" dataKey="errors" name="异常报错" stroke="#EF4444" strokeWidth={3} fillOpacity={1} fill="url(#errorsGrad)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-           </div>
-           
-           <div className="bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm p-[var(--spacing-lg)] flex items-center justify-between">
-              <div className="flex items-center">
-                 <Code className="w-10 h-10 text-gray-400 mr-4" />
-                 <div>
-                    <h3 className="font-bold text-lg text-[var(--text-main)]">官方 API 文档与 SDK 参考</h3>
-                    <p className="text-sm text-[var(--text-muted)]">查阅如何使用 Node.js, Python, HTTP/REST 接入我们的智能生成系统。</p>
-                 </div>
-              </div>
-              <button className="text-[var(--color-primary)] font-bold hover:text-blue-800 transition-colors bg-blue-50 hover:bg-blue-100 px-5 py-2.5 rounded-[var(--radius-lg)]">
-                 阅读研发文档
-              </button>
-           </div>
+            </div>
+            <button className="text-[var(--color-primary)] font-bold hover:text-blue-800 transition-colors bg-blue-50 hover:bg-blue-100 px-5 py-2.5 rounded-[var(--radius-lg)]">
+              Open Docs
+            </button>
+          </div>
         </div>
       )}
 
       <AnimatePresence>
-      {/* Generate Key Modal */}
-      {showGenModal && (
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-        >
-          <motion.div 
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.95, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 300, damping: 25 }}
-            className="bg-[var(--bg-panel)] w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden relative"
-          >
-            
-            {newlyGeneratedKey ? (
-              <div className="p-[var(--spacing-xl)] pb-10 text-center">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-5">
-                   <CheckCircle2 className="icon-xl text-green-600" />
-                </div>
-                <h3 className="text-xl font-bold text-[var(--text-main)] mb-2">新的密钥已生成</h3>
-                <p className="text-sm text-[var(--text-muted)] mb-[var(--spacing-md)] px-4">
-                  请立即复制并妥善保管您的新密钥。为了安全起见，<b>关闭此窗口后您将无法再次查看该密钥。</b>
-                </p>
-                
-                <div className="bg-gray-50 p-4 rounded-[var(--radius-lg)] border border-[var(--border-color)] mb-[var(--spacing-md)] flex flex-col items-center">
-                   <code className="text-sm font-mono text-[var(--text-main)] font-bold mb-3 break-all">{newlyGeneratedKey}</code>
-                   <button 
-                     onClick={() => copyToClipboard(newlyGeneratedKey)}
-                     className="bg-[var(--color-primary)] hover:bg-blue-700 text-white w-full py-2.5 rounded-lg font-bold flex items-center justify-center transition-colors"
-                   >
-                     <Copy className="icon-sm mr-2" />
-                     复制密钥内容
-                   </button>
-                </div>
-                
-                <button 
-                  onClick={closeGenModal}
-                  className="text-[var(--text-muted)] hover:text-[var(--text-main)] font-bold text-sm px-6 py-2 transition-colors"
-                >
-                  我已经保存好了，关闭窗口
-                </button>
-              </div>
-            ) : (
-              <div className="p-[var(--spacing-lg)]">
-                <div className="mb-[var(--spacing-md)] flex items-center space-x-3 pb-4 border-b border-[var(--border-color)]">
-                  <div className="bg-blue-50 text-[var(--color-primary)] w-10 h-10 flex items-center justify-center rounded-[var(--radius-lg)]">
-                    <Key className="icon-md" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold text-[var(--text-main)]">创建新 API 密钥</h3>
-                    <p className="text-[13px] text-[var(--text-muted)]">为应用或项目命名，便于您日后管理识别。</p>
-                  </div>
-                </div>
-
-                <div className="mb-[var(--spacing-xl)]">
-                   <label className="block text-sm font-bold text-gray-700 mb-2">
-                     密钥名称
-                   </label>
-                   <input 
-                     type="text" 
-                     placeholder="例如: 生产环境主服务器" 
-                     value={newKeyName}
-                     onChange={(e) => setNewKeyName(e.target.value)}
-                     className="w-full border border-[var(--border-color)] focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-[var(--radius-lg)] px-4 py-3 outline-none transition-all font-medium text-[15px]" 
-                     autoFocus
-                   />
-                </div>
-
-                <div className="flex space-x-3 justify-end">
-                   <button 
-                     onClick={closeGenModal}
-                     className="px-5 py-2.5 rounded-[var(--radius-lg)] text-gray-600 font-bold hover:bg-gray-100 transition-colors bg-[var(--bg-panel)] border border-[var(--border-color)]"
-                   >
-                     取消
-                   </button>
-                   <button 
-                     disabled={!newKeyName}
-                     onClick={handleGenerateKey}
-                     className="bg-[var(--color-primary)] hover:bg-blue-700 text-white disabled:opacity-50 disabled:hover:bg-[var(--color-primary)] px-6 py-2.5 rounded-[var(--radius-lg)] font-bold transition-all shadow-sm"
-                   >
-                     生成密钥
-                   </button>
-                </div>
-              </div>
-            )}
-          </motion.div>
-        </motion.div>
-      )}
-      </AnimatePresence>
-
-      {/* Rotate Key Confirm Modal */}
-      <AnimatePresence>
-        {showRotateConfirmModal && keyToRotate && (
-          <motion.div 
+        {showGenModal && (
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
           >
-            <motion.div 
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+              className="bg-[var(--bg-panel)] w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden relative"
+            >
+              {newlyGeneratedKey ? (
+                <div className="p-[var(--spacing-xl)] pb-10 text-center">
+                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-5">
+                    <CheckCircle2 className="icon-xl text-green-600" />
+                  </div>
+                  <h3 className="text-xl font-bold text-[var(--text-main)] mb-2">Key Generated</h3>
+                  <p className="text-sm text-[var(--text-muted)] mb-[var(--spacing-md)] px-4">
+                    {generatedKeyName} is shown once. Store the full secret before closing this dialog.
+                  </p>
+
+                  <div className="bg-gray-50 p-4 rounded-[var(--radius-lg)] border border-[var(--border-color)] mb-[var(--spacing-md)] flex flex-col items-center">
+                    <code className="text-sm font-mono text-[var(--text-main)] font-bold mb-3 break-all">{newlyGeneratedKey}</code>
+                    <button
+                      onClick={() => copyToClipboard(newlyGeneratedKey)}
+                      className="bg-[var(--color-primary)] hover:bg-blue-700 text-white w-full py-2.5 rounded-lg font-bold flex items-center justify-center transition-colors"
+                    >
+                      <Copy className="icon-sm mr-2" />
+                      Copy Secret
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={closeGenModal}
+                    className="text-[var(--text-muted)] hover:text-[var(--text-main)] font-bold text-sm px-6 py-2 transition-colors"
+                  >
+                    Saved, Close
+                  </button>
+                </div>
+              ) : (
+                <div className="p-[var(--spacing-lg)]">
+                  <div className="mb-[var(--spacing-md)] flex items-center space-x-3 pb-4 border-b border-[var(--border-color)]">
+                    <div className="bg-blue-50 text-[var(--color-primary)] w-10 h-10 flex items-center justify-center rounded-[var(--radius-lg)]">
+                      <Key className="icon-md" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-[var(--text-main)]">Create API Key</h3>
+                      <p className="text-[13px] text-[var(--text-muted)]">Name the server-side app or environment that will use this key.</p>
+                    </div>
+                  </div>
+
+                  <div className="mb-[var(--spacing-xl)]">
+                    <label className="block text-sm font-bold text-gray-700 mb-2">Key Name</label>
+                    <input
+                      type="text"
+                      placeholder="Production backend"
+                      value={newKeyName}
+                      onChange={(e) => setNewKeyName(e.target.value)}
+                      className="w-full border border-[var(--border-color)] focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-[var(--radius-lg)] px-4 py-3 outline-none transition-all font-medium text-[15px]"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="flex space-x-3 justify-end">
+                    <button
+                      onClick={closeGenModal}
+                      className="px-5 py-2.5 rounded-[var(--radius-lg)] text-gray-600 font-bold hover:bg-gray-100 transition-colors bg-[var(--bg-panel)] border border-[var(--border-color)]"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      disabled={!newKeyName.trim() || !canManage}
+                      onClick={handleGenerateKey}
+                      className="bg-[var(--color-primary)] hover:bg-blue-700 text-white disabled:opacity-50 disabled:hover:bg-[var(--color-primary)] px-6 py-2.5 rounded-[var(--radius-lg)] font-bold transition-all shadow-sm"
+                    >
+                      Generate
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showRotateConfirmModal && keyToRotate && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          >
+            <motion.div
               initial={{ scale: 0.95, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              transition={{ type: "spring", stiffness: 300, damping: 25 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
               className="bg-[var(--bg-panel)] w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden relative p-[var(--spacing-lg)]"
             >
               <div className="mb-[var(--spacing-md)] flex items-start space-x-4">
@@ -421,89 +883,220 @@ export function ApiKeysView() {
                   <RefreshCcw className="icon-lg" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-[var(--text-main)] mb-1">确认轮换 API 密钥</h3>
+                  <h3 className="text-lg font-bold text-[var(--text-main)] mb-1">Rotate API Key</h3>
                   <p className="text-[13px] text-[var(--text-muted)] leading-relaxed">
-                    您将为 <span className="font-bold text-[var(--text-main)]">{keyToRotate.name}</span> 生成一个新的密钥。旧密钥将在 <span className="font-bold text-[var(--text-main)]">24 小时</span> 后自动失效，请在此期间完成业务代码的凭证替换操作以避免服务中断。
+                    A new secret will be generated for {keyToRotate.name}. The old key remains in a 24-hour grace period.
                   </p>
                 </div>
               </div>
               <div className="flex space-x-3 justify-end mt-8">
-                 <button 
-                   onClick={() => setShowRotateConfirmModal(false)}
-                   className="px-5 py-2.5 rounded-[var(--radius-lg)] text-gray-600 font-bold hover:bg-gray-100 transition-colors bg-[var(--bg-panel)] border border-[var(--border-color)] w-full sm:w-auto"
-                 >
-                   取消
-                 </button>
-                 <button 
-                   onClick={executeRotateKey}
-                   className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-6 py-2.5 rounded-[var(--radius-lg)] font-bold transition-all shadow-sm w-full sm:w-auto"
-                 >
-                   确认生成新密钥
-                 </button>
+                <button
+                  onClick={() => setShowRotateConfirmModal(false)}
+                  className="px-5 py-2.5 rounded-[var(--radius-lg)] text-gray-600 font-bold hover:bg-gray-100 transition-colors bg-[var(--bg-panel)] border border-[var(--border-color)] w-full sm:w-auto"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={executeRotateKey}
+                  className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-6 py-2.5 rounded-[var(--radius-lg)] font-bold transition-all shadow-sm w-full sm:w-auto"
+                >
+                  Rotate
+                </button>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Export CSV Modal */}
       <AnimatePresence>
-        {showExportModal && (
-          <motion.div 
+        {showWebhookModal && (
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
           >
-            <motion.div 
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+              className="bg-[var(--bg-panel)] w-full max-w-lg rounded-[24px] shadow-2xl overflow-hidden relative"
+            >
+              {newWebhookSecret ? (
+                <div className="p-[var(--spacing-xl)] pb-10 text-center">
+                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-5">
+                    <CheckCircle2 className="icon-xl text-green-600" />
+                  </div>
+                  <h3 className="text-xl font-bold text-[var(--text-main)] mb-2">Signing Secret Ready</h3>
+                  <p className="text-sm text-[var(--text-muted)] mb-[var(--spacing-md)] px-4">
+                    {generatedWebhookName} uses this signing secret. Store it before closing this dialog.
+                  </p>
+
+                  <div className="bg-gray-50 p-4 rounded-[var(--radius-lg)] border border-[var(--border-color)] mb-[var(--spacing-md)] flex flex-col items-center">
+                    <code className="text-sm font-mono text-[var(--text-main)] font-bold mb-3 break-all">{newWebhookSecret}</code>
+                    <button
+                      onClick={() => copyToClipboard(newWebhookSecret)}
+                      className="bg-[var(--color-primary)] hover:bg-blue-700 text-white w-full py-2.5 rounded-lg font-bold flex items-center justify-center transition-colors"
+                    >
+                      <Copy className="icon-sm mr-2" />
+                      Copy Secret
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={closeWebhookModal}
+                    className="text-[var(--text-muted)] hover:text-[var(--text-main)] font-bold text-sm px-6 py-2 transition-colors"
+                  >
+                    Saved, Close
+                  </button>
+                </div>
+              ) : (
+                <div className="p-[var(--spacing-lg)]">
+                  <div className="mb-[var(--spacing-md)] flex items-center space-x-3 pb-4 border-b border-[var(--border-color)]">
+                    <div className="bg-blue-50 text-[var(--color-primary)] w-10 h-10 flex items-center justify-center rounded-[var(--radius-lg)]">
+                      <Webhook className="icon-md" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-[var(--text-main)]">Add Webhook Endpoint</h3>
+                      <p className="text-[13px] text-[var(--text-muted)]">Configure the server endpoint and events for async delivery.</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 mb-[var(--spacing-xl)]">
+                    <label className="block">
+                      <span className="block text-sm font-bold text-gray-700 mb-2">Endpoint Name</span>
+                      <input
+                        type="text"
+                        placeholder="Production events"
+                        value={webhookName}
+                        onChange={(e) => setWebhookName(e.target.value)}
+                        className="w-full border border-[var(--border-color)] focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-[var(--radius-lg)] px-4 py-3 outline-none transition-all font-medium text-[15px]"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="block text-sm font-bold text-gray-700 mb-2">Endpoint URL</span>
+                      <input
+                        type="url"
+                        placeholder="https://example.com/aistudio/webhook"
+                        value={webhookUrl}
+                        onChange={(e) => setWebhookUrl(e.target.value)}
+                        className="w-full border border-[var(--border-color)] focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 rounded-[var(--radius-lg)] px-4 py-3 outline-none transition-all font-medium text-[15px]"
+                      />
+                    </label>
+                    <div>
+                      <p className="block text-sm font-bold text-gray-700 mb-2">Events</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {WEBHOOK_EVENT_OPTIONS.map((eventName) => (
+                          <label key={eventName} className="flex items-center text-sm font-bold text-gray-700 bg-gray-50 border border-[var(--border-color)] rounded-[var(--radius-lg)] p-3">
+                            <input
+                              type="checkbox"
+                              checked={webhookEvents.includes(eventName)}
+                              onChange={() => toggleWebhookEvent(eventName)}
+                              className="mr-2"
+                            />
+                            {eventName}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex space-x-3 justify-end">
+                    <button
+                      onClick={closeWebhookModal}
+                      className="px-5 py-2.5 rounded-[var(--radius-lg)] text-gray-600 font-bold hover:bg-gray-100 transition-colors bg-[var(--bg-panel)] border border-[var(--border-color)]"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      disabled={!webhookName.trim() || !webhookUrl.trim() || webhookEvents.length === 0 || !canManage}
+                      onClick={handleCreateWebhookEndpoint}
+                      className="bg-[var(--color-primary)] hover:bg-blue-700 text-white disabled:opacity-50 disabled:hover:bg-[var(--color-primary)] px-6 py-2.5 rounded-[var(--radius-lg)] font-bold transition-all shadow-sm"
+                    >
+                      Create Endpoint
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showKeyExportModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          >
+            <motion.div
               initial={{ scale: 0.95, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              transition={{ type: "spring", stiffness: 300, damping: 25 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
               className="bg-[var(--bg-panel)] w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden relative p-[var(--spacing-lg)]"
             >
-               <div className="flex justify-between items-center mb-[var(--spacing-md)]">
-                 <h3 className="text-xl font-bold text-[var(--text-main)] flex items-center">
-                   <Download className="icon-md mr-2 text-[var(--color-primary)]" />
-                   导出用量对账单
-                 </h3>
-                 <button onClick={() => setShowExportModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100">
-                   <X className="icon-md" />
-                 </button>
-               </div>
-               
-               <div className="space-y-[var(--spacing-md)] mb-[var(--spacing-xl)]">
-                  <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-2">对账周期</label>
-                    <select className="w-full border border-[var(--border-color)] rounded-[var(--radius-lg)] px-4 py-3 outline-none focus:border-blue-500 text-[14px] font-medium bg-[var(--bg-panel)]">
-                      <option>最近 7 天</option>
-                      <option>上个月 (2026-04)</option>
-                      <option>当月截止至今</option>
-                      <option>自定义时间范围...</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-2">数据颗粒度</label>
-                    <div className="flex bg-gray-50 border border-[var(--border-color)] rounded-[var(--radius-lg)] p-1">
-                      <button className="flex-1 py-1.5 bg-[var(--bg-panel)] shadow-sm rounded-lg text-sm font-bold text-[var(--text-main)] border border-[var(--border-color)]">按天统计</button>
-                      <button className="flex-1 py-1.5 rounded-lg text-sm font-bold text-[var(--text-muted)] hover:text-gray-700">按小时汇总</button>
-                    </div>
-                  </div>
-                  <p className="text-[12px] text-[var(--text-muted)] flex items-start bg-gray-50 p-3 rounded-[var(--radius-lg)] border border-[var(--border-color)]">
-                    <span className="text-[16px] mr-1">💡</span> 报表包含按应用级别的 Token 消耗量、调用次数以及失败率统计，方便研发侧审计计费账单。
-                  </p>
-               </div>
-               
-               <button 
-                 onClick={() => {
-                   alert('开始生成导出任务，稍后将会自动下载...');
-                   setShowExportModal(false);
-                 }}
-                 className="w-full bg-gray-900 hover:bg-black text-white px-6 py-3.5 rounded-[var(--radius-lg)] font-bold transition-all shadow-md flex items-center justify-center"
-               >
-                 <Download className="icon-sm mr-2" />
-                 立即生成并下载 CSV
-               </button>
+              <div className="flex justify-between items-center mb-[var(--spacing-md)]">
+                <h3 className="text-xl font-bold text-[var(--text-main)] flex items-center">
+                  <Download className="icon-md mr-2 text-[var(--color-primary)]" />
+                  Export API Key Metadata
+                </h3>
+                <button onClick={() => setShowKeyExportModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100">
+                  <X className="icon-md" />
+                </button>
+              </div>
+              <p className="text-[13px] text-[var(--text-muted)] leading-relaxed bg-gray-50 p-4 rounded-[var(--radius-lg)] border border-[var(--border-color)] mb-[var(--spacing-xl)]">
+                The export includes metadata and masked previews only. Full secrets are never exported.
+              </p>
+              <button
+                onClick={handleExportKeys}
+                className="w-full bg-gray-900 hover:bg-black text-white px-6 py-3.5 rounded-[var(--radius-lg)] font-bold transition-all shadow-md flex items-center justify-center"
+              >
+                <Download className="icon-sm mr-2" />
+                Generate CSV
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showWebhookExportModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+              className="bg-[var(--bg-panel)] w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden relative p-[var(--spacing-lg)]"
+            >
+              <div className="flex justify-between items-center mb-[var(--spacing-md)]">
+                <h3 className="text-xl font-bold text-[var(--text-main)] flex items-center">
+                  <Download className="icon-md mr-2 text-[var(--color-primary)]" />
+                  Export Webhook Metadata
+                </h3>
+                <button onClick={() => setShowWebhookExportModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100">
+                  <X className="icon-md" />
+                </button>
+              </div>
+              <p className="text-[13px] text-[var(--text-muted)] leading-relaxed bg-gray-50 p-4 rounded-[var(--radius-lg)] border border-[var(--border-color)] mb-[var(--spacing-xl)]">
+                The export includes endpoint metadata and signing-secret suffixes only. Full signing secrets are never exported.
+              </p>
+              <button
+                onClick={handleExportWebhooks}
+                className="w-full bg-gray-900 hover:bg-black text-white px-6 py-3.5 rounded-[var(--radius-lg)] font-bold transition-all shadow-md flex items-center justify-center"
+              >
+                <Download className="icon-sm mr-2" />
+                Generate CSV
+              </button>
             </motion.div>
           </motion.div>
         )}

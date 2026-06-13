@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Search, Command, ArrowRight, Folder, LayoutDashboard, FileText, Image as LucideImage, Video, Users, X, History } from 'lucide-react';
-import { navGroups } from './Sidebar';
 import { ModuleId } from '../types';
-import { initFirebaseDb } from '../lib/firebaseConfig';
-import { ref as dbRef, onValue, set } from 'firebase/database';
+import { getProductNavGroupsForRole } from '../product/registry';
+import { saveSearchHistory, subscribeSearchHistory } from '../lib/data/searchHistoryRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { useWorkspaceAssets } from '../hooks/useWorkspaceAssets';
 
 interface GlobalSearchOverlayProps {
   isOpen: boolean;
@@ -12,48 +13,28 @@ interface GlobalSearchOverlayProps {
 }
 
 export function GlobalSearchOverlay({ isOpen, onClose, onNavigate }: GlobalSearchOverlayProps) {
+  const session = useSaasSession();
+  const assets = useWorkspaceAssets();
   const [query, setQuery] = useState('');
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchHistoryContext = {
+    workspaceId: session.workspace.id,
+    userId: session.user.id,
+  };
+  const accessibleModules = useMemo(
+    () => getProductNavGroupsForRole(session.membership.role).flatMap((group) => group.items),
+    [session.membership.role],
+  );
 
   useEffect(() => {
-    // Try Firebase First, fallback to localStorage
-    const db = initFirebaseDb();
-    if (db) {
-      // Use a dummy user ID or from auth if available.
-      // For simple sync, we'll use a local ID tied to the browser or a static "demo_user"
-      const userId = localStorage.getItem('demo_sync_id') || 'demo_user_' + Math.random().toString(36).substr(2, 6);
-      if (!localStorage.getItem('demo_sync_id')) localStorage.setItem('demo_sync_id', userId);
-      
-      const historyRef = dbRef(db, `search_history/${userId}`);
-      const unsubscribe = onValue(historyRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data && Array.isArray(data)) {
-           setRecentSearches(data);
-           localStorage.setItem('recent_searches', JSON.stringify(data)); // cache locally
-        }
-      });
-      return () => unsubscribe();
-    } else {
-      const saved = localStorage.getItem('recent_searches');
-      if (saved) {
-         try { setRecentSearches(JSON.parse(saved)); } catch(e){}
-      }
-    }
-  }, []);
+    return subscribeSearchHistory(searchHistoryContext, setRecentSearches);
+  }, [session.workspace.id, session.user.id]);
 
   const saveToHistory = (item: string) => {
     setRecentSearches(prev => {
       const updated = [item, ...prev.filter(i => i !== item)].slice(0, 5);
-      localStorage.setItem('recent_searches', JSON.stringify(updated));
-      
-      const db = initFirebaseDb();
-      if (db) {
-         const userId = localStorage.getItem('demo_sync_id');
-         if (userId) set(dbRef(db, `search_history/${userId}`), updated);
-      }
-      
-      return updated;
+      return saveSearchHistory(updated, searchHistoryContext);
     });
   };
 
@@ -95,30 +76,42 @@ export function GlobalSearchOverlay({ isOpen, onClose, onNavigate }: GlobalSearc
 
   if (!isOpen) return null;
 
-  // Flatten modules for search
-  const allModules = navGroups.flatMap(group => group.items);
+  // Flatten accessible modules for search
+  const allModules = accessibleModules;
+  const normalizedQuery = query.trim().toLowerCase();
+  const getAssetIcon = (type: string) => {
+    if (type === 'image') return <LucideImage className="icon-sm" />;
+    if (type === 'video') return <Video className="icon-sm" />;
+    return <FileText className="icon-sm" />;
+  };
+  const assetResults = normalizedQuery
+    ? assets.filter((asset) => {
+      const searchableText = [
+        asset.name,
+        asset.type,
+        asset.source,
+        asset.moduleId ?? '',
+        ...asset.tags,
+      ].join(' ').toLowerCase();
+      return searchableText.includes(normalizedQuery);
+    }).map((asset) => ({
+      id: asset.id,
+      type: 'asset',
+      title: asset.name,
+      icon: getAssetIcon(asset.type),
+      assetId: asset.id,
+    }))
+    : [];
   
   const searchResults = [
     // Matches in modules
-    ...allModules.filter(m => m.label.toLowerCase().includes(query.toLowerCase())).map(m => ({
+    ...allModules.filter(m => m.label.toLowerCase().includes(normalizedQuery)).map(m => ({
       id: m.id,
       type: 'module',
       title: m.label,
       icon: <LayoutDashboard className="icon-sm" />
     })),
-    // Mock assets if query matches
-    ...(query && 'brand kit logo'.includes(query.toLowerCase()) ? [{
-      id: 'mock-asset-1',
-      type: 'asset',
-      title: 'Brand Kit Logo (Q3)',
-      icon: <LucideImage className="icon-sm" />
-    }] : []),
-    ...(query && 'marketing video'.includes(query.toLowerCase()) ? [{
-      id: 'mock-asset-2',
-      type: 'asset',
-      title: 'Spring Marketing Video',
-      icon: <Video className="icon-sm" />
-    }] : [])
+    ...assetResults,
   ].slice(0, 8); // Limit results
 
   return (
@@ -182,6 +175,14 @@ export function GlobalSearchOverlay({ isOpen, onClose, onNavigate }: GlobalSearc
                       saveToHistory(result.title);
                       if (result.type === 'module') {
                         onNavigate(result.id as ModuleId);
+                      } else if (result.type === 'asset') {
+                        window.dispatchEvent(new CustomEvent('global_search_asset_selected', {
+                          detail: {
+                            assetId: result.id,
+                            workspaceId: session.workspace.id,
+                          },
+                        }));
+                        onNavigate('assets');
                       }
                       onClose();
                     }}

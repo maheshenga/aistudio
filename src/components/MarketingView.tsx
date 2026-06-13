@@ -1,9 +1,132 @@
 import React from 'react';
 import { ScanLine, SmartphoneNfc, Globe, Share2, ArrowUpRight, Copy, Code, LayoutTemplate, Plus, Check, Settings2, Download, Wand2, Image as ImageIcon, Video, ArrowLeft } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createWorkspaceCampaign, updateWorkspaceCampaign, type WorkspaceCampaign } from '../lib/data/campaignRepository';
+import { createOrUpdateWorkspaceCustomerLead } from '../lib/data/customerRepository';
+import { createWorkspaceTask } from '../lib/data/taskRepository';
+import { createGenerationJob, failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { createWorkspaceAsset } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
+import { GenerationFailureRecoveryPanel } from './GenerationFailureRecoveryPanel';
 
 interface MarketingViewProps {
   moduleId: string;
   onNavigate?: (id: any) => void;
+}
+
+const MARKETING_QR_PRINT_URL = 'https://aistudio.local/assets/marketing/spring-viral-qr-kit.pdf';
+const MARKETING_NFC_CARD_URL = 'https://aistudio.local/assets/marketing/nfc-touchpoint-card.json';
+const MARKETING_SITE_PREVIEW_URL = 'https://aistudio.local/sites/nexus-tech-landing';
+
+type MarketingRepositoryContext = {
+  workspaceId: string;
+  userId: string;
+};
+
+interface MarketingLeadHandoffInput {
+  campaign: WorkspaceCampaign;
+  moduleId: 'marketing_viral' | 'marketing_nfc' | 'marketing_website';
+  sourceChannel: 'viral_qr' | 'nfc_touchpoint' | 'website';
+  leadName: string;
+  company: string;
+  role: string;
+  landingPage?: string;
+  touchpoint?: string;
+  assetId?: string;
+  followUpTitle: string;
+  followUpType: string;
+  followUpDate: string;
+  metadata?: Record<string, unknown>;
+}
+
+function createMarketingLeadHandoff(
+  input: MarketingLeadHandoffInput,
+  context: MarketingRepositoryContext,
+  session: ReturnType<typeof useSaasSession>,
+) {
+  const customer = createOrUpdateWorkspaceCustomerLead(
+    {
+      name: input.leadName,
+      company: input.company,
+      role: input.role,
+      channel: input.sourceChannel,
+      ownerId: session.user.id,
+      tags: ['campaign', input.sourceChannel, input.moduleId],
+      source: {
+        moduleId: input.moduleId,
+        campaignId: input.campaign.id,
+        campaignName: input.campaign.name,
+        sourceChannel: input.sourceChannel,
+        landingPage: input.landingPage ?? input.campaign.landingUrl,
+        touchpoint: input.touchpoint,
+        assetId: input.assetId,
+      },
+      notes: `Marketing handoff from ${input.campaign.name}`,
+      lastInteractionAt: Date.now(),
+      metadata: {
+        campaignStatus: input.campaign.status,
+        campaignMetrics: input.campaign.metrics,
+        ...(input.metadata ?? {}),
+      },
+    },
+    context,
+  );
+
+  const task = createWorkspaceTask(
+    {
+      title: input.followUpTitle,
+      column: 'todo',
+      priority: 'High',
+      type: input.followUpType,
+      date: input.followUpDate,
+      isAuto: true,
+      status: 'queued',
+      metadata: {
+        source: 'marketing_lead_handoff',
+        moduleId: input.moduleId,
+        campaignId: input.campaign.id,
+        campaignName: input.campaign.name,
+        customerId: customer.id,
+        sourceChannel: input.sourceChannel,
+        landingPage: input.landingPage ?? input.campaign.landingUrl,
+        touchpoint: input.touchpoint,
+        assetId: input.assetId,
+      },
+    },
+    context,
+  );
+
+  logAuditEvent({
+    action: 'marketing_lead_create',
+    moduleId: input.moduleId,
+    targetType: 'customer',
+    targetId: customer.id,
+    metadata: {
+      campaignId: input.campaign.id,
+      campaignName: input.campaign.name,
+      sourceChannel: input.sourceChannel,
+      landingPage: input.landingPage ?? input.campaign.landingUrl,
+      touchpoint: input.touchpoint,
+      assetId: input.assetId,
+      customerId: customer.id,
+    },
+  }, { session });
+  logAuditEvent({
+    action: 'marketing_followup_task_create',
+    moduleId: input.moduleId,
+    targetType: 'task',
+    targetId: task.id,
+    metadata: {
+      campaignId: input.campaign.id,
+      campaignName: input.campaign.name,
+      sourceChannel: input.sourceChannel,
+      customerId: customer.id,
+      taskId: task.id,
+    },
+  }, { session });
+
+  return { customer, task };
 }
 
 export function MarketingView({ moduleId, onNavigate }: MarketingViewProps) {
@@ -20,7 +143,178 @@ export function MarketingView({ moduleId, onNavigate }: MarketingViewProps) {
 }
 
 function MarketingViral({ onNavigate }: { onNavigate?: (id: any) => void }) {
+  const session = useSaasSession();
+  const repositoryContext = React.useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [activeView, setActiveView] = React.useState<'list' | 'editor'>('list');
+  const [publishStatus, setPublishStatus] = React.useState<string | null>(null);
+
+  const handlePublishCampaign = () => {
+    const campaign = createWorkspaceCampaign({
+      name: '春季上新满减大促',
+      channel: 'viral_qr',
+      status: 'draft',
+      moduleId: 'marketing_viral',
+      metrics: {
+        scans: 0,
+        shares: 0,
+        exposures: 0,
+        conversions: 0,
+      },
+      metadata: {
+        platform: 'douyin',
+        offer: '50 CNY coupon',
+        distribution: 'customer_authorized_video_matrix',
+      },
+    }, repositoryContext);
+    const job = createGenerationJob({
+      title: 'Marketing viral QR campaign kit',
+      prompt: `Create QR print assets and video-matrix distribution rules for ${campaign.name}`,
+      status: 'running',
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      moduleId: 'marketing_viral',
+      progress: 0,
+      metadata: {
+        campaignId: campaign.id,
+        channel: campaign.channel,
+        offer: '50 CNY coupon',
+      },
+    }, repositoryContext);
+    logAuditEvent({
+      action: 'generation_job_start',
+      moduleId: 'marketing_viral',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        campaignId: campaign.id,
+        channel: campaign.channel,
+      },
+    }, { session });
+
+    try {
+      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
+      const asset = createWorkspaceAsset({
+      name: 'spring-viral-qr-print-kit.pdf',
+      type: 'document',
+      size: '2.4 MB',
+      source: 'generated',
+      moduleId: 'marketing_viral',
+      generationJobId: job.id,
+      url: MARKETING_QR_PRINT_URL,
+      previewUrl: MARKETING_QR_PRINT_URL,
+      tags: ['campaign', 'viral-qr', 'print-kit'],
+      metadata: {
+        campaignId: campaign.id,
+        channel: campaign.channel,
+        offer: '50 CNY coupon',
+      },
+    }, repositoryContext);
+    createPricedWorkspaceUsageEvent({
+      moduleId: 'marketing_viral',
+      pricingAction: 'generation',
+      kind: 'generation',
+      targetType: 'generation_job',
+      targetId: job.id,
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      metadata: {
+        campaignId: campaign.id,
+        assetId: asset.id,
+        assetType: asset.type,
+      },
+    }, repositoryContext);
+    const publishedCampaign = updateWorkspaceCampaign(
+      campaign.id,
+      {
+        status: 'active',
+        linkedAssetIds: [asset.id],
+        metrics: {
+          scans: 1245,
+          shares: 892,
+          exposures: 120000,
+          conversions: 148,
+        },
+        metadata: {
+          ...campaign.metadata,
+          generationJobId: job.id,
+          printAssetId: asset.id,
+        },
+      },
+      repositoryContext,
+    );
+    createMarketingLeadHandoff(
+      {
+        campaign: publishedCampaign ?? campaign,
+        moduleId: 'marketing_viral',
+        sourceChannel: 'viral_qr',
+        leadName: 'Spring QR Campaign Lead',
+        company: 'Viral Retail Lab',
+        role: 'Campaign Owner',
+        landingPage: 'https://aistudio.local/campaigns/spring-viral-qr',
+        touchpoint: 'qr_print',
+        assetId: asset.id,
+        followUpTitle: `[Marketing Lead] Review QR conversions - ${campaign.name}`,
+        followUpType: 'Marketing Lead',
+        followUpDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        metadata: {
+          offer: '50 CNY coupon',
+          distribution: 'customer_authorized_video_matrix',
+        },
+      },
+      repositoryContext,
+      session,
+    );
+    logAuditEvent({
+      action: 'generation_job_complete',
+      moduleId: 'marketing_viral',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        campaignId: publishedCampaign?.id ?? campaign.id,
+        assetId: asset.id,
+      },
+    }, { session });
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: 'marketing_viral',
+      targetType: 'asset',
+      targetId: asset.id,
+      metadata: {
+        campaignId: campaign.id,
+        generationJobId: job.id,
+      },
+    }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+      setPublishStatus('Campaign published, print asset saved, and usage recorded.');
+      setActiveView('list');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Marketing provider failed before returning campaign assets.';
+      failGenerationJob(job.id, {
+        error: message,
+        metadata: {
+          campaignId: campaign.id,
+          channel: campaign.channel,
+          offer: '50 CNY coupon',
+        },
+      }, repositoryContext);
+      logAuditEvent({
+        action: 'generation_job_failed',
+        moduleId: 'marketing_viral',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          campaignId: campaign.id,
+          channel: campaign.channel,
+          error: message,
+        },
+      }, { session });
+      window.dispatchEvent(new Event('activity_logged'));
+      setPublishStatus('Campaign generation failed. The job is saved for retry.');
+    }
+  };
 
   if (activeView === 'editor') {
     return (
@@ -43,7 +337,7 @@ function MarketingViral({ onNavigate }: { onNavigate?: (id: any) => void }) {
                保存草稿
             </button>
             <button 
-              onClick={() => setActiveView('list')}
+              onClick={handlePublishCampaign}
               className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-5 py-2.5 rounded-[var(--radius-lg)] font-bold text-sm transition-colors shadow-sm flex items-center"
             >
                <Check className="icon-sm mr-2" /> 确认发布活动
@@ -188,6 +482,11 @@ function MarketingViral({ onNavigate }: { onNavigate?: (id: any) => void }) {
           </button>
         </div>
       </div>
+      {publishStatus && (
+        <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-700 shadow-sm">
+          {publishStatus}
+        </div>
+      )}
       
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-[var(--spacing-md)] mb-[var(--spacing-xl)]">
          <div className="bg-[var(--bg-panel)] p-5 rounded-[var(--radius-xl)] border border-[var(--border-color)] shadow-sm flex flex-col justify-between">
@@ -306,8 +605,109 @@ function MarketingViral({ onNavigate }: { onNavigate?: (id: any) => void }) {
 }
 
 function MarketingNFC({ onNavigate }: { onNavigate?: (id: any) => void }) {
+  const session = useSaasSession();
+  const repositoryContext = React.useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const [saveStatus, setSaveStatus] = React.useState<string | null>(null);
+
+  const handleSaveNfcCampaign = () => {
+    const campaign = createWorkspaceCampaign({
+      name: 'Guest Wi-Fi NFC touchpoint',
+      channel: 'nfc_touchpoint',
+      status: 'active',
+      moduleId: 'marketing_nfc',
+      metrics: {
+        scans: 2491,
+        shares: 0,
+        exposures: 2491,
+        conversions: 1041,
+      },
+      metadata: {
+        ssid: 'Guest_Free_WIFI',
+        security: 'WPA/WPA2',
+        preConnectFollow: true,
+      },
+    }, repositoryContext);
+    const asset = createWorkspaceAsset({
+      name: 'guest-wifi-nfc-touchpoint.json',
+      type: 'document',
+      size: '18 KB',
+      source: 'generated',
+      moduleId: 'marketing_nfc',
+      url: MARKETING_NFC_CARD_URL,
+      previewUrl: MARKETING_NFC_CARD_URL,
+      tags: ['campaign', 'nfc', 'touchpoint'],
+      metadata: {
+        campaignId: campaign.id,
+        ssid: 'Guest_Free_WIFI',
+        action: 'wifi_connect_and_follow',
+      },
+    }, repositoryContext);
+    createPricedWorkspaceUsageEvent({
+      moduleId: 'marketing_nfc',
+      pricingAction: 'automation',
+      kind: 'automation',
+      targetType: 'asset',
+      targetId: asset.id,
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      metadata: {
+        campaignId: campaign.id,
+        assetId: asset.id,
+        touchpoint: 'guest_wifi',
+      },
+    }, repositoryContext);
+    createMarketingLeadHandoff(
+      {
+        campaign,
+        moduleId: 'marketing_nfc',
+        sourceChannel: 'nfc_touchpoint',
+        leadName: 'Guest Wi-Fi NFC Lead',
+        company: 'In-store Guest Segment',
+        role: 'NFC Visitor',
+        touchpoint: 'guest_wifi',
+        assetId: asset.id,
+        followUpTitle: `[Marketing Lead] Contact NFC visitors - ${campaign.name}`,
+        followUpType: 'Marketing Lead',
+        followUpDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+        metadata: {
+          ssid: 'Guest_Free_WIFI',
+          action: 'wifi_connect_and_follow',
+        },
+      },
+      repositoryContext,
+      session,
+    );
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: 'marketing_nfc',
+      targetType: 'asset',
+      targetId: asset.id,
+      metadata: {
+        campaignId: campaign.id,
+        touchpoint: 'guest_wifi',
+      },
+    }, { session });
+    logAuditEvent({
+      action: 'general',
+      moduleId: 'marketing_nfc',
+      targetType: 'module',
+      targetId: campaign.id,
+      metadata: {
+        campaignId: campaign.id,
+        assetId: asset.id,
+        action: 'nfc_touchpoint_saved',
+      },
+    }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+    setSaveStatus('NFC touchpoint campaign saved with usage and audit evidence.');
+  };
+
   return (
     <div className="p-[var(--spacing-xl)] max-w-6xl mx-auto space-y-8 animate-in fade-in duration-300">
+      <GenerationFailureRecoveryPanel moduleId="marketing_viral" session={session} context={repositoryContext} />
       <div className="flex justify-between items-end">
         <div>
           <h2 className="text-2xl font-bold text-[var(--text-main)] mb-2 mt-1">NFC 碰一碰智能感应</h2>
@@ -320,9 +720,14 @@ function MarketingNFC({ onNavigate }: { onNavigate?: (id: any) => void }) {
            >
               <LayoutTemplate className="icon-sm mr-2" />
               NFC 交互页 DIY 编辑
-           </button>
+          </button>
         </div>
       </div>
+      {saveStatus && (
+        <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-700 shadow-sm">
+          {saveStatus}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-[var(--spacing-md)]">
          <div className="bg-[var(--bg-panel)] p-[var(--spacing-lg)] rounded-[24px] border border-[var(--border-color)] shadow-sm flex items-center space-x-4 col-span-2">
@@ -353,7 +758,7 @@ function MarketingNFC({ onNavigate }: { onNavigate?: (id: any) => void }) {
          <div className="bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm overflow-hidden animate-in zoom-in-95 duration-200">
            <div className="p-5 border-b border-[var(--border-color)] flex justify-between items-center bg-gray-50">
              <h3 className="font-bold text-[var(--text-main)]">门店 WIFI 参数配置</h3>
-             <button className="text-sm bg-[var(--color-primary)] hover:bg-blue-700 text-white py-1.5 px-4 rounded-lg font-bold shadow-sm transition-colors">
+             <button onClick={handleSaveNfcCampaign} className="text-sm bg-[var(--color-primary)] hover:bg-blue-700 text-white py-1.5 px-4 rounded-lg font-bold shadow-sm transition-colors">
                 保存配置
              </button>
            </div>
@@ -392,8 +797,182 @@ function MarketingNFC({ onNavigate }: { onNavigate?: (id: any) => void }) {
 }
 
 function MarketingWebsite({ onNavigate }: { onNavigate?: (id: any) => void }) {
+  const session = useSaasSession();
+  const repositoryContext = React.useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const [generationStatus, setGenerationStatus] = React.useState<string | null>(null);
+
+  const handleGenerateWebsite = () => {
+    const campaign = createWorkspaceCampaign({
+      name: 'Nexus Tech AI landing page',
+      channel: 'website',
+      status: 'draft',
+      moduleId: 'marketing_website',
+      landingUrl: MARKETING_SITE_PREVIEW_URL,
+      metrics: {
+        scans: 0,
+        shares: 0,
+        exposures: 0,
+        conversions: 0,
+      },
+      metadata: {
+        domain: 'landing.nexus-tech.io',
+        seoScoreTarget: 94,
+      },
+    }, repositoryContext);
+    const job = createGenerationJob({
+      title: 'Marketing website landing page',
+      prompt: `Generate responsive SaaS landing page and SEO metadata for ${campaign.name}`,
+      status: 'running',
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      moduleId: 'marketing_website',
+      progress: 0,
+      metadata: {
+        campaignId: campaign.id,
+        domain: 'landing.nexus-tech.io',
+        seoScoreTarget: 94,
+      },
+    }, repositoryContext);
+    logAuditEvent({
+      action: 'generation_job_start',
+      moduleId: 'marketing_website',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        campaignId: campaign.id,
+        channel: campaign.channel,
+      },
+    }, { session });
+
+    try {
+      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
+      const asset = createWorkspaceAsset({
+      name: 'nexus-tech-ai-landing-page.html',
+      type: 'document',
+      size: '96 KB',
+      source: 'generated',
+      moduleId: 'marketing_website',
+      generationJobId: job.id,
+      url: MARKETING_SITE_PREVIEW_URL,
+      previewUrl: MARKETING_SITE_PREVIEW_URL,
+      tags: ['campaign', 'website', 'landing-page'],
+      metadata: {
+        campaignId: campaign.id,
+        domain: 'landing.nexus-tech.io',
+        seoScore: 94,
+      },
+    }, repositoryContext);
+    createPricedWorkspaceUsageEvent({
+      moduleId: 'marketing_website',
+      pricingAction: 'generation',
+      kind: 'generation',
+      targetType: 'generation_job',
+      targetId: job.id,
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      metadata: {
+        campaignId: campaign.id,
+        assetId: asset.id,
+        landingUrl: MARKETING_SITE_PREVIEW_URL,
+      },
+    }, repositoryContext);
+    const publishedCampaign = updateWorkspaceCampaign(
+      campaign.id,
+      {
+        status: 'active',
+        linkedAssetIds: [asset.id],
+        landingUrl: MARKETING_SITE_PREVIEW_URL,
+        metrics: {
+          scans: 3210,
+          shares: 184,
+          exposures: 22109,
+          conversions: 312,
+        },
+        metadata: {
+          ...campaign.metadata,
+          generationJobId: job.id,
+          siteAssetId: asset.id,
+        },
+      },
+      repositoryContext,
+    );
+    createMarketingLeadHandoff(
+      {
+        campaign: publishedCampaign ?? campaign,
+        moduleId: 'marketing_website',
+        sourceChannel: 'website',
+        leadName: 'Nexus Tech Website Lead',
+        company: 'Nexus Tech',
+        role: 'Demo Request Owner',
+        landingPage: MARKETING_SITE_PREVIEW_URL,
+        touchpoint: 'landing_page_form',
+        assetId: asset.id,
+        followUpTitle: `[Marketing Lead] Qualify landing page demos - ${campaign.name}`,
+        followUpType: 'Marketing Lead',
+        followUpDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        metadata: {
+          domain: 'landing.nexus-tech.io',
+          seoScore: 94,
+        },
+      },
+      repositoryContext,
+      session,
+    );
+    logAuditEvent({
+      action: 'generation_job_complete',
+      moduleId: 'marketing_website',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        campaignId: campaign.id,
+        assetId: asset.id,
+        landingUrl: MARKETING_SITE_PREVIEW_URL,
+      },
+    }, { session });
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: 'marketing_website',
+      targetType: 'asset',
+      targetId: asset.id,
+      metadata: {
+        campaignId: campaign.id,
+        generationJobId: job.id,
+      },
+    }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+      setGenerationStatus('Website campaign generated, saved, and usage recorded.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Website provider failed before returning a landing page.';
+      failGenerationJob(job.id, {
+        error: message,
+        metadata: {
+          campaignId: campaign.id,
+          domain: 'landing.nexus-tech.io',
+          seoScoreTarget: 94,
+        },
+      }, repositoryContext);
+      logAuditEvent({
+        action: 'generation_job_failed',
+        moduleId: 'marketing_website',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          campaignId: campaign.id,
+          channel: campaign.channel,
+          error: message,
+        },
+      }, { session });
+      window.dispatchEvent(new Event('activity_logged'));
+      setGenerationStatus('Website generation failed. The job is saved for retry.');
+    }
+  };
+
   return (
     <div className="p-[var(--spacing-xl)] max-w-6xl mx-auto space-y-8 animate-in fade-in duration-300">
+      <GenerationFailureRecoveryPanel moduleId="marketing_website" session={session} context={repositoryContext} />
       <div className="flex justify-between items-end">
         <div>
           <h2 className="text-2xl font-bold text-[var(--text-main)] mb-2 mt-1">AI 官网构建引擎</h2>
@@ -406,11 +985,16 @@ function MarketingWebsite({ onNavigate }: { onNavigate?: (id: any) => void }) {
           >
              <LayoutTemplate className="icon-sm mr-2" /> 官网 DIY 装修
           </button>
-          <button className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-5 py-2.5 rounded-[var(--radius-lg)] font-bold text-sm transition-colors shadow-sm flex items-center">
+          <button onClick={handleGenerateWebsite} className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-5 py-2.5 rounded-[var(--radius-lg)] font-bold text-sm transition-colors shadow-sm flex items-center">
              <Wand2 className="icon-sm mr-2" /> 生成全新网站
           </button>
         </div>
       </div>
+      {generationStatus && (
+        <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-700 shadow-sm">
+          {generationStatus}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-[var(--spacing-xl)]">
         <div className="lg:col-span-2 space-y-[var(--spacing-lg)]">

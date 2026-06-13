@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Network, Play, Settings2, Plus, ArrowRight, Bot, Cpu, Zap, Activity, MoreHorizontal, MessageSquare, Search, Globe, Image, Wand2, Send } from 'lucide-react';
+import { toast } from './Toast';
 
 export function AgentWorkflowView() {
   const [activeWorkflow, setActiveWorkflow] = useState<string | null>('wf-1');
@@ -103,7 +104,7 @@ export function AgentWorkflowView() {
                        <div className="flex items-center justify-between mb-2">
                            <span className="text-[10px] uppercase font-black bg-blue-50 text-blue-600 px-2 py-0.5 rounded shadow-sm">{tpl.type}</span>
                            <button className="opacity-0 group-hover:opacity-100 text-xs font-bold text-[var(--color-primary)] flex items-center transition-opacity" onClick={() => {
-                              import('./Toast').then(({ toast }) => toast(`基于模板 (${tpl.name}) 已创建新工作流`, 'success'));
+                              toast(`基于模板 (${tpl.name}) 已创建新工作流`, 'success');
                               setActiveWorkflow(tpl.id);
                               setLeftTab('mine');
                            }}>使用 <ArrowRight className="w-3.5 h-3.5 ml-1" /></button>

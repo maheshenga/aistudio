@@ -1,38 +1,43 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { PowerSquare, RotateCcw, X, LayoutDashboard, AlertTriangle } from 'lucide-react';
+import { getSetting, saveSetting } from '../lib/data/settingsRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
 interface AutoResumeModalProps {
   onLoadLayout: (layout: any) => void;
 }
 
 export function AutoResumeModal({ onLoadLayout }: AutoResumeModalProps) {
+  const session = useSaasSession();
+  const settingsContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [layout, setLayout] = useState<any>(null);
 
   useEffect(() => {
     // Check if we have an un-dismissed dirty session
-    const lastSession = localStorage.getItem('session_last_state');
-    const wasClean = localStorage.getItem('clean_exit');
+    const lastSession = getSetting<any | null>('session_last_state', null, settingsContext);
+    const wasClean = getSetting<boolean>('clean_exit', true, settingsContext);
     
     // For demo purposes, we can trigger it if there is a session state and we haven't seen it in this session.
     // If wasClean !== 'true', it means we didn't exit nicely.
-    if (lastSession && wasClean === 'false' && !sessionStorage.getItem('auto_resume_checked')) {
-        try {
-            setLayout(JSON.parse(lastSession));
-            setIsOpen(true);
-        } catch (e) {}
+    if (lastSession && wasClean === false && !sessionStorage.getItem('auto_resume_checked')) {
+        setLayout(lastSession);
+        setIsOpen(true);
     }
     sessionStorage.setItem('auto_resume_checked', 'true');
-  }, []);
+  }, [settingsContext]);
 
   const handleRestore = () => {
      if (layout) onLoadLayout(layout);
-     localStorage.setItem('clean_exit', 'true');
+     saveSetting('clean_exit', true, settingsContext);
      setIsOpen(false);
   };
    
   const handleDismiss = () => {
-     localStorage.setItem('clean_exit', 'true');
+     saveSetting('clean_exit', true, settingsContext);
      setIsOpen(false);
   };
 

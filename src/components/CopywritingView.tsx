@@ -1,6 +1,11 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { PenTool, Wrench, BookType, Sparkles, Plus, Search, Tag, Copy, Share, Database, Layout, Loader2, Wand2, RefreshCw, Languages, FileText, CheckCircle2, ChevronRight, Hash, ArrowUpRight } from 'lucide-react';
 import { useSessionAutoSave } from '../hooks/useSessionAutoSave';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { createWorkspaceAsset, recordWorkspaceAssetExport, type WorkspaceAsset } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
 import { toast } from './Toast';
 
 interface CopywritingViewProps {
@@ -21,9 +26,15 @@ export function CopywritingView({ moduleId }: CopywritingViewProps) {
 }
 
 function CopywritingCreate() {
+  const session = useSaasSession();
+  const jobContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
   const { value: prompt, setValue: setPrompt, isSaving } = useSessionAutoSave('copywriting_prompt_draft', '');
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState('');
+  const [resultAsset, setResultAsset] = useState<WorkspaceAsset | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
   const [activeType, setActiveType] = useState('小红书种草');
   const [activeLength, setActiveLength] = useState('中篇');
@@ -33,23 +44,142 @@ function CopywritingCreate() {
     if (activeType !== '电商产品详情' && !prompt.trim()) return;
     setIsGenerating(true);
     setResult('');
-    
-    // Simulate generation
-    setTimeout(() => {
-      setIsGenerating(false);
-      if (activeType === '电商产品详情') {
-        setResult(`🔥 爆款电商详情页策划案\n\n【模块一：首屏吸睛 (头图区)】\n视觉建议：大特写展示产品质感，配以加粗标题“定义全新体验”。\n文案：不只是[商品名]，更是生活方式的升级。一键开启，享受真正的静谧空间。\n\n【模块二：直击痛点 (痛点区)】\n文案：你还在忍受这些困扰吗？（配以嘈杂环境、电量焦虑、佩戴不适的图文比对）。是时候对妥协说不了！\n\n【模块三：硬核卖点 (参数区)】\n文案：四大核心科技，重塑行业标杆。\n1. 行业领先技术：实力摆在这里，不惧对比。\n2. 极致续航表现：告别电量焦虑，随时在线。\n3. 人体工学设计：久戴不痛，宛若无物。\n\n【模块四：权威背书与买家秀】\n文案：口碑见证，超过 100,000+ 用户的共同选择...`);
-      } else {
-        setResult(`🔥 熬夜狂欢后的护肤救星来啦！✨\n\n经常加班熬夜的打工人，是不是总觉得脸部暗沉、细纹悄悄爬上眼角？😱 今天给大家按头安利这款【夜间修护视黄醇精华】！\n\n✅ 核心卖点划重点：\n1️⃣ **温和不刺激**：专为敏感肌研发的微囊包裹技术，不用建立耐受也能轻松上脸！\n2️⃣ **抗老淡纹**：高浓度纯净视黄醇，直击干纹细纹，让肌肤重回弹润嘭嘭肌。💦\n3️⃣ **水润修护**：复配神经酰胺与玻尿酸，抗老同时不忘修护肌肤屏障。\n\n💡 使用感受：\n质地像牛奶一样丝滑，上脸嗖的一下就吸收了，一点也不油腻！隔天起床皮肤真的亮了一个度，透出那种健康的光泽感，绝绝子！😭\n\n🛒 还在等什么？趁着活动赶紧囤起来，做办公室里最亮的崽！💃\n\n#抗初老 #视黄醇精华 #熬夜党必备 #温和抗老 #好物分享 #平价精华`);
-      }
-    }, 1500);
+    setResultAsset(null);
+
+    const job = createGenerationJob({
+      title: `Copywriting - ${activeType}`,
+      prompt: prompt.trim() || activeType,
+      status: 'running',
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      moduleId: 'copywriting_create',
+      progress: 0,
+      metadata: {
+        activeType,
+        activeLength,
+        activeTone,
+      },
+    }, jobContext);
+    logAuditEvent({
+      action: 'generation_job_start',
+      moduleId: 'copywriting_create',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        activeType,
+        activeLength,
+        activeTone,
+      },
+    }, { session });
+
+    const generatedCopy = activeType === '电商产品详情'
+      ? `🔥 爆款电商详情页策划案\n\n【模块一：首屏吸睛 (头图区)】\n视觉建议：大特写展示产品质感，配以加粗标题“定义全新体验”。\n文案：不只是[商品名]，更是生活方式的升级。一键开启，享受真正的静谧空间。\n\n【模块二：直击痛点 (痛点区)】\n文案：你还在忍受这些困扰吗？（配以嘈杂环境、电量焦虑、佩戴不适的图文比对）。是时候对妥协说不了！\n\n【模块三：硬核卖点 (参数区)】\n文案：四大核心科技，重塑行业标杆。\n1. 行业领先技术：实力摆在这里，不惧对比。\n2. 极致续航表现：告别电量焦虑，随时在线。\n3. 人体工学设计：久戴不痛，宛若无物。\n\n【模块四：权威背书与买家秀】\n文案：口碑见证，超过 100,000+ 用户的共同选择...`
+      : `🔥 熬夜狂欢后的护肤救星来啦！✨\n\n经常加班熬夜的打工人，是不是总觉得脸部暗沉、细纹悄悄爬上眼角？😱 今天给大家按头安利这款【夜间修护视黄醇精华】！\n\n✅ 核心卖点划重点：\n1️⃣ **温和不刺激**：专为敏感肌研发的微囊包裹技术，不用建立耐受也能轻松上脸！\n2️⃣ **抗老淡纹**：高浓度纯净视黄醇，直击干纹细纹，让肌肤重回弹润嘭嘭肌。💦\n3️⃣ **水润修护**：复配神经酰胺与玻尿酸，抗老同时不忘修护肌肤屏障。\n\n💡 使用感受：\n质地像牛奶一样丝滑，上脸嗖的一下就吸收了，一点也不油腻！隔天起床皮肤真的亮了一个度，透出那种健康的光泽感，绝绝子！😭\n\n🛒 还在等什么？趁着活动赶紧囤起来，做办公室里最亮的崽！💃\n\n#抗初老 #视黄醇精华 #熬夜党必备 #温和抗老 #好物分享 #平价精华`;
+
+    updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+    const asset = createWorkspaceAsset({
+      name: `${activeType}-${Date.now()}.txt`,
+      type: 'text',
+      size: `${generatedCopy.length} chars`,
+      source: 'generated',
+      moduleId: 'copywriting_create',
+      generationJobId: job.id,
+      tags: [activeType, activeLength, activeTone],
+      metadata: {
+        prompt: prompt.trim(),
+        activeType,
+        activeLength,
+        activeTone,
+        contentPreview: generatedCopy.slice(0, 120),
+      },
+    }, jobContext);
+    setResultAsset(asset);
+    createPricedWorkspaceUsageEvent({
+      moduleId: 'copywriting_create',
+      pricingAction: 'generation',
+      kind: 'generation',
+      targetType: 'generation_job',
+      targetId: job.id,
+      providerKind: 'mock',
+      runtimeMode: 'web',
+      metadata: {
+        assetId: asset.id,
+        assetType: asset.type,
+        activeType,
+        activeLength,
+        activeTone,
+        characterCount: generatedCopy.length,
+      },
+    }, jobContext);
+    logAuditEvent({
+      action: 'generation_job_complete',
+      moduleId: 'copywriting_create',
+      targetType: 'generation_job',
+      targetId: job.id,
+      metadata: {
+        assetType: 'text',
+        activeType,
+        length: generatedCopy.length,
+      },
+    }, { session });
+    setResult(generatedCopy);
+    setIsGenerating(false);
+    toast('Copy generated and saved to workspace assets', 'success');
   };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(result);
+    if (resultAsset) {
+      recordWorkspaceAssetExport({
+        asset: resultAsset,
+        moduleId: 'copywriting_create',
+        format: 'clipboard',
+        fileName: `${activeType}.txt`,
+        sourceAction: 'copy_to_clipboard',
+        metered: false,
+        metadata: {
+          pricingAction: 'export',
+          kind: 'export',
+          activeType,
+          activeLength,
+          activeTone,
+          characterCount: result.length,
+        },
+      }, {
+        ...jobContext,
+        session,
+      });
+      window.dispatchEvent(new Event('activity_logged'));
+    }
     setCopySuccess(true);
     toast('Text copied to clipboard', 'success');
     setTimeout(() => setCopySuccess(false), 2000);
+  };
+
+  const handleShare = () => {
+    if (!resultAsset) return;
+    recordWorkspaceAssetExport({
+      asset: resultAsset,
+      moduleId: 'copywriting_create',
+      format: 'txt',
+      fileName: resultAsset.name,
+      sourceAction: 'share_copy_asset',
+      metered: true,
+      unitCount: 1,
+      metadata: {
+        pricingAction: 'export',
+        kind: 'export',
+        activeType,
+        activeLength,
+        activeTone,
+        characterCount: result.length,
+      },
+    }, {
+      ...jobContext,
+      session,
+    });
+    window.dispatchEvent(new Event('activity_logged'));
+    toast('Copy export recorded for sharing', 'success');
   };
 
   const enhancePrompt = () => {
@@ -234,7 +364,7 @@ function CopywritingCreate() {
                      {copySuccess ? <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
                      {copySuccess ? '已复制' : '复制文案'}
                    </button>
-                   <button className="flex items-center px-3 py-1.5 bg-gray-50 hover:bg-blue-50 hover:text-[var(--color-primary)] text-gray-600 text-xs font-bold rounded-lg transition-colors border border-[var(--border-color)]">
+                   <button onClick={handleShare} className="flex items-center px-3 py-1.5 bg-gray-50 hover:bg-blue-50 hover:text-[var(--color-primary)] text-gray-600 text-xs font-bold rounded-lg transition-colors border border-[var(--border-color)]">
                      <Share className="w-3.5 h-3.5 mr-1" /> 分享
                    </button>
                  </div>

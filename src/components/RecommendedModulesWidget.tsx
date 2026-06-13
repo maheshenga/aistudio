@@ -1,30 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { Compass, ArrowRight, Zap, Target, Star } from 'lucide-react';
-import { navGroups, iconMap } from './Sidebar';
 import { ModuleId } from '../types';
+import { getProductNavGroupsForRole } from '../product/registry';
+import { iconMap } from '../product/icons';
+import { useWorkspaceUsage } from '../hooks/useWorkspaceUsage';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
 export function RecommendedModulesWidget({ onNavigate }: { onNavigate?: (id: ModuleId) => void }) {
-  const [recommendations, setRecommendations] = useState<any[]>([]);
+  const session = useSaasSession();
+  const timeData = useWorkspaceUsage();
+  const accessibleModules = useMemo(
+    () => getProductNavGroupsForRole(session.membership.role).flatMap((group) => group.items),
+    [session.membership.role],
+  );
+  const recommendations = useMemo(() => {
+      const allModules = accessibleModules;
 
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('module_time_tracker');
-      const timeData = stored ? JSON.parse(stored) : {};
-      
-      const allModules = navGroups.flatMap(g => g.items);
-      
       // Modules that haven't been visited or have very low time
       const unseen = allModules.filter(m => (timeData[m.id] || 0) < 10);
-      
+
       // Just pick top 3 seemingly random but consistent for the user
-      const selected = unseen.sort(() => 0.5 - Math.random()).slice(0, 3);
-      
+      const selected = [...unseen].sort(() => 0.5 - Math.random()).slice(0, 3);
+
       if (selected.length < 3) {
          selected.push(...allModules.slice(0, 3 - selected.length));
       }
-      setRecommendations(selected);
-    } catch(e) {}
-  }, []);
+      return selected;
+  }, [accessibleModules, timeData]);
 
   return (
     <div className="bg-[var(--bg-panel)] p-[var(--spacing-lg)] rounded-[24px] border border-[var(--border-color)] shadow-sm h-full max-h-[300px] flex flex-col">

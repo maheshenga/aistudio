@@ -1,6 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Bot, CheckCircle2, AlertCircle, X, CheckSquare, ArrowRight, ListFilter, Activity, FileText } from 'lucide-react';
 import { toast } from './Toast';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { listAuditLogs, logAuditEvent } from '../lib/data/auditLogRepository';
+import {
+    loadWorkspaceFinancialRecords,
+    saveWorkspaceFinancialRecords,
+    type WorkspaceFinancialRecord,
+} from '../lib/data/financialRepository';
 
 interface ReconciliationItem {
     id: string;
@@ -26,107 +33,195 @@ interface ActivityLogEntry {
     details: string;
 }
 
-const mockLedgerItems: ReconciliationItem[] = [
-    {
-        id: 'tx1',
-        date: '2026-05-12',
-        vendor: 'Apple Store',
-        description: '购买办公设备',
-        amount: '¥ 14,999.00',
-        bankLedgerCode: '6602 管理费用 (模糊识别)',
-        aiAssignedCode: '1601 固定资产-电子设备',
-        aiAssignedCategory: '固定资产资本化',
-        confidence: '95%',
-        confidenceLevel: 'high',
-        isDiscrepancy: true,
-        status: 'pending'
-    },
-    {
-        id: 'tx2',
-        date: '2026-05-28',
-        vendor: '万豪酒店',
-        description: '年会预定金',
-        amount: '¥ 25,000.00',
-        bankLedgerCode: '6602 管理费用-差旅费',
-        aiAssignedCode: '6602 管理费用-业务招待费',
-        aiAssignedCategory: '应税调整项目',
-        confidence: '78%',
-        confidenceLevel: 'review',
-        isDiscrepancy: true,
-        status: 'pending'
-    },
-    {
-        id: 'tx4',
-        date: '2026-06-01',
-        vendor: '中国移动',
-        description: '企业宽带费',
-        amount: '¥ 1,200.00',
-        bankLedgerCode: '6602 管理费用-办公费',
-        aiAssignedCode: '6602 管理费用-办公费',
-        aiAssignedCategory: '常规进项',
-        confidence: '99%',
-        confidenceLevel: 'high',
-        isDiscrepancy: false,
-        status: 'pending'
-    },
-    {
-        id: 'tx3',
-        date: '2026-06-02',
-        vendor: 'Meta Platforms',
-        description: 'Facebook Ads',
-        amount: '¥ 8,500.00',
-        bankLedgerCode: '6001 主营业务成本',
-        aiAssignedCode: '6601 销售费用-广告费',
-        aiAssignedCategory: '境外发票/代扣代缴',
-        confidence: '98%',
-        confidenceLevel: 'high',
-        isDiscrepancy: true,
-        status: 'pending'
-    }
-];
+function metadataText(record: WorkspaceFinancialRecord, key: string, fallback: string): string {
+    const value = record.metadata[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+function formatRecordAmount(record: WorkspaceFinancialRecord): string {
+    return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: record.currency || 'CNY',
+    }).format(record.amountCents / 100);
+}
+
+function inferTaxCode(record: WorkspaceFinancialRecord): string {
+    if (record.kind === 'invoice') return '6001 主营业务收入';
+    if (record.kind === 'refund') return '6001 主营业务收入-退款冲销';
+    if (record.kind === 'withdrawal') return '2241 其他应付款';
+    if (record.kind === 'credit') return '6051 其他业务收入';
+    return record.counterparty.toLowerCase().includes('ads') ? '6601 销售费用-广告费' : '6602 管理费用';
+}
+
+function inferTaxCategory(record: WorkspaceFinancialRecord): string {
+    if (record.kind === 'invoice') return record.status === 'pending' ? '待开票收入' : '已开票收入';
+    if (record.kind === 'refund') return '退款冲销';
+    if (record.kind === 'withdrawal') return '应付款项';
+    if (record.kind === 'credit') return '优惠抵扣';
+    return record.counterparty.toLowerCase().includes('ads') ? '营销费用' : '常规进项';
+}
+
+function confidencePercent(record: WorkspaceFinancialRecord): number {
+    const rawConfidence = Number(record.metadata.taxConfidence);
+    if (Number.isFinite(rawConfidence) && rawConfidence >= 0 && rawConfidence <= 100) return rawConfidence;
+    if (record.metadata.taxReviewRequired === true) return 78;
+    if (record.kind === 'payment' || record.kind === 'invoice') return 96;
+    return 90;
+}
+
+function buildReconciliationItems(records: WorkspaceFinancialRecord[]): ReconciliationItem[] {
+    return records.map((record) => {
+        const aiAssignedCode = metadataText(record, 'taxCode', inferTaxCode(record));
+        const bankLedgerCode = metadataText(record, 'ledgerCode', metadataText(record, 'operation', record.kind));
+        const confidence = confidencePercent(record);
+        const isDiscrepancy = record.metadata.taxReviewRequired === true || bankLedgerCode !== aiAssignedCode;
+
+        return {
+            id: record.id,
+            date: new Date(record.occurredAt).toLocaleDateString(),
+            vendor: record.counterparty,
+            description: metadataText(record, 'description', metadataText(record, 'operation', record.kind)),
+            amount: formatRecordAmount(record),
+            bankLedgerCode,
+            aiAssignedCode,
+            aiAssignedCategory: metadataText(record, 'taxCategory', inferTaxCategory(record)),
+            confidence: `${confidence}%`,
+            confidenceLevel: confidence >= 90 && !record.metadata.taxReviewRequired ? 'high' : 'review',
+            isDiscrepancy,
+            status: record.metadata.taxReconciliationStatus === 'resolved' ? 'resolved' : 'pending',
+        };
+    });
+}
+
+function buildActivityLogs(records: ReturnType<typeof listAuditLogs>): ActivityLogEntry[] {
+    return records
+        .filter((log) => log.moduleId === 'tax' && (
+            log.action === 'tax_reconciliation_scan' ||
+            log.action === 'tax_reconciliation_resolve'
+        ))
+        .slice(0, 20)
+        .map((log) => ({
+            id: log.id,
+            time: new Date(log.timestamp).toLocaleTimeString(),
+            action: String(log.metadata.operation ?? log.action),
+            itemId: String(log.metadata.itemId ?? log.targetId ?? ''),
+            vendor: String(log.metadata.vendor ?? 'Workspace'),
+            details: String(log.metadata.details ?? `${log.action} completed`),
+        }));
+}
 
 export function TaxReconciliationTool() {
-    const [items, setItems] = useState<ReconciliationItem[]>(mockLedgerItems);
+    const session = useSaasSession();
+    const financeContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
+    const [financialRecords, setFinancialRecords] = useState<WorkspaceFinancialRecord[]>(() =>
+        loadWorkspaceFinancialRecords(financeContext),
+    );
+    const [items, setItems] = useState<ReconciliationItem[]>(() =>
+        buildReconciliationItems(loadWorkspaceFinancialRecords(financeContext)),
+    );
     const [isReconciling, setIsReconciling] = useState(false);
     const [hasScanned, setHasScanned] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
     const [filter, setFilter] = useState<'all' | 'high' | 'review'>('all');
     
-    const [logs, setLogs] = useState<ActivityLogEntry[]>([]);
+    const [logs, setLogs] = useState<ActivityLogEntry[]>(() =>
+        buildActivityLogs(listAuditLogs({ workspaceId: session.workspace.id })),
+    );
     const [showLogs, setShowLogs] = useState(false);
 
+    useEffect(() => {
+        const refresh = () => {
+            const nextRecords = loadWorkspaceFinancialRecords(financeContext);
+            setFinancialRecords(nextRecords);
+            setItems(buildReconciliationItems(nextRecords));
+            setLogs(buildActivityLogs(listAuditLogs({ workspaceId: session.workspace.id })));
+        };
+
+        refresh();
+        window.addEventListener('financial_records_updated', refresh);
+        window.addEventListener('activity_logged', refresh);
+        return () => {
+            window.removeEventListener('financial_records_updated', refresh);
+            window.removeEventListener('activity_logged', refresh);
+        };
+    }, [financeContext, session.workspace.id]);
+
     const addLog = (action: string, item: ReconciliationItem, details: string) => {
-        setLogs(prev => [{
-            id: Date.now().toString() + Math.random(),
-            time: new Date().toLocaleTimeString(),
-            action,
-            itemId: item.id,
-            vendor: item.vendor,
-            details
-        }, ...prev]);
+        const event = logAuditEvent(
+            {
+                action: 'tax_reconciliation_resolve',
+                moduleId: 'tax',
+                targetType: 'workspace',
+                targetId: item.id,
+                metadata: {
+                    operation: action,
+                    itemId: item.id,
+                    vendor: item.vendor,
+                    details,
+                },
+            },
+            { session },
+        );
+        const [entry] = buildActivityLogs([event]);
+        if (entry) setLogs(prev => [entry, ...prev]);
+        window.dispatchEvent(new Event('activity_logged'));
     };
 
     const handleConfirmAll = () => {
         setIsReconciling(true);
-        setTimeout(() => {
-            const pendingDiscrepancies = items.filter(i => i.isDiscrepancy && i.status === 'pending');
-            
-            setItems(items.map(item => item.isDiscrepancy ? { ...item, status: 'resolved' } : item));
-            
-            pendingDiscrepancies.forEach(item => {
-                addLog('Bulk Confirm', item, `AI assigned: ${item.aiAssignedCode}`);
-            });
+        const pendingDiscrepancies = items.filter(i => i.isDiscrepancy && i.status === 'pending');
+        const resolvedIds = new Set(pendingDiscrepancies.map(item => item.id));
+        const resolvedAt = Date.now();
+        const savedRecords = saveWorkspaceFinancialRecords(
+            financialRecords.map(record => resolvedIds.has(record.id)
+                ? {
+                    ...record,
+                    updatedAt: resolvedAt,
+                    metadata: {
+                        ...record.metadata,
+                        taxReconciliationStatus: 'resolved',
+                        taxReconciliationDecision: 'apply_ai',
+                        taxReconciliationResolvedAt: resolvedAt,
+                    },
+                }
+                : record,
+            ),
+            financeContext,
+        );
 
-            setIsReconciling(false);
-            toast('批量更正完成：已全部应用 AI 推荐税务分类', 'success');
-        }, 1500);
+        setFinancialRecords(savedRecords);
+        setItems(buildReconciliationItems(savedRecords));
+        pendingDiscrepancies.forEach(item => {
+            addLog('Bulk Confirm', item, `AI assigned: ${item.aiAssignedCode}`);
+        });
+
+        setIsReconciling(false);
+        toast('批量更正完成：已全部应用 AI 推荐税务分类', 'success');
     };
 
     const handleResolve = (id: string, useAi: boolean) => {
         const item = items.find(i => i.id === id);
         if (!item) return;
 
-        setItems(items.map(i => i.id === id ? { ...i, status: 'resolved' } : i));
+        const resolvedAt = Date.now();
+        const savedRecords = saveWorkspaceFinancialRecords(
+            financialRecords.map(record => record.id === id
+                ? {
+                    ...record,
+                    updatedAt: resolvedAt,
+                    metadata: {
+                        ...record.metadata,
+                        taxReconciliationStatus: 'resolved',
+                        taxReconciliationDecision: useAi ? 'apply_ai' : 'dismiss_flag',
+                        taxReconciliationResolvedAt: resolvedAt,
+                    },
+                }
+                : record,
+            ),
+            financeContext,
+        );
+        setFinancialRecords(savedRecords);
+        setItems(buildReconciliationItems(savedRecords));
         
         if (useAi) {
             addLog('Apply AI Config', item, `Changed to ${item.aiAssignedCode}`);
@@ -139,12 +234,30 @@ export function TaxReconciliationTool() {
 
     const handleScan = () => {
         setIsScanning(true);
-        setTimeout(() => {
-            setHasScanned(true);
-            setIsScanning(false);
-            const discrepancyCount = items.filter(i => i.isDiscrepancy).length;
-            toast(`基于历史入账习惯，发现 ${discrepancyCount} 处核算差异`, 'warning');
-        }, 1200);
+        setHasScanned(true);
+        const discrepancyCount = items.filter(i => i.isDiscrepancy).length;
+        const reviewCount = items.filter(i => i.confidenceLevel === 'review').length;
+        const event = logAuditEvent(
+            {
+                action: 'tax_reconciliation_scan',
+                moduleId: 'tax',
+                targetType: 'workspace',
+                targetId: session.workspace.id,
+                metadata: {
+                    operation: 'Scan',
+                    recordCount: items.length,
+                    discrepancyCount,
+                    reviewCount,
+                    details: `Detected ${discrepancyCount} reconciliation discrepancies`,
+                },
+            },
+            { session },
+        );
+        const [entry] = buildActivityLogs([event]);
+        if (entry) setLogs(prev => [entry, ...prev]);
+        window.dispatchEvent(new Event('activity_logged'));
+        setIsScanning(false);
+        toast(`基于历史入账习惯，发现 ${discrepancyCount} 处核算差异`, 'warning');
     };
 
     const pendingDiscrepanciesCount = items.filter(i => i.status === 'pending' && i.isDiscrepancy).length;

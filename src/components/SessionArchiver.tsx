@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Save, Folder, Plus, CheckCircle2, RotateCcw, X, Layers, Clock } from 'lucide-react';
 import { toast } from './Toast';
+import { getSetting, saveSetting } from '../lib/data/settingsRepository';
+import { useSaasSession } from '../saas/SaasAuthContext';
 
 interface Preset {
   id: string;
@@ -11,70 +13,82 @@ interface Preset {
 }
 
 export function SessionArchiver() {
-  const [presets, setPresets] = useState<Preset[]>([]);
+  const session = useSaasSession();
+  const settingsContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const [presets, setPresets] = useState<Preset[]>(() =>
+    getSetting<Preset[]>('workspace_presets', [], settingsContext),
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('workspace_presets');
-      if (stored) {
-        setPresets(JSON.parse(stored));
-      }
-    } catch {}
-  }, []);
+    const refreshPresets = () => setPresets(getSetting<Preset[]>('workspace_presets', [], settingsContext));
+    const handleSettingsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string; userId?: string }>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== settingsContext.workspaceId) return;
+      if (detail?.userId && detail.userId !== settingsContext.userId) return;
+      refreshPresets();
+    };
+
+    refreshPresets();
+    window.addEventListener('settings_updated', handleSettingsUpdated);
+    return () => window.removeEventListener('settings_updated', handleSettingsUpdated);
+  }, [settingsContext]);
 
   const saveCurrentPreset = () => {
     if (!newPresetName.trim()) {
-       import('./Toast').then(({ toast }) => toast('请输入预设名称', 'error'));
+       toast('请输入预设名称', 'error');
        return;
     }
     
     try {
-      const layoutData = localStorage.getItem('workspace_autosave');
-      const pinnedData = localStorage.getItem('pinned_modules');
+      const layoutData = getSetting('workspace_autosave', {}, settingsContext);
+      const pinnedModules = getSetting('pinned_modules', [], settingsContext);
       
       const newPreset: Preset = {
         id: Date.now().toString(),
         name: newPresetName.trim(),
         timestamp: Date.now(),
-        layout: layoutData ? JSON.parse(layoutData) : {},
-        pinned: pinnedData ? JSON.parse(pinnedData) : []
+        layout: layoutData,
+        pinned: pinnedModules
       };
       
       const updated = [newPreset, ...presets];
       setPresets(updated);
-      localStorage.setItem('workspace_presets', JSON.stringify(updated));
+      saveSetting('workspace_presets', updated, settingsContext);
       setNewPresetName('');
       setIsSaving(false);
-      import('./Toast').then(({ toast }) => toast('工作区预设已保存', 'success'));
+      toast('工作区预设已保存', 'success');
     } catch (e) {
-      import('./Toast').then(({ toast }) => toast('保存失败', 'error'));
+      toast('保存失败', 'error');
     }
   };
 
   const restorePreset = (preset: Preset) => {
     try {
       if (preset.layout) {
-        localStorage.setItem('workspace_autosave', JSON.stringify(preset.layout));
+        saveSetting('workspace_autosave', preset.layout, settingsContext);
       }
       if (preset.pinned) {
-        localStorage.setItem('pinned_modules', JSON.stringify(preset.pinned));
+        saveSetting('pinned_modules', preset.pinned, settingsContext);
       }
       
       // Dispatch an event so App.tsx can reload the state
       const event = new CustomEvent('app:restore-preset', { detail: preset });
       window.dispatchEvent(event);
-      import('./Toast').then(({ toast }) => toast(`已恢复预设: ${preset.name}`, 'success'));
+      toast(`已恢复预设: ${preset.name}`, 'success');
     } catch (e) {
-      import('./Toast').then(({ toast }) => toast('恢复失败', 'error'));
+      toast('恢复失败', 'error');
     }
   };
 
   const deletePreset = (id: string) => {
     const updated = presets.filter(p => p.id !== id);
     setPresets(updated);
-    localStorage.setItem('workspace_presets', JSON.stringify(updated));
+    saveSetting('workspace_presets', updated, settingsContext);
   };
 
   return (

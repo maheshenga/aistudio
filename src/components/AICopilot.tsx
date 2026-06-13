@@ -1,16 +1,52 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Sparkles, Send, Bot, MessageSquare, Zap, Cpu, Search, ImageIcon, Video, Layers, ChevronDown, CheckCircle2, LineChart, Play, Palette, Mic } from 'lucide-react';
-import { useActivityLogger } from './ActivityLogsView';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { createWorkspaceAsset } from '../lib/data/assetRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
 
 interface AICopilotProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+type CopilotWidget = 'chart' | 'video' | 'task';
+
+interface CopilotMessage {
+  role: 'ai' | 'user';
+  text: string;
+  isVoice?: boolean;
+  actions?: string[];
+  widget?: CopilotWidget;
+}
+
+function buildCopilotReply(userText: string): { text: string; widget: CopilotWidget } {
+  if (userText.includes('数据') || userText.includes('分析')) {
+    return {
+      text: '已为您拉取近七天跨平台核心指标。您的「小红书」渠道转化率表现最佳。',
+      widget: 'chart',
+    };
+  }
+  if (userText.includes('视频') || userText.includes('生成')) {
+    return {
+      text: '已自动为您生成有关“双十一大促”的预热短视频草稿，并匹配了最新的流行 BGM。',
+      widget: 'video',
+    };
+  }
+  return {
+    text: '指令已收到。正在规划执行任务链路，如果需要进一步调整请随时告知。',
+    widget: 'task',
+  };
+}
+
 export function AICopilot({ isOpen, onClose }: AICopilotProps) {
-  const { logActivity } = useActivityLogger();
-  const [messages, setMessages] = useState<any[]>([
+  const session = useSaasSession();
+  const repositoryContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.user.id, session.workspace.id],
+  );
+  const [messages, setMessages] = useState<CopilotMessage[]>([
     { 
        role: 'ai', 
        text: '你好，我是你的全域 AI 业务助理。今天需要梳理商品数据、制定营销策略、还是生成视频素材？',
@@ -29,41 +65,130 @@ export function AICopilot({ isOpen, onClose }: AICopilotProps) {
     endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping, isOpen]);
 
+  const dispatchActivityLogged = () => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('activity_logged'));
+    }
+  };
+
   const sendMsg = (textOverride?: string, isVoice: boolean = false) => {
-    const userText = textOverride || input;
-    if (!userText.trim()) return;
-    
-    // Log the command
-    logActivity('ai_command', `Copilot Command ${isVoice ? '(Voice)' : ''}: ${userText}`, isVoice ? 'Voice-triggered' : 'Text-triggered');
+    const userText = (textOverride ?? input).trim();
+    if (!userText || isTyping) return;
 
     setMessages(prev => [...prev, { role: 'user', text: userText, isVoice }]);
     setInput('');
     setIsTyping(true);
 
-    // Simulate AI thinking and executing tools
-    setTimeout(() => {
-       setIsTyping(false);
-       
-       if (userText.includes('数据') || userText.includes('分析')) {
-          setMessages(prev => [...prev, { 
-             role: 'ai', 
-             text: '已为您拉取近七天跨平台核心指标。您的「小红书」渠道转化率表现最佳。',
-             widget: 'chart'
-          }]);
-       } else if (userText.includes('视频') || userText.includes('生成')) {
-          setMessages(prev => [...prev, { 
-             role: 'ai', 
-             text: '已自动为您生成有关“双十一大促”的预热短视频草稿，并匹配了最新的流行 BGM。',
-             widget: 'video'
-          }]);
-       } else {
-          setMessages(prev => [...prev, { 
-             role: 'ai', 
-             text: '指令已收到。正在规划执行任务链路，如果需要进一步调整请随时告知。',
-             widget: 'task'
-          }]);
-       }
-    }, 1500);
+    let jobId: string | null = null;
+    try {
+      const reply = buildCopilotReply(userText);
+      const job = createGenerationJob({
+        title: `Copilot Command ${isVoice ? '(Voice)' : '(Text)'}`,
+        prompt: userText,
+        status: 'running',
+        providerKind: 'mock',
+        runtimeMode: 'web',
+        moduleId: 'dashboard',
+        agentId: 'global-copilot-agent',
+        progress: 30,
+        metadata: {
+          isVoice,
+          widget: reply.widget,
+          source: 'global_copilot',
+        },
+      }, repositoryContext);
+      jobId = job.id;
+      logAuditEvent({
+        action: 'ai_command',
+        moduleId: 'dashboard',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          description: `Copilot Command ${isVoice ? '(Voice)' : '(Text)'}: ${userText}`,
+          details: isVoice ? 'Voice-triggered' : 'Text-triggered',
+          isVoice,
+        },
+      }, { session });
+      logAuditEvent({
+        action: 'generation_job_start',
+        moduleId: 'dashboard',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          agentId: 'global-copilot-agent',
+          isVoice,
+          widget: reply.widget,
+        },
+      }, { session });
+      updateGenerationJob(job.id, {
+        status: 'succeeded',
+        progress: 100,
+        metadata: {
+          ...job.metadata,
+          responseWidget: reply.widget,
+          result: 'copilot_text_asset',
+        },
+      }, repositoryContext);
+      const asset = createWorkspaceAsset({
+        name: `copilot-response-${Date.now()}.md`,
+        type: 'text',
+        size: `${reply.text.length} chars`,
+        source: 'generated',
+        moduleId: 'dashboard',
+        generationJobId: job.id,
+        tags: ['copilot', reply.widget, isVoice ? 'voice' : 'text'],
+        metadata: {
+          prompt: userText,
+          responsePreview: reply.text.slice(0, 160),
+          widget: reply.widget,
+          isVoice,
+        },
+      }, repositoryContext);
+      logAuditEvent({
+        action: 'generation_job_complete',
+        moduleId: 'dashboard',
+        targetType: 'generation_job',
+        targetId: job.id,
+        metadata: {
+          assetId: asset.id,
+          assetType: 'text',
+          widget: reply.widget,
+        },
+      }, { session });
+      logAuditEvent({
+        action: 'asset_create',
+        moduleId: 'dashboard',
+        targetType: 'asset',
+        targetId: asset.id,
+        metadata: {
+          generationJobId: job.id,
+          assetType: 'text',
+          source: 'generated',
+          widget: reply.widget,
+        },
+      }, { session });
+      setMessages(prev => [...prev, { role: 'ai', text: reply.text, widget: reply.widget }]);
+      dispatchActivityLogged();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Copilot command failed';
+      if (jobId) {
+        updateGenerationJob(jobId, { status: 'failed', progress: 100, error: message }, repositoryContext);
+        logAuditEvent({
+          action: 'generation_job_failed',
+          moduleId: 'dashboard',
+          targetType: 'generation_job',
+          targetId: jobId,
+          metadata: {
+            agentId: 'global-copilot-agent',
+            error: message,
+          },
+        }, { session });
+        dispatchActivityLogged();
+      }
+      setMessages(prev => [...prev, { role: 'ai', text: 'Copilot 执行失败，已记录到任务审计中。', widget: 'task' }]);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
   return (

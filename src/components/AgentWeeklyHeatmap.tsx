@@ -47,7 +47,7 @@ export function AgentWeeklyHeatmap() {
       </div>
       
       <div className="h-64 w-full">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
           <ScatterChart
             margin={{ top: 20, right: 20, bottom: 20, left: 20 }}
           >

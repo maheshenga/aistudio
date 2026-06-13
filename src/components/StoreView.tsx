@@ -91,7 +91,7 @@ export function StoreDashboardView({ onNavigate }: { onNavigate?: (id: string) =
              <span className="text-[11px] font-bold text-[var(--color-primary)] bg-blue-50 px-2 py-1 rounded-md uppercase tracking-wide">Live Trend</span>
           </div>
           <div className="w-full h-[260px] ">
-             <ResponsiveContainer width="100%" height="100%">
+             <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
                <AreaChart data={[
                  { time: '08:00', uv: 120, conversion: 2.1 },
                  { time: '10:00', uv: 280, conversion: 3.4 },
@@ -531,7 +531,7 @@ export function StoreMarketingView() {
        <div className="bg-[var(--bg-panel)] rounded-[28px] border border-[var(--border-color)]/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] mb-[var(--spacing-md)]">
           <h3 className="text-[17px] font-black text-[var(--text-main)] tracking-tight mb-[var(--spacing-xl)]">营销活动带来的营收趋势</h3>
           <div className="h-72 w-full">
-             <ResponsiveContainer width="100%" height="100%">
+             <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
                <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                  <defs>
                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">

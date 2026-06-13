@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MoreHorizontal, Download, Link2, Share2, Layers, Settings, Copy } from 'lucide-react';
+import { toast } from './Toast';
 
 interface QuickActionsProps {
   moduleTitle: string;
@@ -36,9 +37,9 @@ export function QuickActions({ moduleTitle }: QuickActionsProps) {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        import('./Toast').then(({ toast }) => toast(`Exported ${moduleTitle} as JSON`, 'success'));
+        toast(`Exported ${moduleTitle} as JSON`, 'success');
     } else {
-        import('./Toast').then(({ toast }) => toast(`Executed Action: ${action} on ${moduleTitle}`, 'success'));
+        toast(`Executed Action: ${action} on ${moduleTitle}`, 'success');
     }
   };
 

@@ -1,32 +1,64 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import { Calculator, FileText, PieChart, Info, DollarSign, Building, User, Receipt, Download, FileSearch, CheckCircle2, ArrowRight, Printer, Globe, CheckSquare, Sparkles, GitMerge } from 'lucide-react';
 import { toast } from './Toast';
 import { FinanceMeetingAssistant } from './FinanceMeetingAssistant';
 import { TaxSimulator } from './TaxSimulator';
-import { FiscalCalendarView, MOCK_EVENTS } from './FiscalCalendarView';
+import { FiscalCalendarView } from './FiscalCalendarView';
 import { CurrencyConverter, CurrencyCode } from '../utils/currency';
 import { AuditRiskHeatmap } from './AuditRiskHeatmap';
 import { TaxReconciliationTool } from './TaxReconciliationTool';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { seedWorkspaceTaxEvents } from '../lib/data/taxEventRepository';
+
+type TaxViewAuditAction =
+  | 'tax_deadline_reminder'
+  | 'tax_audit_export'
+  | 'tax_calculation_run'
+  | 'tax_document_parse'
+  | 'tax_compliance_doc_generate';
 
 export function TaxView() {
+  const session = useSaasSession();
+  const taxEventContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
   const [currency, setCurrency] = useState<CurrencyCode>(CurrencyConverter.getCurrency());
+  const auditTax = useCallback((
+    action: TaxViewAuditAction,
+    targetId: string,
+    metadata: Record<string, unknown> = {},
+  ) => {
+    logAuditEvent(
+      {
+        action,
+        moduleId: 'tax',
+        targetType: 'workspace',
+        targetId,
+        metadata,
+      },
+      { session },
+    );
+    window.dispatchEvent(new Event('activity_logged'));
+  }, [session]);
   
   useEffect(() => {
     const unsub = CurrencyConverter.subscribe((newCurrency) => {
       setCurrency(newCurrency);
     });
 
-    // Background listener that monitors upcoming deadlines 7 days prior
-    MOCK_EVENTS.forEach(ev => {
+    seedWorkspaceTaxEvents(taxEventContext).forEach(ev => {
       if (ev.daysUntil === 3 || ev.daysUntil === 7) {
-        setTimeout(() => {
-           toast(`智能拦截提醒：距离【${ev.title}】还有刚好 ${ev.daysUntil} 天截止！建议立即查看关联交易汇总。`, 'warning');
-        }, 1500); // Slight delay so that UI loads first before toast kicks in
+        auditTax('tax_deadline_reminder', ev.id, {
+          title: ev.title,
+          date: ev.date,
+          daysUntil: ev.daysUntil,
+          type: ev.type,
+        });
+        toast(`智能拦截提醒：距离【${ev.title}】还有刚好 ${ev.daysUntil} 天截止！建议立即查看关联交易汇总。`, 'warning');
       }
     });
 
     return unsub;
-  }, []);
+  }, [auditTax, taxEventContext]);
   const [activeTab, setActiveTab] = useState<'individual' | 'vat' | 'corporate' | 'audit'>('individual');
   const [isCalculating, setIsCalculating] = useState(false);
   const [showResult, setShowResult] = useState(true);
@@ -38,49 +70,56 @@ export function TaxView() {
 
   const handleExportAudit = () => {
       setIsExportingAudit(true);
-      setTimeout(() => {
-          setIsExportingAudit(false);
-          // Print logic isolates the audit tab content for PDF layout
-          const originalTitle = document.title;
-          document.title = "Audit_Trail_Report_TaxView";
-          window.print();
-          document.title = originalTitle;
-          
-          setTimeout(() => {
-              toast('审计报告导出操作已完成。', 'success');
-          }, 500);
-      }, 1000);
+      const originalTitle = document.title;
+      document.title = "Audit_Trail_Report_TaxView";
+      window.print();
+      document.title = originalTitle;
+      auditTax('tax_audit_export', 'tax_audit_report', {
+          format: 'pdf',
+          activeTab,
+      });
+      setIsExportingAudit(false);
+      toast('审计报告导出操作已完成。', 'success');
   };
 
   const handleCalculate = () => {
       setIsCalculating(true);
-      setTimeout(() => {
-          setIsCalculating(false);
-          setShowResult(true);
-          toast('测算完成，已生成最优节税方案', 'success');
-      }, 1200);
+      setShowResult(true);
+      auditTax('tax_calculation_run', `tax_calculation_${activeTab}`, {
+          activeTab,
+          currency,
+      });
+      setIsCalculating(false);
+      toast('测算完成，已生成最优节税方案', 'success');
   };
 
   const handleParseDocument = () => {
       setIsParsing(true);
-      setTimeout(() => {
-          setIsParsing(false);
-          setCurrencyInfo('发票含外汇交易：1,500 USD 已按汇率(7.30)折算为 10,950 CNY');
-          setClassificationResult([
-            { id: 1, target: 'Stripe Payments', amount: CurrencyConverter.formatString('¥ 10,950.00'), category: '销项税 (无票收入)', status: '待审批', suggestion: '自动触发 [跨境税收免抵退] 审批流', taxCode: '6001 主营业务收入', confidence: '98%' },
-            { id: 2, target: 'DigitalOcean Inc.', amount: CurrencyConverter.formatString('¥ 3,650.00'), category: '进项税 (海关完税凭证)', status: '已归档', suggestion: '合规验证通过', taxCode: '6602 管理费用-云服务', confidence: '95%' },
-            { id: 3, target: '滴滴企业版', amount: CurrencyConverter.formatString('¥ 450.00'), category: '费用报销', status: '已归档', suggestion: '关联至陈效 6月报销单', taxCode: '6602 管理费用-差旅费', confidence: '99%' }
-          ]);
-          toast('AI 票据解析完成：已自动分类并触发对应的税务或报销归档审批流', 'success');
-      }, 2000);
+      const parsedDocuments = [
+        { id: 1, target: 'Stripe Payments', amount: CurrencyConverter.formatString('¥ 10,950.00'), category: '销项税 (无票收入)', status: '待审批', suggestion: '自动触发 [跨境税收免抵退] 审批流', taxCode: '6001 主营业务收入', confidence: '98%' },
+        { id: 2, target: 'DigitalOcean Inc.', amount: CurrencyConverter.formatString('¥ 3,650.00'), category: '进项税 (海关完税凭证)', status: '已归档', suggestion: '合规验证通过', taxCode: '6602 管理费用-云服务', confidence: '95%' },
+        { id: 3, target: '滴滴企业版', amount: CurrencyConverter.formatString('¥ 450.00'), category: '费用报销', status: '已归档', suggestion: '关联至陈效 6月报销单', taxCode: '6602 管理费用-差旅费', confidence: '99%' }
+      ];
+      setCurrencyInfo('发票含外汇交易：1,500 USD 已按汇率(7.30)折算为 10,950 CNY');
+      setClassificationResult(parsedDocuments);
+      auditTax('tax_document_parse', 'cross_border_invoice_batch', {
+          documentCount: parsedDocuments.length,
+          currency,
+          detectedForeignCurrency: 'USD',
+          convertedAmountCny: 10950,
+      });
+      setIsParsing(false);
+      toast('AI 票据解析完成：已自动分类并触发对应的税务或报销归档审批流', 'success');
   };
 
   const handleGenerateComplianceDoc = () => {
       setIsGeneratingDoc(true);
-      setTimeout(() => {
-          setIsGeneratingDoc(false);
-          toast('一键税务申报总结文档生成完毕并已下载', 'success');
-      }, 2000);
+      auditTax('tax_compliance_doc_generate', 'tax_compliance_summary_2026', {
+          fiscalYear: 2026,
+          sections: ['filing_lifecycle', 'invoice_review', 'audit_trail'],
+      });
+      setIsGeneratingDoc(false);
+      toast('一键税务申报总结文档生成完毕并已下载', 'success');
   };
 
   const handlePrint = () => {

@@ -8,7 +8,21 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:data-backend": "tsx scripts/data-backend.test.ts",
+    "test:workspace-state": "tsx scripts/workspace-state.test.ts",
+    "test:launch-readiness": "tsx scripts/launch-readiness.test.ts",
+    "test:browser-smoke": "tsx scripts/browser-smoke.test.ts",
+    "test:p0-specialized": "npm run test:product-registry && npm run test:data-backend && npm run test:workspace-state && npm run test:runtime-contract && npm run test:desktop-bridge && npm run test:multica-mappers && npm run test:multica-runtime-provider && npm run test:web-runtime-provider && npm run test:multica-api-client",
+    "test:p0-release": "npm run test:p0-specialized && npm run test:launch-readiness && npm run test:saas-foundation && npm run lint && npm run build && npm run test:browser-smoke",
+    "test:runtime-contract": "tsx scripts/runtime-contract.test.ts",
+    "test:product-registry": "tsx scripts/product-registry.test.ts",
+    "test:saas-foundation": "tsx scripts/saas-foundation.test.ts",
+    "test:desktop-bridge": "tsx scripts/desktop-bridge.test.ts",
+    "test:multica-mappers": "tsx scripts/multica-mappers.test.ts",
+    "test:multica-runtime-provider": "tsx scripts/multica-runtime-provider.test.ts",
+    "test:web-runtime-provider": "tsx scripts/web-runtime-provider.test.ts",
+    "test:multica-api-client": "tsx scripts/multica-api-client.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

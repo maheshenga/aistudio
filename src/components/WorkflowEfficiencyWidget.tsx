@@ -1,29 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { LineChart, Clock, TrendingUp, Sparkles, BrainCircuit } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
-
-interface ModuleTime {
-  [moduleId: string]: number; // seconds
-}
+import { useWorkspaceUsage } from '../hooks/useWorkspaceUsage';
 
 export function WorkflowEfficiencyWidget() {
-  const [data, setData] = useState<{name: string, value: number}[]>([]);
-  const [totalTime, setTotalTime] = useState(0);
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('module_time_tracker');
-      if (stored) {
-         const parsed: ModuleTime = JSON.parse(stored);
-         const chartData = Object.keys(parsed)
-            .map(key => ({ name: key, value: parsed[key] }))
-            .sort((a, b) => b.value - a.value)
-            .slice(0, 5);
-         setData(chartData);
-         setTotalTime(Object.values(parsed).reduce((a, b) => a + b, 0));
-      }
-    } catch(e) {}
-  }, []);
+  const moduleTimes = useWorkspaceUsage();
+  const data = useMemo(
+    () => Object.entries(moduleTimes)
+      .map(([key, value]) => ({ name: key, value: value ?? 0 }))
+      .filter(item => item.value > 0)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5),
+    [moduleTimes],
+  );
+  const totalTime = useMemo(
+    () => Object.values(moduleTimes).reduce((sum, value) => sum + (value ?? 0), 0),
+    [moduleTimes],
+  );
 
   const COLORS = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444'];
 
@@ -50,7 +43,7 @@ export function WorkflowEfficiencyWidget() {
        {data.length > 0 ? (
          <div className="flex-1 flex flex-col justify-between">
            <div className="h-[140px] w-full">
-             <ResponsiveContainer width="100%" height="100%">
+             <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
                <PieChart>
                  <Pie
                    data={data}
