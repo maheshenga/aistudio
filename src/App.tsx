@@ -68,6 +68,8 @@ import { keepModuleIdListIfEqual } from './product/moduleListState';
 import { getSetting, saveSetting } from './lib/data/settingsRepository';
 import { loadModuleUsage } from './lib/data/usageRepository';
 import { useSaasSession } from './saas/SaasAuthContext';
+import { hydrateGenerationJobs } from './lib/data/generationJobRepository';
+import { hydrateAuditLogs } from './lib/data/auditLogRepository';
 
 import { useModuleTimeTracker } from './hooks/useModuleTimeTracker';
 import { usePreloadPinnedModules } from './hooks/usePreloadPinnedModules';
@@ -173,6 +175,14 @@ export default function App() {
       sessionStorage.setItem('session_start_time', Date.now().toString());
     }
   }, []);
+
+  // Workspace-scoped API hydration for domains without a dedicated central hook.
+  // Each hydrate dispatches the repo's existing update event so listeners refresh.
+  useEffect(() => {
+    const hydrateContext = { workspaceId: session.workspace.id, userId: session.user.id };
+    void hydrateGenerationJobs(hydrateContext);
+    void hydrateAuditLogs({ workspaceId: session.workspace.id });
+  }, [session.workspace.id, session.user.id]);
 
   useEffect(() => {
     const modulesStr = sessionStorage.getItem('session_modules_used');

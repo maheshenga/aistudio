@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { loadWorkspaceAssets, type WorkspaceAsset } from '../lib/data/assetRepository';
+import { hydrateWorkspaceAssets, loadWorkspaceAssets, type WorkspaceAsset } from '../lib/data/assetRepository';
 import { useSaasSession } from '../saas/SaasAuthContext';
 
 export function useWorkspaceAssets(): WorkspaceAsset[] {
@@ -20,6 +20,7 @@ export function useWorkspaceAssets(): WorkspaceAsset[] {
     };
 
     refreshAssets();
+    void hydrateWorkspaceAssets(assetContext);
     window.addEventListener('assets_updated', handleAssetsUpdated);
     return () => window.removeEventListener('assets_updated', handleAssetsUpdated);
   }, [assetContext]);

@@ -24,7 +24,12 @@
     "test:multica-runtime-provider": "tsx scripts/multica-runtime-provider.test.ts",
     "test:web-runtime-provider": "tsx scripts/web-runtime-provider.test.ts",
     "test:multica-api-client": "tsx scripts/multica-api-client.test.ts",
-    "test:project-repo-api": "tsx scripts/project-repository-api.test.ts"
+    "test:project-repo-api": "tsx scripts/project-repository-api.test.ts",
+    "test:asset-repo-api": "tsx scripts/asset-repository-api.test.ts",
+    "test:generation-job-repo-api": "tsx scripts/generation-job-repository-api.test.ts",
+    "test:usage-repo-api": "tsx scripts/usage-repository-api.test.ts",
+    "test:audit-log-repo-api": "tsx scripts/audit-log-repository-api.test.ts",
+    "test:member-repo-api": "tsx scripts/member-repository-api.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

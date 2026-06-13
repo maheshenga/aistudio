@@ -121,6 +121,7 @@ import {
   createWorkspaceMember,
   deleteWorkspaceMembers,
   ensureDemoWorkspaceMembers,
+  hydrateWorkspaceMembers,
   loadWorkspaceMembers,
   updateWorkspaceMember,
   type WorkspaceMember,
@@ -1227,6 +1228,8 @@ function AdminMembers() {
     ensureDemoWorkspaceMembers(session);
     refreshMembers();
     refreshBulkHistory();
+    // Hydrate members from API (dispatches `workspace_members_updated` to refresh listeners).
+    void hydrateWorkspaceMembers(memberContext);
 
     const handleMembersUpdated = (event: Event) => {
       const detail = (event as CustomEvent<{ workspaceId?: string }>).detail;

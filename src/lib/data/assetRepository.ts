@@ -4,6 +4,7 @@ import type { StorageLike } from '../../saas/localAuthSession';
 import { logAuditEvent } from './auditLogRepository';
 import { getRepositoryStorage } from './dataBackend';
 import { createPricedWorkspaceUsageEvent, type WorkspaceUsageEvent } from './usageRepository';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceAssetType = 'image' | 'video' | 'audio' | 'document' | 'text' | 'other';
 export type WorkspaceAssetSource = 'generated' | 'uploaded' | 'imported' | 'mock';
@@ -128,21 +129,49 @@ function readAssets(context: AssetRepositoryContext): WorkspaceAsset[] {
   }
 }
 
+function dispatchAssetsUpdated(workspaceId: string): void {
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('assets_updated', { detail: { workspaceId } }));
+  }
+}
+
 function writeAssets(assets: WorkspaceAsset[], context: AssetRepositoryContext): WorkspaceAsset[] {
   const storage = getRepositoryStorage(context.storage);
   const normalized = assets.map((asset) => normalizeAsset(asset, context));
   storage?.setItem(storageKey(context), JSON.stringify(normalized));
-  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-    window.dispatchEvent(new CustomEvent('assets_updated', { detail: { workspaceId: context.workspaceId } }));
-  }
+  dispatchAssetsUpdated(context.workspaceId);
   return normalized;
 }
 
+let assetApiClient: ApiClient = defaultApiClient;
+export function __setAssetApiClientForTest(client: ApiClient): void { assetApiClient = client; }
+
+const assetCache = new Map<string, WorkspaceAsset[]>(); // key=workspaceId
+
+export async function hydrateWorkspaceAssets(context: AssetRepositoryContext): Promise<void> {
+  if (!assetApiClient.configured) return;
+  const res = await assetApiClient.get<WorkspaceAsset[]>(context.workspaceId, 'assets');
+  if (res.ok && Array.isArray(res.value)) {
+    assetCache.set(
+      context.workspaceId,
+      res.value.map((a) => normalizeAsset(a as Partial<WorkspaceAsset>, context)),
+    );
+    dispatchAssetsUpdated(context.workspaceId);
+  }
+}
+
 export function loadWorkspaceAssets(context: AssetRepositoryContext): WorkspaceAsset[] {
+  if (assetApiClient.configured) return assetCache.get(context.workspaceId) ?? [];
   return readAssets(context);
 }
 
 export function saveWorkspaceAssets(assets: WorkspaceAsset[], context: AssetRepositoryContext): WorkspaceAsset[] {
+  if (assetApiClient.configured) {
+    const normalized = assets.map((asset) => normalizeAsset(asset, context));
+    assetCache.set(context.workspaceId, normalized);
+    dispatchAssetsUpdated(context.workspaceId);
+    return normalized;
+  }
   return writeAssets(assets, context);
 }
 
@@ -164,6 +193,27 @@ export function createWorkspaceAsset(input: WorkspaceAssetInput, context: AssetR
     context,
   );
 
+  if (assetApiClient.configured) {
+    assetCache.set(context.workspaceId, [...(assetCache.get(context.workspaceId) ?? []), asset]);
+    dispatchAssetsUpdated(context.workspaceId);
+    void assetApiClient
+      .post(context.workspaceId, 'assets', {
+        name: asset.name,
+        type: asset.type,
+        size: asset.size,
+        source: asset.source,
+        moduleId: asset.moduleId,
+        tags: asset.tags,
+        url: asset.url,
+        previewUrl: asset.previewUrl,
+        generationJobId: asset.generationJobId,
+        metadata: asset.metadata,
+      })
+      .then((res) => { if (!res.ok) console.error('createWorkspaceAsset write-through failed', res); })
+      .catch((err) => console.error('createWorkspaceAsset write-through failed', err));
+    return asset;
+  }
+
   writeAssets([...readAssets(context), asset], context);
   return asset;
 }
@@ -175,11 +225,26 @@ export function updateWorkspaceAsset(
 ): WorkspaceAsset | null {
   const now = context.now ?? Date.now();
   let updatedAsset: WorkspaceAsset | null = null;
-  const updatedAssets = readAssets(context).map((asset) => {
+  const applyPatch = (asset: WorkspaceAsset): WorkspaceAsset => {
     if (asset.id !== assetId) return asset;
     updatedAsset = normalizeAsset({ ...asset, ...patch, updatedAt: now }, context);
     return updatedAsset;
-  });
+  };
+
+  if (assetApiClient.configured) {
+    const current = assetCache.get(context.workspaceId) ?? [];
+    assetCache.set(context.workspaceId, current.map(applyPatch));
+    dispatchAssetsUpdated(context.workspaceId);
+    if (updatedAsset) {
+      void assetApiClient
+        .patch(context.workspaceId, `assets/${assetId}`, { ...patch })
+        .then((res) => { if (!res.ok) console.error('updateWorkspaceAsset write-through failed', res); })
+        .catch((err) => console.error('updateWorkspaceAsset write-through failed', err));
+    }
+    return updatedAsset;
+  }
+
+  const updatedAssets = readAssets(context).map(applyPatch);
 
   writeAssets(updatedAssets, context);
   return updatedAsset;
@@ -187,6 +252,18 @@ export function updateWorkspaceAsset(
 
 export function deleteWorkspaceAssets(assetIds: string[], context: AssetRepositoryContext): WorkspaceAsset[] {
   const assetIdSet = new Set(assetIds);
+  if (assetApiClient.configured) {
+    const remaining = (assetCache.get(context.workspaceId) ?? []).filter((asset) => !assetIdSet.has(asset.id));
+    assetCache.set(context.workspaceId, remaining);
+    dispatchAssetsUpdated(context.workspaceId);
+    for (const id of assetIds) {
+      void assetApiClient
+        .del(context.workspaceId, `assets/${id}`)
+        .then((res) => { if (!res.ok) console.error('deleteWorkspaceAssets write-through failed', res); })
+        .catch((err) => console.error('deleteWorkspaceAssets write-through failed', err));
+    }
+    return remaining;
+  }
   return writeAssets(readAssets(context).filter((asset) => !assetIdSet.has(asset.id)), context);
 }
 
@@ -194,7 +271,8 @@ export function listRecentWorkspaceAssets(
   context: AssetRepositoryContext,
   limit = 6,
 ): WorkspaceAsset[] {
-  return [...readAssets(context)]
+  const source = assetApiClient.configured ? (assetCache.get(context.workspaceId) ?? []) : readAssets(context);
+  return [...source]
     .sort((a, b) => (b.lastAccessedAt ?? b.updatedAt) - (a.lastAccessedAt ?? a.updatedAt))
     .slice(0, limit);
 }
@@ -205,6 +283,9 @@ export function recordWorkspaceAssetExport(
 ): WorkspaceAssetExportRecord {
   const exportedAt = context.now ?? Date.now();
   const moduleId = input.moduleId ?? input.asset.moduleId ?? 'assets';
+  // Cascade: this does NOT call the asset endpoint directly. The asset-update part flows
+  // through the migrated updateWorkspaceAsset, and the audit + usage sub-calls each
+  // independently write-through via their own now-migrated sibling repositories.
   const asset = updateWorkspaceAsset(
     input.asset.id,
     { lastAccessedAt: exportedAt },

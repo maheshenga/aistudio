@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { loadModuleUsage, type ModuleUsage } from '../lib/data/usageRepository';
+import { hydrateWorkspaceUsageEvents, loadModuleUsage, type ModuleUsage } from '../lib/data/usageRepository';
 import { useSaasSession } from '../saas/SaasAuthContext';
 
 export function useWorkspaceUsage(): ModuleUsage {
@@ -21,6 +21,8 @@ export function useWorkspaceUsage(): ModuleUsage {
     };
 
     refreshUsage();
+    // Hydrate workspace usage-events from API (dispatches `usage_updated` to refresh listeners).
+    void hydrateWorkspaceUsageEvents(usageContext);
     window.addEventListener('usage_updated', handleUsageUpdated);
     return () => window.removeEventListener('usage_updated', handleUsageUpdated);
   }, [usageContext]);

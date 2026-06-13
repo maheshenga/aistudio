@@ -1,6 +1,7 @@
 import type { AuthSession, WorkspaceRole } from '../../saas/types';
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceMemberStatus = 'active' | 'inactive' | 'invited' | 'suspended';
 
@@ -103,6 +104,12 @@ function readMembers(context: WorkspaceMemberRepositoryContext): WorkspaceMember
   }
 }
 
+function dispatchMembersUpdated(workspaceId: string): void {
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('workspace_members_updated', { detail: { workspaceId } }));
+  }
+}
+
 function writeMembers(
   members: WorkspaceMember[],
   context: WorkspaceMemberRepositoryContext,
@@ -110,13 +117,29 @@ function writeMembers(
   const storage = getRepositoryStorage(context.storage);
   const normalized = members.map((member) => normalizeMember(member, context));
   storage?.setItem(storageKey(context), JSON.stringify(normalized));
-  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-    window.dispatchEvent(new CustomEvent('workspace_members_updated', { detail: { workspaceId: context.workspaceId } }));
-  }
+  dispatchMembersUpdated(context.workspaceId);
   return normalized;
 }
 
+let memberApiClient: ApiClient = defaultApiClient;
+export function __setMemberApiClientForTest(client: ApiClient): void { memberApiClient = client; }
+
+const memberCache = new Map<string, WorkspaceMember[]>(); // key=workspaceId
+
+export async function hydrateWorkspaceMembers(context: WorkspaceMemberRepositoryContext): Promise<void> {
+  if (!memberApiClient.configured) return;
+  const res = await memberApiClient.get<WorkspaceMember[]>(context.workspaceId, 'members');
+  if (res.ok && Array.isArray(res.value)) {
+    memberCache.set(
+      context.workspaceId,
+      res.value.map((m) => normalizeMember(m as Partial<WorkspaceMember>, context)),
+    );
+    dispatchMembersUpdated(context.workspaceId);
+  }
+}
+
 export function loadWorkspaceMembers(context: WorkspaceMemberRepositoryContext): WorkspaceMember[] {
+  if (memberApiClient.configured) return memberCache.get(context.workspaceId) ?? [];
   return readMembers(context);
 }
 
@@ -124,6 +147,12 @@ export function saveWorkspaceMembers(
   members: WorkspaceMember[],
   context: WorkspaceMemberRepositoryContext,
 ): WorkspaceMember[] {
+  if (memberApiClient.configured) {
+    const normalized = members.map((member) => normalizeMember(member, context));
+    memberCache.set(context.workspaceId, normalized);
+    dispatchMembersUpdated(context.workspaceId);
+    return normalized;
+  }
   return writeMembers(members, context);
 }
 
@@ -144,6 +173,28 @@ export function createWorkspaceMember(
     context,
   );
 
+  if (memberApiClient.configured) {
+    memberCache.set(context.workspaceId, [...(memberCache.get(context.workspaceId) ?? []), member]);
+    dispatchMembersUpdated(context.workspaceId);
+    void memberApiClient
+      .post(context.workspaceId, 'members', {
+        userId: member.userId,
+        name: member.name,
+        email: member.email,
+        role: member.role,
+        department: member.department,
+        status: member.status,
+        joinedAt: member.joinedAt,
+        lastActiveAt: member.lastActiveAt,
+        metadata: member.metadata,
+      })
+      // Backend enforces unique (workspaceId,userId) and returns `conflict` on duplicate.
+      // For MVP we log and keep the optimistic cache entry; signature stays sync, never throws.
+      .then((res) => { if (!res.ok) console.error('createWorkspaceMember write-through failed', res); })
+      .catch((err) => console.error('createWorkspaceMember write-through failed', err));
+    return member;
+  }
+
   writeMembers([...readMembers(context), member], context);
   return member;
 }
@@ -155,11 +206,26 @@ export function updateWorkspaceMember(
 ): WorkspaceMember | null {
   const now = context.now ?? Date.now();
   let updatedMember: WorkspaceMember | null = null;
-  const updatedMembers = readMembers(context).map((member) => {
+  const applyPatch = (member: WorkspaceMember): WorkspaceMember => {
     if (member.id !== memberId) return member;
     updatedMember = normalizeMember({ ...member, ...patch, updatedAt: now }, context);
     return updatedMember;
-  });
+  };
+
+  if (memberApiClient.configured) {
+    const current = memberCache.get(context.workspaceId) ?? [];
+    memberCache.set(context.workspaceId, current.map(applyPatch));
+    dispatchMembersUpdated(context.workspaceId);
+    if (updatedMember) {
+      void memberApiClient
+        .patch(context.workspaceId, `members/${memberId}`, { ...patch })
+        .then((res) => { if (!res.ok) console.error('updateWorkspaceMember write-through failed', res); })
+        .catch((err) => console.error('updateWorkspaceMember write-through failed', err));
+    }
+    return updatedMember;
+  }
+
+  const updatedMembers = readMembers(context).map(applyPatch);
 
   writeMembers(updatedMembers, context);
   return updatedMember;
@@ -170,6 +236,18 @@ export function deleteWorkspaceMembers(
   context: WorkspaceMemberRepositoryContext,
 ): WorkspaceMember[] {
   const memberIdSet = new Set(memberIds);
+  if (memberApiClient.configured) {
+    const remaining = (memberCache.get(context.workspaceId) ?? []).filter((member) => !memberIdSet.has(member.id));
+    memberCache.set(context.workspaceId, remaining);
+    dispatchMembersUpdated(context.workspaceId);
+    for (const id of memberIds) {
+      void memberApiClient
+        .del(context.workspaceId, `members/${id}`)
+        .then((res) => { if (!res.ok) console.error('deleteWorkspaceMembers write-through failed', res); })
+        .catch((err) => console.error('deleteWorkspaceMembers write-through failed', err));
+    }
+    return remaining;
+  }
   return writeMembers(readMembers(context).filter((member) => !memberIdSet.has(member.id)), context);
 }
 
@@ -182,6 +260,11 @@ export function ensureDemoWorkspaceMembers(
     storage: options.storage,
     now: options.now,
   };
+  // When the API is configured, real member data comes from the backend (hydrated into cache).
+  // Skip demo seeding entirely and return whatever the cache currently holds.
+  if (memberApiClient.configured) {
+    return memberCache.get(context.workspaceId) ?? [];
+  }
   const existingMembers = readMembers(context);
   if (existingMembers.length > 0) return existingMembers;
 

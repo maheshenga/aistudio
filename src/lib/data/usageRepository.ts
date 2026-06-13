@@ -2,6 +2,7 @@ import type { ModuleId } from '../../types';
 import type { RuntimeMode, RuntimeProviderKind } from '../../runtime/agentRuntimeTypes';
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type ModuleUsage = Partial<Record<ModuleId, number>>;
 export type WorkspaceUsageEventKind =
@@ -261,15 +262,39 @@ function readUsageEvents(context: UsageRepositoryContext): WorkspaceUsageEvent[]
   }
 }
 
-function writeUsageEvents(events: WorkspaceUsageEvent[], context: UsageRepositoryContext): WorkspaceUsageEvent[] {
-  const storage = getRepositoryStorage(context.storage);
-  const normalized = sortUsageEvents(events.map((event) => normalizeUsageEvent(event, context)));
-  storage?.setItem(usageEventStorageKey(context), JSON.stringify(normalized.slice(0, 500)));
+function dispatchUsageEventsUpdated(context: UsageRepositoryContext): void {
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     window.dispatchEvent(new CustomEvent('usage_events_updated', { detail: { workspaceId: context.workspaceId, userId: context.userId } }));
     window.dispatchEvent(new CustomEvent('usage_updated', { detail: { workspaceId: context.workspaceId, userId: context.userId } }));
   }
+}
+
+function writeUsageEvents(events: WorkspaceUsageEvent[], context: UsageRepositoryContext): WorkspaceUsageEvent[] {
+  const storage = getRepositoryStorage(context.storage);
+  const normalized = sortUsageEvents(events.map((event) => normalizeUsageEvent(event, context)));
+  storage?.setItem(usageEventStorageKey(context), JSON.stringify(normalized.slice(0, 500)));
+  dispatchUsageEventsUpdated(context);
   return normalized;
+}
+
+// NOTE: only the usage-EVENT functions migrate to the API. loadModuleUsage / saveModuleUsage /
+// incrementModuleUsage below are a LOCAL aggregated UI-state (per-module time tracking) and stay
+// entirely on localStorage. getCommercialUsagePricing / calculateCommercialUsageCredits are pure.
+let usageApiClient: ApiClient = defaultApiClient;
+export function __setUsageApiClientForTest(client: ApiClient): void { usageApiClient = client; }
+
+const usageEventCache = new Map<string, WorkspaceUsageEvent[]>(); // key=workspaceId
+
+export async function hydrateWorkspaceUsageEvents(context: UsageRepositoryContext): Promise<void> {
+  if (!usageApiClient.configured) return;
+  const res = await usageApiClient.get<WorkspaceUsageEvent[]>(context.workspaceId, 'usage-events');
+  if (res.ok && Array.isArray(res.value)) {
+    usageEventCache.set(
+      context.workspaceId,
+      sortUsageEvents(res.value.map((e) => normalizeUsageEvent(e as Partial<WorkspaceUsageEvent>, context))),
+    );
+    dispatchUsageEventsUpdated(context);
+  }
 }
 
 export function loadModuleUsage(context: UsageRepositoryContext): ModuleUsage {
@@ -294,7 +319,9 @@ export function incrementModuleUsage(
 }
 
 export function listWorkspaceUsageEvents(context: UsageRepositoryContext): WorkspaceUsageEvent[] {
-  const events = readUsageEvents(context);
+  const events = usageApiClient.configured
+    ? (usageEventCache.get(context.workspaceId) ?? [])
+    : readUsageEvents(context);
   if (!context.userId) return events;
   return events.filter((event) => !event.userId || event.userId === context.userId);
 }
@@ -321,6 +348,28 @@ export function createWorkspaceUsageEvent(
     },
     context,
   );
+
+  if (usageApiClient.configured) {
+    usageEventCache.set(
+      context.workspaceId,
+      sortUsageEvents([event, ...(usageEventCache.get(context.workspaceId) ?? [])]),
+    );
+    dispatchUsageEventsUpdated(context);
+    void usageApiClient
+      .post(context.workspaceId, 'usage-events', {
+        moduleId: event.moduleId,
+        kind: event.kind,
+        targetType: event.targetType,
+        targetId: event.targetId,
+        providerKind: event.providerKind,
+        runtimeMode: event.runtimeMode,
+        credits: event.credits,
+        metadata: event.metadata,
+      })
+      .then((res) => { if (!res.ok) console.error('createWorkspaceUsageEvent write-through failed', res); })
+      .catch((err) => console.error('createWorkspaceUsageEvent write-through failed', err));
+    return event;
+  }
 
   writeUsageEvents([event, ...readUsageEvents(context)], context);
   return event;
