@@ -23,7 +23,8 @@
     "test:multica-mappers": "tsx scripts/multica-mappers.test.ts",
     "test:multica-runtime-provider": "tsx scripts/multica-runtime-provider.test.ts",
     "test:web-runtime-provider": "tsx scripts/web-runtime-provider.test.ts",
-    "test:multica-api-client": "tsx scripts/multica-api-client.test.ts"
+    "test:multica-api-client": "tsx scripts/multica-api-client.test.ts",
+    "test:project-repo-api": "tsx scripts/project-repository-api.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

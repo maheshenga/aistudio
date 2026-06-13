@@ -17,6 +17,7 @@ import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { getSetting, saveSetting } from '../lib/data/settingsRepository';
 import {
   createWorkspaceProject,
+  hydrateWorkspaceProjects,
   loadWorkspaceProjects,
   updateWorkspaceProject,
   type WorkspaceProject,
@@ -63,6 +64,9 @@ export function ProjectsView() {
     };
 
     loadProjects();
+    // When VITE_DATA_API_URL is configured this fetches from the API into the cache;
+    // hydrate dispatches workspace_projects_updated, so the listener below refreshes automatically.
+    void hydrateWorkspaceProjects(projectContext);
     window.addEventListener('workspace_projects_updated', handleProjectsUpdated);
     return () => window.removeEventListener('workspace_projects_updated', handleProjectsUpdated);
   }, [projectContext]);
