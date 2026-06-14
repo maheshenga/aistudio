@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD, APP_FILTER } from '@nestjs/core';
 import { PrismaModule } from './common/prisma/prisma.module';
+import { AuthModule } from './auth/auth.module';
 import { WorkspaceModule } from './workspace/workspace.module';
 import { ProjectModule } from './project/project.module';
 import { MemberModule } from './member/member.module';
@@ -9,11 +10,13 @@ import { AssetModule } from './asset/asset.module';
 import { UsageEventModule } from './usage-event/usage-event.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { TenantGuard } from './common/tenant/tenant.guard';
+import { AuthGuard } from './common/auth/auth.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 @Module({
-  imports: [PrismaModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule],
+  imports: [PrismaModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule],
   providers: [
+    { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: TenantGuard },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],
