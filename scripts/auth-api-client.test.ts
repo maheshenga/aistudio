@@ -43,6 +43,24 @@ async function run() {
     assert.equal((r as any).error.code, 'unauthenticated');
     assert.equal(failed, true);
   }
+  // 4. 并发 401 只触发一次 refresh(single-flight)
+  {
+    let refreshCount = 0; let access = 'old';
+    let inFlight: Promise<string | null> | null = null;
+    const singleFlight = () => {
+      if (inFlight) return inFlight;
+      inFlight = (async () => { refreshCount += 1; access = 'fresh'; return 'fresh'; })().finally(() => { inFlight = null; });
+      return inFlight;
+    };
+    const client = createApiClient('http://api', async (_url, init) => {
+      const auth = (init?.headers as Record<string, string>)?.['Authorization'];
+      if (auth === 'Bearer old') return json(401, { error: { code: 'unauthenticated', message: 'x' } });
+      return json(200, { value: { ok: true } });
+    }, { getAccess: () => access, onRefresh: singleFlight, onAuthFailure: () => {} });
+    const results = await Promise.all([client.get('ws', 'a'), client.get('ws', 'b'), client.get('ws', 'c')]);
+    assert.ok(results.every((r) => r.ok));
+    assert.equal(refreshCount, 1);
+  }
   console.log('auth api client passed');
 }
 run().catch((e) => { console.error(e); process.exit(1); });

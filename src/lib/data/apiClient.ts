@@ -79,15 +79,28 @@ export function createApiClient(
 let onAuthFailureHandler: () => void = () => {};
 export function setAuthFailureHandler(fn: () => void) { onAuthFailureHandler = fn; }
 
-export const apiClient = createApiClient(undefined, fetch, {
-  getAccess: () => appAuthTokens.getAccess(),
-  onRefresh: async () => {
+// Single-flight token refresh: while one refresh is in flight, all other
+// concurrent callers await the SAME promise. Prevents the concurrent-401 race
+// where multiple in-flight requests each refresh with the same (rotating)
+// refresh token — the first rotates+revokes it, the rest get null and would
+// spuriously trigger onAuthFailure → unexpected logout.
+let inFlightRefresh: Promise<string | null> | null = null;
+
+async function singleFlightRefresh(): Promise<string | null> {
+  if (inFlightRefresh) return inFlightRefresh;
+  inFlightRefresh = (async () => {
     const refresh = appAuthTokens.getRefresh();
     if (!refresh) return null;
     const next = await apiRefresh(refresh);
     if (!next) return null;
     appAuthTokens.set(next);
     return next.accessToken;
-  },
+  })().finally(() => { inFlightRefresh = null; });
+  return inFlightRefresh;
+}
+
+export const apiClient = createApiClient(undefined, fetch, {
+  getAccess: () => appAuthTokens.getAccess(),
+  onRefresh: () => singleFlightRefresh(),
   onAuthFailure: () => { appAuthTokens.clear(); onAuthFailureHandler(); },
 });
