@@ -13,6 +13,7 @@ export type DataBackendErrorCode =
   | 'validation_error'
   | 'not_found'
   | 'conflict'
+  | 'unauthenticated'
   | 'unknown_error';
 
 export interface DataBackendEnvironment {
