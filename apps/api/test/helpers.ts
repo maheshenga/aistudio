@@ -1,5 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/common/prisma/prisma.service';
 import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
@@ -45,4 +46,16 @@ export async function seedUserWithMember(
     data: { workspaceId: workspace.id, userId: user.id, role: opts.role ?? 'owner' },
   });
   return { user, workspace, member };
+}
+
+export async function registerUser(app: INestApplication, email: string) {
+  const r = await request(app.getHttpServer()).post('/auth/register')
+    .send({ email, password: 'password123', name: email.split('@')[0] }).expect(201);
+  const me = await request(app.getHttpServer()).get('/auth/me')
+    .set('Authorization', `Bearer ${r.body.value.accessToken}`).expect(200);
+  return {
+    accessToken: r.body.value.accessToken as string,
+    userId: r.body.value.user.id as string,
+    workspaceId: me.body.value.memberships[0].workspaceId as string,
+  };
 }

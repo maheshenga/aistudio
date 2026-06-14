@@ -1,6 +1,6 @@
 import * as request from 'supertest';
 import { INestApplication } from '@nestjs/common';
-import { bootstrapTestApp, resetDb } from './helpers';
+import { bootstrapTestApp, resetDb, registerUser } from './helpers';
 import { PrismaService } from '../src/common/prisma/prisma.service';
 
 describe('Workspace (e2e)', () => {
@@ -17,10 +17,11 @@ describe('Workspace (e2e)', () => {
   });
 
   it('GET /workspaces/:id returns it; unknown id → 404 not_found', async () => {
-    const ws = await prisma.workspace.create({ data: { name: 'Acme' } });
-    const ok = await request(app.getHttpServer()).get(`/workspaces/${ws.id}`).expect(200);
-    expect(ok.body.value.id).toBe(ws.id);
-    const miss = await request(app.getHttpServer()).get('/workspaces/nope').expect(404);
+    const { workspaceId, accessToken } = await registerUser(app, 'ws1@test.dev');
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${accessToken}`);
+    const ok = await auth(request(app.getHttpServer()).get(`/workspaces/${workspaceId}`)).expect(200);
+    expect(ok.body.value.id).toBe(workspaceId);
+    const miss = await auth(request(app.getHttpServer()).get('/workspaces/nope')).expect(404);
     expect(miss.body.error.code).toBe('not_found');
   });
 
