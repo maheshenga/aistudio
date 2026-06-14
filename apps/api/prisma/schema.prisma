@@ -33,6 +33,7 @@ model Member {
   createdAt   DateTime @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, userId])
   @@index([workspaceId])
@@ -125,4 +126,30 @@ model AuditLog {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, createdAt])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  avatarLabel  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  members       Member[]
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  client    String    @default("web")
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
 }
