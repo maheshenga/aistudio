@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/common/prisma/prisma.service';
 import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
+import * as bcrypt from 'bcrypt';
 
 export async function bootstrapTestApp(): Promise<{ app: INestApplication; prisma: PrismaService }> {
   process.env.DATABASE_URL = process.env.DATABASE_URL_TEST;
@@ -23,9 +24,25 @@ export async function resetDb(prisma: PrismaService) {
   await prisma.generationJob.deleteMany();
   await prisma.project.deleteMany();
   await prisma.member.deleteMany();
+  await prisma.refreshToken.deleteMany();
   await prisma.workspace.deleteMany();
+  await prisma.user.deleteMany();
 }
 
 export async function seedWorkspace(prisma: PrismaService, name = 'WS') {
   return prisma.workspace.create({ data: { name } });
+}
+
+export async function seedUserWithMember(
+  prisma: PrismaService,
+  opts: { email?: string; password?: string; role?: string } = {},
+) {
+  const email = opts.email ?? `user_${Math.random().toString(36).slice(2, 8)}@test.dev`;
+  const passwordHash = await bcrypt.hash(opts.password ?? 'password123', 10);
+  const user = await prisma.user.create({ data: { email, passwordHash, name: 'Test User' } });
+  const workspace = await prisma.workspace.create({ data: { name: 'WS' } });
+  const member = await prisma.member.create({
+    data: { workspaceId: workspace.id, userId: user.id, role: opts.role ?? 'owner' },
+  });
+  return { user, workspace, member };
 }
