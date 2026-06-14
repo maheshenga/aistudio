@@ -1,41 +1,130 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
-import { Building2, LogIn, ShieldCheck } from 'lucide-react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { Building2, LogIn, ShieldCheck, Loader2, UserPlus } from 'lucide-react';
 
 import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { setAuthFailureHandler } from '../lib/data/apiClient';
 import {
-  clearAuthSession,
-  createDemoAuthSession,
-  loadAuthSession,
-  saveAuthSession,
-} from './localAuthSession';
-import type { AuthSession } from './types';
+  apiLogin,
+  apiLogout,
+  apiMe,
+  apiRefresh,
+  apiRegister,
+  type ApiMembership,
+  type AuthUser,
+} from '../lib/data/authApi';
+import { appAuthTokens } from './authTokenStore';
+import type { AuthSession, WorkspaceRole } from './types';
 
 interface SaasAuthContextValue {
   session: AuthSession | null;
-  signInDemo: () => void;
-  signOut: () => void;
+  initializing: boolean;
+  signIn: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, name: string) => Promise<void>;
+  signOut: () => Promise<void>;
   updateWorkspacePlan: (plan: AuthSession['workspace']['plan']) => void;
+}
+
+function deriveSlug(workspaceName: string, workspaceId: string): string {
+  const slug = workspaceName.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  return slug || workspaceId;
+}
+
+function mapToSession(payload: { user: AuthUser; memberships: ApiMembership[] }): AuthSession {
+  const { user, memberships } = payload;
+  if (!memberships || memberships.length === 0) {
+    throw new Error('当前用户没有可用的工作区成员资格');
+  }
+  const m = memberships[0];
+  const now = Date.now();
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatarLabel: user.avatarLabel ?? undefined,
+    },
+    workspace: {
+      id: m.workspaceId,
+      name: m.workspaceName,
+      slug: deriveSlug(m.workspaceName, m.workspaceId),
+      plan: 'free',
+      createdAt: now,
+    },
+    membership: {
+      id: `membership_${m.workspaceId}`,
+      userId: user.id,
+      workspaceId: m.workspaceId,
+      role: m.role as WorkspaceRole,
+      joinedAt: now,
+    },
+    issuedAt: now,
+    lastActiveAt: now,
+  };
 }
 
 const SaasAuthContext = createContext<SaasAuthContextValue | null>(null);
 
 export function SaasAuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<AuthSession | null>(() => loadAuthSession());
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [initializing, setInitializing] = useState(true);
+
+  useEffect(() => {
+    setAuthFailureHandler(() => setSession(null));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const refresh = appAuthTokens.getRefresh();
+      if (!refresh) {
+        if (!cancelled) setInitializing(false);
+        return;
+      }
+      try {
+        const tokens = await apiRefresh(refresh);
+        if (!tokens) throw new Error('refresh failed');
+        appAuthTokens.set(tokens);
+        const me = await apiMe(tokens.accessToken);
+        if (!cancelled) setSession(mapToSession(me));
+      } catch {
+        appAuthTokens.clear();
+      } finally {
+        if (!cancelled) setInitializing(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const value = useMemo<SaasAuthContextValue>(() => ({
     session,
-    signInDemo: () => {
-      const nextSession = createDemoAuthSession();
-      saveAuthSession(nextSession);
+    initializing,
+    signIn: async (email, password) => {
+      const result = await apiLogin(email, password);
+      appAuthTokens.set({ accessToken: result.accessToken, refreshToken: result.refreshToken });
+      const me = await apiMe(result.accessToken);
+      const nextSession = mapToSession(me);
       logAuditEvent({
         action: 'workspace_sign_in',
         targetType: 'workspace',
         targetId: nextSession.workspace.id,
-        metadata: { source: 'demo_local_auth' },
+        metadata: { source: 'jwt_login' },
       }, { session: nextSession });
       setSession(nextSession);
     },
-    signOut: () => {
+    register: async (email, password, name) => {
+      const result = await apiRegister(email, password, name);
+      appAuthTokens.set({ accessToken: result.accessToken, refreshToken: result.refreshToken });
+      const me = await apiMe(result.accessToken);
+      const nextSession = mapToSession(me);
+      logAuditEvent({
+        action: 'workspace_sign_in',
+        targetType: 'workspace',
+        targetId: nextSession.workspace.id,
+        metadata: { source: 'jwt_register' },
+      }, { session: nextSession });
+      setSession(nextSession);
+    },
+    signOut: async () => {
       if (session) {
         logAuditEvent({
           action: 'workspace_sign_out',
@@ -43,23 +132,23 @@ export function SaasAuthProvider({ children }: { children: React.ReactNode }) {
           targetId: session.workspace.id,
         }, { session });
       }
-      clearAuthSession();
+      const refresh = appAuthTokens.getRefresh();
+      const access = appAuthTokens.getAccess();
+      if (access && refresh) {
+        await apiLogout(access, refresh).catch(() => undefined);
+      }
+      appAuthTokens.clear();
       setSession(null);
     },
     updateWorkspacePlan: (plan) => {
       if (!session || session.workspace.plan === plan) return;
-      const nextSession: AuthSession = {
+      setSession({
         ...session,
-        workspace: {
-          ...session.workspace,
-          plan,
-        },
+        workspace: { ...session.workspace, plan },
         lastActiveAt: Date.now(),
-      };
-      saveAuthSession(nextSession);
-      setSession(nextSession);
+      });
     },
-  }), [session]);
+  }), [session, initializing]);
 
   return (
     <SaasAuthContext.Provider value={value}>
@@ -85,11 +174,47 @@ export function useSaasSession(): AuthSession {
 }
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  const { session, signInDemo } = useSaasAuth();
+  const { session, initializing, signIn, register } = useSaasAuth();
+  const [mode, setMode] = useState<'signIn' | 'register'>('signIn');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  if (initializing) {
+    return (
+      <div className="min-h-screen bg-[var(--bg-app)] flex items-center justify-center p-6">
+        <div className="w-full max-w-md bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] shadow-xl p-8 flex items-center justify-center gap-3 text-sm text-[var(--text-muted)]">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          正在恢复会话…
+        </div>
+      </div>
+    );
+  }
 
   if (session) {
     return <>{children}</>;
   }
+
+  const inputClass = 'w-full rounded-[var(--radius-lg)] border border-[var(--border-color)] px-3 py-2 text-sm bg-[var(--bg-app)] text-[var(--text-main)]';
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      if (mode === 'register') {
+        await register(email, password, name);
+      } else {
+        await signIn(email, password);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[var(--bg-app)] flex items-center justify-center p-6">
@@ -98,18 +223,81 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           <Building2 className="w-6 h-6" />
         </div>
         <h1 className="text-2xl font-black text-[var(--text-main)] tracking-tight">
-          进入 AI 工作空间
+          {mode === 'register' ? '创建 AI 工作空间' : '进入 AI 工作空间'}
         </h1>
         <p className="text-sm text-[var(--text-muted)] mt-3 leading-6">
-          SaaS 模式需要先绑定用户、工作区和成员角色。当前提供本地 Demo 工作区，后续可替换为正式 OAuth/Firebase Auth。
+          {mode === 'register'
+            ? '注册后会自动为你创建工作区，并以 owner 角色加入。'
+            : '使用邮箱与密码登录你的工作区。'}
         </p>
+
+        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+          {mode === 'register' && (
+            <div>
+              <label className="block text-xs font-bold text-[var(--text-muted)] mb-1">姓名</label>
+              <input
+                className={inputClass}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="你的名字"
+                autoComplete="name"
+                required
+              />
+            </div>
+          )}
+          <div>
+            <label className="block text-xs font-bold text-[var(--text-muted)] mb-1">邮箱</label>
+            <input
+              className={inputClass}
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              autoComplete="email"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-[var(--text-muted)] mb-1">密码</label>
+            <input
+              className={inputClass}
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+              required
+            />
+          </div>
+
+          {error && (
+            <div className="text-xs text-red-600 leading-5">{error}</div>
+          )}
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full flex items-center justify-center gap-2 bg-[var(--color-primary)] hover:bg-blue-700 text-white rounded-[var(--radius-lg)] px-4 py-3 text-sm font-bold shadow-sm transition-colors disabled:opacity-60"
+          >
+            {submitting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : mode === 'register' ? (
+              <UserPlus className="w-4 h-4" />
+            ) : (
+              <LogIn className="w-4 h-4" />
+            )}
+            {mode === 'register' ? '注册并进入' : '登录'}
+          </button>
+        </form>
+
         <button
-          onClick={signInDemo}
-          className="mt-8 w-full flex items-center justify-center gap-2 bg-[var(--color-primary)] hover:bg-blue-700 text-white rounded-[var(--radius-lg)] px-4 py-3 text-sm font-bold shadow-sm transition-colors"
+          type="button"
+          onClick={() => { setMode(mode === 'register' ? 'signIn' : 'register'); setError(null); }}
+          className="mt-4 w-full text-center text-xs text-[var(--color-primary)] hover:underline"
         >
-          <LogIn className="w-4 h-4" />
-          使用 Demo 工作区登录
+          {mode === 'register' ? '已有账号？去登录' : '还没有账号？去注册'}
         </button>
+
         <div className="mt-5 flex items-start gap-2 text-xs text-[var(--text-muted)] leading-5">
           <ShieldCheck className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
           <span>登录后所有审计日志会带上 workspaceId、actor 和角色信息。</span>

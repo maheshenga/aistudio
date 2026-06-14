@@ -1,4 +1,6 @@
 import type { DataBackendResult, DataBackendError, DataBackendErrorCode } from './dataBackend';
+import { appAuthTokens } from '../../saas/authTokenStore';
+import { apiRefresh } from './authApi';
 
 export interface ApiClient {
   configured: boolean;
@@ -74,4 +76,18 @@ export function createApiClient(
   };
 }
 
-export const apiClient = createApiClient();
+let onAuthFailureHandler: () => void = () => {};
+export function setAuthFailureHandler(fn: () => void) { onAuthFailureHandler = fn; }
+
+export const apiClient = createApiClient(undefined, fetch, {
+  getAccess: () => appAuthTokens.getAccess(),
+  onRefresh: async () => {
+    const refresh = appAuthTokens.getRefresh();
+    if (!refresh) return null;
+    const next = await apiRefresh(refresh);
+    if (!next) return null;
+    appAuthTokens.set(next);
+    return next.accessToken;
+  },
+  onAuthFailure: () => { appAuthTokens.clear(); onAuthFailureHandler(); },
+});
