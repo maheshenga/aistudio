@@ -15,8 +15,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       status = exception.getStatus();
       const r = exception.getResponse() as any;
       message = Array.isArray(r?.message) ? r.message.join('; ') : (r?.message ?? exception.message);
-      code = status === 400 ? 'validation_error' : status === 401 || status === 403 ? 'permission_denied'
-           : status === 404 ? 'not_found' : status === 409 ? 'conflict' : 'unknown_error';
+      code = status === 400 ? 'validation_error' : status === 401 ? 'unauthenticated'
+           : status === 403 ? 'permission_denied' : status === 404 ? 'not_found'
+           : status === 409 ? 'conflict' : 'unknown_error';
     } else if (exception instanceof Prisma.PrismaClientKnownRequestError) {
       if (exception.code === 'P2025') { status = 404; code = 'not_found'; message = 'Resource not found'; }
       else if (exception.code === 'P2002') { status = 409; code = 'conflict'; message = 'Resource already exists'; }
