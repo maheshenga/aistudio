@@ -12,6 +12,7 @@
     "test:data-backend": "tsx scripts/data-backend.test.ts",
     "test:auth-token-store": "tsx scripts/auth-token-store.test.ts",
     "test:api-client": "tsx scripts/api-client.test.ts",
+    "test:auth-api-client": "tsx scripts/auth-api-client.test.ts",
     "test:workspace-state": "tsx scripts/workspace-state.test.ts",
     "test:launch-readiness": "tsx scripts/launch-readiness.test.ts",
     "test:browser-smoke": "tsx scripts/browser-smoke.test.ts",

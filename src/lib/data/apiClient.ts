@@ -15,24 +15,48 @@ function fail(code: DataBackendErrorCode, message: string): DataBackendResult<ne
   return { ok: false, error: { code, message } as DataBackendError };
 }
 
-export function createApiClient(baseUrl: string | undefined = readApiUrl(), fetcher: typeof fetch = fetch): ApiClient {
+export interface AuthHooks {
+  getAccess: () => string | null;
+  onRefresh: () => Promise<string | null>;
+  onAuthFailure: () => void;
+}
+
+export function createApiClient(
+  baseUrl: string | undefined = readApiUrl(),
+  fetcher: typeof fetch = fetch,
+  authHooks?: AuthHooks,
+): ApiClient {
   const configured = Boolean(baseUrl);
   const url = (workspaceId: string, path: string) =>
     `${baseUrl!.replace(/\/+$/, '')}/workspaces/${encodeURIComponent(workspaceId)}/${path}`;
 
+  async function doFetch(method: string, fullUrl: string, body: unknown, accessToken: string | null) {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+    return fetcher(fullUrl, {
+      method,
+      headers: Object.keys(headers).length ? headers : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  }
+
   async function send<T>(method: string, workspaceId: string, path: string, body?: unknown): Promise<DataBackendResult<T | null>> {
     if (!configured) return fail('backend_unconfigured', 'VITE_DATA_API_URL is not configured.');
+    const fullUrl = url(workspaceId, path);
     try {
-      const res = await fetcher(url(workspaceId, path), {
-        method,
-        headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
+      let res = await doFetch(method, fullUrl, body, authHooks?.getAccess() ?? null);
+      if (res.status === 401 && authHooks) {
+        const newAccess = await authHooks.onRefresh();
+        if (!newAccess) { authHooks.onAuthFailure(); return fail('unauthenticated', 'Session expired'); }
+        res = await doFetch(method, fullUrl, body, newAccess);
+        if (res.status === 401) { authHooks.onAuthFailure(); return fail('unauthenticated', 'Session expired'); }
+      }
       if (res.status === 404) return { ok: true, value: null };
       let payload: any = null;
       try { payload = await res.json(); } catch { /* tolerate empty */ }
       if (!res.ok) {
-        const code: DataBackendErrorCode = payload?.error?.code ?? (res.status === 401 || res.status === 403 ? 'permission_denied' : 'network_error');
+        const code: DataBackendErrorCode = payload?.error?.code ?? (res.status === 403 ? 'permission_denied' : 'network_error');
         return fail(code, payload?.error?.message ?? `Request failed with status ${res.status}.`);
       }
       return { ok: true, value: (payload && 'value' in payload ? payload.value : payload) as T };
