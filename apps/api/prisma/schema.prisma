@@ -70,11 +70,23 @@ model GenerationJob {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  // ③ orchestration 升级字段
+  runtimeMode    String?
+  agentId        String?
+  providerKind   String?
+  externalTaskId String?
+  externalRef    Json?
+  progress       Int?
+  currentStep    String?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   assets      Asset[]
   usageEvents UsageEvent[]
 
   @@index([workspaceId, status])
+  @@index([externalTaskId])
 }
 
 model Asset {
