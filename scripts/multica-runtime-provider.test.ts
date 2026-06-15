@@ -112,4 +112,37 @@ const degradedStatus = await degradedProvider.getRuntimeStatus();
 assert.equal(degradedStatus.health, 'degraded');
 assert.equal(degradedStatus.compatibilityWarning, 'runtime API unavailable');
 
+// listTasks 走后端注入的 listJobs(不再返回 [])
+{
+  const backendTasks = [{ id: 'job-1', title: 'T1', status: 'running', source: 'multica', createdAt: '', updatedAt: '' }];
+  const provider = createMulticaAgentRuntimeProvider({
+    mode: 'desktop_multica',
+    env: { multicaApiUrl: 'http://m', multicaWsUrl: 'ws://m/ws' },
+    apiClient: { listAgents: async () => [], listRuntimes: async () => [], createIssue: async () => ({ id: 'i1' }), cancelTask: async () => {} } as any,
+    listJobs: async () => backendTasks as any,
+  });
+  const tasks = await provider.listTasks();
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].id, 'job-1');
+}
+
+// subscribeToTask 连真实 WS:收到 message 转 AgentTaskEvent 回调
+{
+  const events: any[] = [];
+  let onMessage: ((e: { data: string }) => void) | null = null;
+  const fakeWs = { addEventListener: (t: string, cb: any) => { if (t === 'message') onMessage = cb; }, close() {} };
+  const provider = createMulticaAgentRuntimeProvider({
+    mode: 'desktop_multica',
+    env: { multicaApiUrl: 'http://m', multicaWsUrl: 'ws://m/ws' },
+    apiClient: { listAgents: async () => [], listRuntimes: async () => [], createIssue: async () => ({ id: 'i1' }), cancelTask: async () => {} } as any,
+    wsFactory: (url: string) => { assert.ok(url.includes('mt1')); return fakeWs as any; },
+  });
+  const unsub = provider.subscribeToTask('multica-task-mt1', (e) => events.push(e));
+  onMessage!({ data: JSON.stringify({ status: 'running', progress: 30, message: 'step' }) });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].status, 'running');
+  assert.equal(events[0].progress, 30);
+  unsub();
+}
+
 console.log('multica runtime provider passed');

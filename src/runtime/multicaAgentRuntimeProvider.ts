@@ -27,6 +27,10 @@ export interface MulticaRuntimeProviderOptions {
   env: RuntimeEnvironment;
   bridge?: DesktopAgentBridge | null;
   apiClient?: MulticaApiClient;
+  // ③: 列任务走后端真相源(注入,默认空)
+  listJobs?: () => Promise<AgentTask[]>;
+  // ③: 实时进度走直连 WS(注入工厂便于测试,默认用全局 WebSocket)
+  wsFactory?: (url: string) => { addEventListener: (type: string, cb: (e: { data: string }) => void) => void; close: () => void };
 }
 
 interface MulticaRuntimeLike {
@@ -159,9 +163,9 @@ export function createMulticaAgentRuntimeProvider(options: MulticaRuntimeProvide
       const agents = await client.listAgents(options.env.multicaWorkspaceId);
       return agents.map((agent) => mapMulticaAgentToAgentSummary(agent as MulticaAgentLike));
     },
-    async listTasks(params?: TaskQuery): Promise<AgentTask[]> {
-      if (params?.status || params?.agentId || params?.runtimeId) return [];
-      return [];
+    async listTasks(_params?: TaskQuery): Promise<AgentTask[]> {
+      // 列任务从后端 GenerationJob 真相源读(注入);未注入则空
+      return options.listJobs ? options.listJobs() : [];
     },
     async createTask(input: CreateAgentTaskInput): Promise<AgentTask> {
       if (!input.agentId) {
@@ -220,7 +224,36 @@ export function createMulticaAgentRuntimeProvider(options: MulticaRuntimeProvide
       const listeners = taskListeners.get(taskId) ?? new Set<(event: AgentTaskEvent) => void>();
       listeners.add(cb);
       taskListeners.set(taskId, listeners);
-      return () => listeners.delete(cb);
+
+      // 接真实 WS:有 wsUrl 时连直连流,逐行回调
+      let socket: { close: () => void } | null = null;
+      const wsBase = options.env.multicaWsUrl;
+      if (wsBase) {
+        const rawId = taskId.replace(/^multica-task-/, '');
+        const url = `${wsBase.replace(/\/+$/, '')}/tasks/${encodeURIComponent(rawId)}`;
+        const factory = options.wsFactory ?? ((u: string) => new WebSocket(u) as unknown as { addEventListener: (t: string, c: (e: { data: string }) => void) => void; close: () => void });
+        try {
+          const ws = factory(url);
+          ws.addEventListener('message', (e: { data: string }) => {
+            try {
+              const payload = JSON.parse(e.data) as { status?: string; progress?: number; message?: string };
+              cb({
+                taskId,
+                status: (payload.status as AgentTaskEvent['status']) ?? 'running',
+                progress: payload.progress,
+                message: payload.message,
+                occurredAt: new Date().toISOString(),
+              });
+            } catch { /* 忽略坏帧 */ }
+          });
+          socket = ws;
+        } catch { /* WS 不可用降级为仅本地回调 */ }
+      }
+
+      return () => {
+        listeners.delete(cb);
+        socket?.close();
+      };
     },
     subscribeToRuntime(cb: (status: RuntimeStatus) => void): Unsubscribe {
       runtimeListeners.add(cb);
