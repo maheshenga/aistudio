@@ -32,7 +32,7 @@ const isFinalTaskStatus = (status: AgentTask['status']) =>
 
 const mapRuntimeStatusToWorkspaceTask = (status: AgentTask['status']) => {
   switch (status) {
-    case 'queued':
+    case 'pending':
       return { column: 'auto_exec' as const, status: 'queued' as const };
     case 'running':
       return { column: 'auto_exec' as const, status: 'running' as const };

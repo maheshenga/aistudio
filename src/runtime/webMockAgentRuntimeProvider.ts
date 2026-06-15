@@ -104,7 +104,7 @@ export function createWebMockAgentRuntimeProvider(): AgentRuntimeProvider {
     const timers = [
       setTimeout(() => {
         const task = tasks.get(taskId);
-        if (!task || task.status !== 'queued') return;
+        if (!task || task.status !== 'pending') return;
         updateTaskStatus(taskId, { status: 'running', progress: 50 }, 'Mock task is running in Web SaaS mode.');
       }, 25),
       setTimeout(() => {
@@ -140,7 +140,7 @@ export function createWebMockAgentRuntimeProvider(): AgentRuntimeProvider {
         id: `mock-task-${Date.now()}`,
         title: input.title,
         description: input.description,
-        status: 'queued',
+        status: 'pending',
         agentId: input.agentId ?? MOCK_AGENTS[0]!.id,
         runtimeId: 'mock-web-runtime',
         progress: 0,

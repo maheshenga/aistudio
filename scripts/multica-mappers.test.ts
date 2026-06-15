@@ -30,11 +30,11 @@ assert.equal(agent.provider, 'codex');
 
 const issueTask = mapMulticaIssueToAgentTask(multicaIssueFixture);
 assert.equal(issueTask.externalRef?.issueId, 'issue_001');
-assert.equal(issueTask.status, 'queued');
+assert.equal(issueTask.status, 'pending');
 
-assert.equal(mapMulticaTaskStatus('queued'), 'queued');
-assert.equal(mapMulticaTaskStatus('dispatched'), 'queued');
-assert.equal(mapMulticaTaskStatus('waiting_local_directory'), 'queued');
+assert.equal(mapMulticaTaskStatus('queued'), 'pending');
+assert.equal(mapMulticaTaskStatus('dispatched'), 'pending');
+assert.equal(mapMulticaTaskStatus('waiting_local_directory'), 'pending');
 assert.equal(mapMulticaTaskStatus('running'), 'running');
 assert.equal(mapMulticaTaskStatus('completed'), 'succeeded');
 assert.equal(mapMulticaTaskStatus('failed'), 'failed');

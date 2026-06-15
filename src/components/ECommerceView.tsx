@@ -374,7 +374,7 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
     createGenerationJob({
       title: `Draft: ${productName || config.namePlaceholder}`,
       prompt: sellingPoints || config.textPlaceholder,
-      status: 'queued',
+      status: 'pending',
       providerKind: 'mock',
       runtimeMode: 'web',
       moduleId: moduleId as ModuleId,

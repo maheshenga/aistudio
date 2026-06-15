@@ -64,7 +64,7 @@ const task = await provider.createTask({
   priority: 'medium',
 });
 
-assert.equal(task.status, 'queued');
+assert.equal(task.status, 'pending');
 assert.equal(task.source, 'mock');
 assert.equal(readRuntimeAuditEvents()[0]?.action, 'agent_task_dispatched');
 

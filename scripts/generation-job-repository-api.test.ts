@@ -6,7 +6,7 @@ import { createMemoryStorage } from '../src/lib/data/dataBackend.ts';
 async function run() {
   const ctx = { workspaceId: 'ws1', storage: createMemoryStorage() };
   const client = createApiClient('http://api', async () =>
-    new Response(JSON.stringify({ value: [{ id: 'j1', workspaceId: 'ws1', title: 'Job', prompt: 'p', status: 'queued', providerKind: 'web_mock', runtimeMode: 'web', progress: 0, metadata: {}, createdAt: 1, updatedAt: 1 }] }),
+    new Response(JSON.stringify({ value: [{ id: 'j1', workspaceId: 'ws1', title: 'Job', prompt: 'p', status: 'pending', providerKind: 'web_mock', runtimeMode: 'web', progress: 0, metadata: {}, createdAt: 1, updatedAt: 1 }] }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }));
   __setGenerationJobApiClientForTest(client);
 

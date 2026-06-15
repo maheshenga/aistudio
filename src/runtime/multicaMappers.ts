@@ -124,7 +124,7 @@ export function mapMulticaTaskStatus(status: string): AgentTaskStatus {
     case 'queued':
     case 'dispatched':
     case 'waiting_local_directory':
-      return 'queued';
+      return 'pending';
     case 'running':
       return 'running';
     case 'completed':
@@ -144,7 +144,7 @@ export function mapMulticaIssueToAgentTask(issue: MulticaIssueLike): AgentTask {
     id: `multica-issue-${issue.id}`,
     title: issue.title,
     description: issue.description,
-    status: 'queued',
+    status: 'pending',
     agentId: issue.assignee_id,
     source: 'multica',
     externalRef: {

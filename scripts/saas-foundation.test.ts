@@ -1463,7 +1463,7 @@ const generationJob = createGenerationJob(
   {
     title: 'Generate hero image',
     prompt: 'Create a clean product hero image',
-    status: 'queued',
+    status: 'pending',
     providerKind: 'mock',
     runtimeMode: 'web',
     moduleId: 'image',
@@ -1513,7 +1513,7 @@ const retriedGenerationJob = retryGenerationJob(
 );
 assert.ok(retriedGenerationJob, 'retryGenerationJob should create a new retry attempt for a failed job');
 assert.notEqual(retriedGenerationJob?.id, failedGenerationJob?.id);
-assert.equal(retriedGenerationJob?.status, 'queued');
+assert.equal(retriedGenerationJob?.status, 'pending');
 assert.equal(retriedGenerationJob?.progress, 0);
 assert.equal(retriedGenerationJob?.metadata.retryOfJobId, failedGenerationJob?.id);
 assert.equal(retriedGenerationJob?.metadata.attempt, 2);
@@ -3450,7 +3450,7 @@ const runtimeBackedTask = createWorkspaceTask(
     runtimeMode: 'web',
     runtimeProviderKind: 'mock',
     runtimeTaskId: 'runtime-task-1',
-    runtimeStatus: 'queued',
+    runtimeStatus: 'pending',
     agentId: 'mock-global-agent',
     runtimeId: 'mock-web-runtime',
     externalRef: {
@@ -3466,7 +3466,7 @@ const runtimeBackedTask = createWorkspaceTask(
 assert.equal(runtimeBackedTask.runtimeMode, 'web');
 assert.equal(runtimeBackedTask.runtimeProviderKind, 'mock');
 assert.equal(runtimeBackedTask.runtimeTaskId, 'runtime-task-1');
-assert.equal(runtimeBackedTask.runtimeStatus, 'queued');
+assert.equal(runtimeBackedTask.runtimeStatus, 'pending');
 const runtimeUpdatedTask = updateWorkspaceTask(
   runtimeBackedTask.id,
   {

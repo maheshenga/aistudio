@@ -87,7 +87,7 @@ function getSortableTime(task: WorkspaceTask) {
 }
 
 function isRuntimeActive(task: WorkspaceTask) {
-  return task.runtimeStatus === 'queued' || task.runtimeStatus === 'running' || task.status === 'queued' || task.status === 'running';
+  return task.runtimeStatus === 'pending' || task.runtimeStatus === 'running' || task.status === 'queued' || task.status === 'running';
 }
 
 function getRuntimeBadge(task: WorkspaceTask) {

@@ -10,7 +10,7 @@ export type RuntimeHealth =
   | 'incompatible';
 
 export type AgentTaskStatus =
-  | 'queued'
+  | 'pending'
   | 'running'
   | 'succeeded'
   | 'failed'

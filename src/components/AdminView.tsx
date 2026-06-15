@@ -2543,7 +2543,7 @@ function AdminTasks() {
   };
 
   const handleRetryJob = (job: GenerationJob) => {
-    updateGenerationJob(job.id, { status: 'queued', progress: 0, error: undefined, completedAt: undefined }, jobContext);
+    updateGenerationJob(job.id, { status: 'pending', progress: 0, error: undefined, completedAt: undefined }, jobContext);
     logAuditEvent({
       action: 'generation_job_start',
       moduleId: 'admin' as ModuleId,

@@ -4,7 +4,7 @@ import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
 import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
-export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type GenerationJobStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 export interface GenerationJob {
   id: string;
@@ -56,7 +56,7 @@ function isCompletedStatus(status: GenerationJobStatus): boolean {
 
 function normalizeJob(job: GenerationJob, context: GenerationJobRepositoryContext): GenerationJob {
   const now = context.now ?? Date.now();
-  const status = job.status ?? 'queued';
+  const status = job.status ?? 'pending';
   return {
     ...job,
     id: String(job.id),
@@ -276,7 +276,7 @@ export function retryGenerationJob(id: string, context: GenerationJobRepositoryC
     {
       title: failedJob.title,
       prompt: failedJob.prompt,
-      status: 'queued',
+      status: 'pending',
       providerKind: failedJob.providerKind,
       runtimeMode: failedJob.runtimeMode,
       moduleId: failedJob.moduleId,
