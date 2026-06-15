@@ -1,5 +1,5 @@
 import { IsIn, IsObject, IsOptional, IsString, MinLength } from 'class-validator';
-const STATUSES = ['pending', 'running', 'succeeded', 'failed'] as const;
+const STATUSES = ['pending', 'running', 'succeeded', 'failed', 'cancelled'] as const;
 export class CreateJobDto {
   @IsString() @MinLength(1) type!: string;
   @IsOptional() @IsString() projectId?: string;

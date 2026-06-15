@@ -5,10 +5,11 @@ import { notFound, validationError } from '../common/errors';
 import { CreateJobDto, UpdateStatusDto, ListJobQuery } from './dto';
 
 const ALLOWED: Record<string, string[]> = {
-  pending: ['running', 'failed'],
-  running: ['succeeded', 'failed'],
+  pending: ['running', 'failed', 'cancelled'],
+  running: ['succeeded', 'failed', 'cancelled'],
   succeeded: [],
   failed: [],
+  cancelled: [],
 };
 
 @Injectable()
