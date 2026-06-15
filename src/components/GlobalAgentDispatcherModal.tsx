@@ -18,6 +18,8 @@ import { createGenerationJob, listGenerationJobs, updateGenerationJob } from '..
 import { createWorkspaceTask, updateWorkspaceTask } from '../lib/data/taskRepository';
 import { createWorkspaceUsageEvent, listWorkspaceUsageEvents, loadModuleUsage } from '../lib/data/usageRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { apiClient } from '../lib/data/apiClient';
+import { createOrchestrationService } from '../runtime/orchestrationService.ts';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { canDispatchAgent } from '../saas/permissions';
 import { BaseModal } from './ui/BaseModal';
@@ -56,6 +58,8 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
   const [isDispatching, setIsDispatching] = useState(false);
   const [dispatchResults, setDispatchResults] = useState<AgentTask[]>([]);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [localExecAcknowledged, setLocalExecAcknowledged] = useState(false);
+  const requiresLocalExecDisclosure = runtime.mode === 'desktop_multica';
 
   useEffect(() => {
     if (!isOpen) {
@@ -65,6 +69,7 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
       setDispatchResults([]);
       setRuntimeError(null);
       setIsDispatching(false);
+      setLocalExecAcknowledged(false);
       return;
     }
 
@@ -171,6 +176,12 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
           setAgents((prev) =>
             prev.map((agent) => (agent.id === id ? { ...agent, dispatchStatus: 'running', progress: 20 } : agent)),
           );
+          const orchestration = createOrchestrationService({
+            apiClient,
+            workspaceId: session.workspace.id,
+            getProvider: () => runtime,
+          });
+          let backendJobId: string | undefined;
           const task = await runtime.createTask({
             title: taskInput.trim().slice(0, 80),
             description: taskInput.trim(),
@@ -178,6 +189,22 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
             priority: 'medium',
             metadata: { source: 'global_agent_dispatcher' },
           });
+          if (apiClient.configured) {
+            try {
+              const dispatched = await orchestration.dispatchTask({
+                type: 'agent_dispatch',
+                input: { prompt: taskInput.trim() },
+                runtimeMode: runtime.mode,
+                title: task.title,
+                description: task.description ?? taskInput.trim(),
+                agentId: id,
+                providerKind: task.source,
+              });
+              backendJobId = dispatched.jobId;
+            } catch (e) {
+              console.error('backend orchestration dispatch failed; continuing with local mirror', e);
+            }
+          }
           const generationJob = createGenerationJob({
             title: task.title,
             prompt: task.description ?? taskInput.trim(),
@@ -191,6 +218,7 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
               source: 'global_agent_dispatcher',
               runtimeId: task.runtimeId,
               externalRef: task.externalRef,
+              backendJobId,
             },
           }, billingContext);
           const initialTaskState = mapRuntimeStatusToWorkspaceTask(task.status);
@@ -214,6 +242,7 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
               source: 'global_agent_dispatcher',
               generationJobId: generationJob.id,
               prompt: task.description ?? taskInput.trim(),
+              backendJobId,
             },
           }, billingContext);
           createWorkspaceUsageEvent({
@@ -450,11 +479,25 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
               {runtimeError}
             </div>
           )}
+          {requiresLocalExecDisclosure && (
+            <label className="mb-3 flex items-start gap-2 text-xs font-medium text-[var(--text-muted)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={localExecAcknowledged}
+                onChange={(e) => setLocalExecAcknowledged(e.target.checked)}
+                disabled={isDispatching}
+                className="mt-0.5"
+              />
+              <span>
+                本地执行模式（{runtime.mode}）：任务将在你的桌面 Multica 运行时执行，产物与日志通过后端对账回传。勾选即确认知悉。
+              </span>
+            </label>
+          )}
           <button
             onClick={() => void startDispatch()}
-            disabled={isDispatching || selectedAgents.length === 0 || !taskInput.trim() || !canDispatch}
+            disabled={isDispatching || selectedAgents.length === 0 || !taskInput.trim() || !canDispatch || (requiresLocalExecDisclosure && !localExecAcknowledged)}
             className={`w-full py-4 rounded-[var(--radius-lg)] flex items-center justify-center font-bold text-[15px] transition-all shadow-sm ${
-              isDispatching || selectedAgents.length === 0 || !taskInput.trim() || !canDispatch
+              isDispatching || selectedAgents.length === 0 || !taskInput.trim() || !canDispatch || (requiresLocalExecDisclosure && !localExecAcknowledged)
                 ? 'bg-[var(--bg-panel)] text-[var(--text-muted)] border border-[var(--border-color)] cursor-not-allowed'
                 : 'bg-gray-900 text-white hover:bg-black hover:shadow-md'
             }`}
