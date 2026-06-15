@@ -594,7 +594,7 @@ function AdminDashboard({ setActiveTab }: { setActiveTab: (tab: string) => void 
         pending: event.decision === 'pending_review',
       })),
     ...jobs
-      .filter((job) => job.status === 'failed' || job.status === 'running' || job.status === 'queued')
+      .filter((job) => job.status === 'failed' || job.status === 'running' || job.status === 'pending')
       .map((job) => ({
         id: job.id,
         type: job.title,
@@ -2593,7 +2593,7 @@ function AdminTasks() {
                  </div>
                  
                  <div className="flex-1 px-8">
-                    {job.status === 'queued' || job.status === 'running' ? (
+                    {job.status === 'pending' || job.status === 'running' ? (
                       <div className="w-full bg-gray-100 rounded-full h-2">
                         <div className="bg-[var(--color-primary)] h-2 rounded-full" style={{ width: `${job.progress}%` }}></div>
                       </div>
@@ -2605,7 +2605,7 @@ function AdminTasks() {
                  </div>
 
                  <div className="w-24 text-right">
-                   {job.status === 'queued' || job.status === 'running' ? (
+                   {job.status === 'pending' || job.status === 'running' ? (
                      <button onClick={() => handleCancelJob(job)} className="text-red-500 text-[13px] font-bold hover:underline">终止任务</button>
                    ) : job.status === 'failed' || job.status === 'cancelled' ? (
                      <button onClick={() => handleRetryJob(job)} className="text-[var(--color-primary)] text-[13px] font-bold hover:underline">重试</button>

@@ -201,7 +201,7 @@ export function BillingView() {
       cost: estimateGenerationJobCredits(job),
       status: job.status === 'failed' || job.status === 'cancelled'
         ? '失败退还'
-        : job.status === 'queued' || job.status === 'running'
+        : job.status === 'pending' || job.status === 'running'
           ? '处理中'
           : '成功',
     }))
