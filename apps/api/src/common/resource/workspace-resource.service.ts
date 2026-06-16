@@ -22,7 +22,7 @@ export abstract class WorkspaceResourceService<T extends { id: string }> {
     const order = query.order ?? 'desc';
     const rows = (await this.delegate.findMany({
       where: this.buildWhere(workspaceId, query),
-      orderBy: { createdAt: order },
+      orderBy: [{ createdAt: order }, { id: order }],
       take: limit + 1,
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     })) as T[];
