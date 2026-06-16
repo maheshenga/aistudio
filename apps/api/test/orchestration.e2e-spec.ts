@@ -39,10 +39,13 @@ describe('Orchestration (e2e)', () => {
     const job = (await auth(request(app.getHttpServer())
       .post(`/workspaces/${workspaceId}/orchestration/dispatch`)
       .send({ type: 'image', input: {}, runtimeMode: 'desktop_multica' }), accessToken).expect(201)).body.value.job;
-    await auth(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/orchestration/jobs/${job.id}/cancel`), accessToken).expect(201);
+    const cancelled = await auth(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/orchestration/jobs/${job.id}/cancel`), accessToken).expect(201);
+    expect(cancelled.body.value.job.status).toBe('cancelled');
+    expect(cancelled.body.value.job.finishedAt).not.toBeNull();
+    const persisted = await prisma.generationJob.findUnique({ where: { id: job.id } });
+    expect(persisted!.status).toBe('cancelled');
     const audits = await auth(request(app.getHttpServer()).get(`/workspaces/${workspaceId}/audit-logs?action=task_cancelled`), accessToken).expect(200);
     expect(audits.body.value).toHaveLength(1);
-    await prisma.generationJob.update({ where: { id: job.id }, data: { status: 'succeeded' } });
     const bad = await auth(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/orchestration/jobs/${job.id}/cancel`), accessToken).expect(400);
     expect(bad.body.error.code).toBe('validation_error');
   });

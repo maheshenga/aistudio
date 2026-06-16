@@ -92,12 +92,12 @@ describe('Reconciliation (e2e)', () => {
     expect(after!.error).toBe('dispatch not confirmed');
   });
 
-  it('cancel race: intent cancel but Multica reports succeeded → lands succeeded', async () => {
-    const { job } = await seedJob({ status: 'running' });
+  it('cancel intent protected: cancelled job is terminal and not overwritten even if Multica reports succeeded', async () => {
+    const { job } = await seedJob({ status: 'cancelled' });
     fake.snap = { status: 'succeeded', progress: 100, raw: {} };
     fake.artifacts = [];
     await app.get(ReconciliationService).reconcileOnce();
     const after = await prisma.generationJob.findUnique({ where: { id: job.id } });
-    expect(after!.status).toBe('succeeded');
+    expect(after!.status).toBe('cancelled');
   });
 });

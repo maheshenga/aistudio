@@ -55,8 +55,12 @@ export class OrchestrationService {
   async cancel(workspaceId: string, id: string, actor: Actor) {
     const job = await this.getJob(workspaceId, id);
     if (TERMINAL.has(job.status)) throw validationError('Job already in a terminal state');
-    await this.audit(workspaceId, 'task_cancelled', job, actor, {});
-    return job;
+    const updated = await this.prisma.generationJob.update({
+      where: { id },
+      data: { status: 'cancelled', finishedAt: new Date() },
+    });
+    await this.audit(workspaceId, 'task_cancelled', updated, actor, {});
+    return updated;
   }
 
   async retry(workspaceId: string, id: string, actor: Actor) {
