@@ -1,14 +1,16 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
-import type { AgentRuntimeProvider } from './agentRuntimeTypes.ts';
+import type { AgentRuntimeProvider, AgentTask } from './agentRuntimeTypes.ts';
 import { detectDesktopAgentBridge } from './desktopAgentBridge.ts';
 import { createMulticaAgentRuntimeProvider } from './multicaAgentRuntimeProvider.ts';
+import { mapGenerationJobToAgentTask } from './multicaMappers.ts';
 import {
   readRuntimeEnvironment,
   readWorkspaceRuntimeSettings,
   resolveRuntimeMode,
 } from './runtimeMode.ts';
 import { createWebMockAgentRuntimeProvider } from './webMockAgentRuntimeProvider.ts';
+import { hydrateGenerationJobs, listGenerationJobs } from '../lib/data/generationJobRepository.ts';
 import { useSaasSession } from '../saas/SaasAuthContext';
 
 const AgentRuntimeContext = createContext<AgentRuntimeProvider | null>(null);
@@ -22,10 +24,17 @@ function createDefaultAgentRuntimeProvider(context: { workspaceId: string; userI
   const bridge = detectDesktopAgentBridge();
   const mode = resolveRuntimeMode(env, runtimeSettings, bridge);
   if (mode === 'web') return createWebMockAgentRuntimeProvider();
+  // 列任务走后端 GenerationJob 真相源(单任务实时进度仍走直连 WS)
+  const listJobs = async (): Promise<AgentTask[]> => {
+    await hydrateGenerationJobs({ workspaceId: context.workspaceId, userId: context.userId });
+    return listGenerationJobs({ workspaceId: context.workspaceId, userId: context.userId })
+      .map(mapGenerationJobToAgentTask);
+  };
   return createMulticaAgentRuntimeProvider({
     mode,
     env,
     bridge,
+    listJobs,
   });
 }
 

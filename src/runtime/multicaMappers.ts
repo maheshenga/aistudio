@@ -178,3 +178,39 @@ export function mapMulticaTaskToAgentTask(task: MulticaTaskLike, issue?: Multica
     error: task.error ?? undefined,
   };
 }
+
+export interface GenerationJobLike {
+  id: string;
+  title?: string;
+  prompt?: string;
+  status: AgentTaskStatus;
+  agentId?: string;
+  runtimeId?: string;
+  progress?: number;
+  metadata?: Record<string, unknown>;
+  createdAt?: number | string;
+  updatedAt?: number | string;
+  error?: string;
+}
+
+// 把后端 GenerationJob 真相源映射为 AgentTask,供 multica provider 的 listTasks 使用。
+// externalRef 优先从 metadata.externalRef 取(派发时回绑的 taskId/issueId),保证与单任务订阅一致。
+export function mapGenerationJobToAgentTask(job: GenerationJobLike): AgentTask {
+  const toIso = (value: number | string | undefined): string =>
+    typeof value === 'number' ? new Date(value).toISOString() : value ?? new Date().toISOString();
+  const externalRef = job.metadata?.externalRef as AgentTask['externalRef'] | undefined;
+  return {
+    id: job.id,
+    title: job.title ?? job.prompt ?? `Job ${job.id}`,
+    description: job.prompt,
+    status: job.status,
+    agentId: job.agentId,
+    runtimeId: job.runtimeId,
+    progress: job.progress,
+    source: 'multica',
+    externalRef: externalRef?.system === 'multica' ? externalRef : undefined,
+    createdAt: toIso(job.createdAt),
+    updatedAt: toIso(job.updatedAt),
+    error: job.error,
+  };
+}
