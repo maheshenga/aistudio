@@ -24,6 +24,12 @@ model Workspace {
   auditLogs      AuditLog[]
   creditLedger   CreditLedger[]
   customers      Customer[]
+  campaigns        Campaign[]
+  announcements    Announcement[]
+  agencyPartners   AgencyPartner[]
+  riskEvents       RiskEvent[]
+  mediaAccounts    MediaAccount[]
+  keywordLibraries KeywordLibrary[]
 }
 
 model Member {
@@ -211,4 +217,113 @@ model Customer {
   @@index([workspaceId, createdAt])
   @@index([workspaceId, lifecycleStage])
   @@index([workspaceId, channel])
+}
+
+model Campaign {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  userId          String?
+  name            String
+  channel         String   @default("other")
+  status          String   @default("draft")
+  moduleId        String?
+  landingUrl      String?
+  linkedAssetIds  String[]
+  metrics         Json     @default("{}")
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status])
+}
+
+model Announcement {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  title        String
+  channel      String
+  status       String    @default("active")
+  publishedAt  DateTime?
+  metadata     Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
+}
+
+model AgencyPartner {
+  id                   String   @id @default(cuid())
+  workspaceId          String
+  name                 String
+  level                String
+  invitedUsers         Int      @default(0)
+  totalCommissionCents Int      @default(0)
+  commissionRate       Float    @default(0)
+  payoutStatus         String   @default("none")
+  status               String   @default("active")
+  metadata             Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, payoutStatus])
+}
+
+model RiskEvent {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  action         String
+  contentSummary String
+  rule           String
+  decision       String
+  severity       String
+  occurredAt     DateTime  @default(now())
+  reviewedAt     DateTime?
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, decision])
+  @@index([workspaceId, severity])
+}
+
+model MediaAccount {
+  id                String   @id @default(cuid())
+  workspaceId       String
+  platformName      String
+  status            String   @default("needs_config")
+  connectedAccounts Int      @default(0)
+  credentialRef     String?
+  clientIdLast4     String?
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status])
+}
+
+model KeywordLibrary {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  userId       String?
+  ownerId      String?
+  name         String
+  description  String    @default("")
+  channel      String    @default("")
+  sourceText   String    @default("")
+  moduleId     String    @default("copywriting_keywords")
+  status       String    @default("active")
+  tags         String[]
+  keywords     String[]
+  blockedTerms String[]
+  archivedAt   DateTime?
+  metadata     Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status])
 }
