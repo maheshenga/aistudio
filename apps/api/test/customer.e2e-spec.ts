@@ -72,4 +72,30 @@ describe('Customer resource (e2e)', () => {
     await auth(a2.accessToken)(request(app.getHttpServer())
       .get(`/workspaces/${a1.workspaceId}/customers`)).expect(403);
   });
+
+  it('buildWhere filter: lifecycleStage and channel', async () => {
+    const { accessToken, workspaceId } = await registerUser(app, 'flt@test.dev');
+    const a = auth(accessToken);
+    await a(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/customers`)
+      .send({ name: 'A', lifecycleStage: 'qualified', channel: 'web' })).expect(201);
+    await a(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/customers`)
+      .send({ name: 'B', lifecycleStage: 'new_lead', channel: 'manual' })).expect(201);
+    const q = await a(request(app.getHttpServer())
+      .get(`/workspaces/${workspaceId}/customers?lifecycleStage=qualified`)).expect(200);
+    expect(q.body.value.items).toHaveLength(1);
+    expect(q.body.value.items[0].name).toBe('A');
+  });
+
+  it('lead merge: same (name, company) updates not duplicates', async () => {
+    const { accessToken, workspaceId } = await registerUser(app, 'lead@test.dev');
+    const a = auth(accessToken);
+    const first = await a(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/customers/lead`)
+      .send({ name: 'Lead', company: 'Co', tags: ['src_a'] })).expect(201);
+    const second = await a(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/customers/lead`)
+      .send({ name: 'Lead', company: 'Co', tags: ['src_b'] })).expect(201);
+    expect(second.body.value.id).toBe(first.body.value.id);
+    const listed = await a(request(app.getHttpServer()).get(`/workspaces/${workspaceId}/customers`)).expect(200);
+    expect(listed.body.value.items).toHaveLength(1);
+    expect(listed.body.value.items[0].tags.sort()).toEqual(['marketing_lead', 'src_a', 'src_b']);
+  });
 });
