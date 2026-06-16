@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { MULTICA_SERVER_CLIENT, type MulticaServerClient } from './multica-server-client';
 import { generationCredits } from '../billing/credit-cost';
+import { CreditService } from '../billing/credit.service';
 
 const ORPHAN_PENDING_TIMEOUT_MS = Number(process.env.ORCHESTRATION_ORPHAN_TIMEOUT_MS ?? 15 * 60 * 1000);
 
@@ -13,6 +14,7 @@ export class ReconciliationService {
 
   constructor(
     private prisma: PrismaService,
+    private credit: CreditService,
     @Optional() @Inject(MULTICA_SERVER_CLIENT) private client: MulticaServerClient | null,
   ) {}
 
@@ -24,10 +26,20 @@ export class ReconciliationService {
   }
 
   async reconcileOnce(now: Date = new Date()): Promise<void> {
-    await this.prisma.generationJob.updateMany({
+    const orphans = await this.prisma.generationJob.findMany({
       where: { status: 'pending', externalTaskId: null, createdAt: { lt: new Date(now.getTime() - ORPHAN_PENDING_TIMEOUT_MS) } },
-      data: { status: 'failed', error: 'dispatch not confirmed', finishedAt: now },
     });
+    for (const orphan of orphans) {
+      await this.prisma.$transaction(async (tx) => {
+        const fresh = await tx.generationJob.findUnique({ where: { id: orphan.id } });
+        if (!fresh || fresh.status !== 'pending') return;
+        await tx.generationJob.update({
+          where: { id: orphan.id },
+          data: { status: 'failed', error: 'dispatch not confirmed', finishedAt: now },
+        });
+        await this.credit.refund(tx, orphan.workspaceId, orphan.id, generationCredits(orphan));
+      });
+    }
 
     if (!this.client) return;
 
@@ -76,6 +88,12 @@ export class ReconciliationService {
         where: { id: job.id },
         data: { status: terminal, progress: terminal === 'succeeded' ? 100 : undefined, finishedAt: now, startedAt: fresh.startedAt ?? now },
       });
+
+      if (terminal === 'succeeded') {
+        await this.credit.capture(tx, job.workspaceId, job.id);
+      } else {
+        await this.credit.refund(tx, job.workspaceId, job.id, generationCredits(job));
+      }
 
       if (terminal === 'succeeded') {
         for (const [idx, art] of artifacts.entries()) {

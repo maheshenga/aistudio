@@ -6,6 +6,7 @@ import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter
 import { ValidationPipe } from '@nestjs/common';
 import { resetDb, seedUserWithMember } from './helpers';
 import { ReconciliationService } from '../src/orchestration/reconciliation.service';
+import { CreditService } from '../src/billing/credit.service';
 import { MULTICA_SERVER_CLIENT, type MulticaServerClient, type MulticaTaskSnapshot, type MulticaArtifact } from '../src/orchestration/multica-server-client';
 
 class FakeClient implements MulticaServerClient {
@@ -100,5 +101,29 @@ describe('Reconciliation (e2e)', () => {
     await app.get(ReconciliationService).reconcileOnce();
     const after = await prisma.generationJob.findUnique({ where: { id: job.id } });
     expect(after!.status).toBe('cancelled');
+  });
+
+  it('finalize succeeded → capture (delta 0); failed → refund restores balance', async () => {
+    const credit = app.get(CreditService);
+    // succeeded path: hold 1, then capture (delta 0) leaves balance reduced by hold
+    const s = await seedJob({ status: 'pending' });
+    await credit.getBalance(s.workspaceId); // 触发 monthly grant (free=100)
+    await prisma.$transaction((tx) => credit.hold(tx, s.workspaceId, s.job.id, 1));
+    fake.snap = { status: 'succeeded', progress: 100, raw: {} };
+    fake.artifacts = [];
+    await app.get(ReconciliationService).reconcileOnce();
+    const capLedger = await prisma.creditLedger.findFirst({ where: { workspaceId: s.workspaceId, refId: s.job.id, reason: 'capture' } });
+    expect(capLedger).not.toBeNull();
+    expect(capLedger!.delta).toBe(0);
+
+    // failed path: hold 1, finalize failed → refund restores balance
+    const f = await seedJob({ status: 'pending' });
+    await credit.getBalance(f.workspaceId);
+    const balBefore = (await credit.getBalance(f.workspaceId)).balance;
+    await prisma.$transaction((tx) => credit.hold(tx, f.workspaceId, f.job.id, 1));
+    fake.snap = { status: 'failed', progress: 0, raw: {} };
+    await app.get(ReconciliationService).reconcileOnce();
+    const balAfter = (await credit.getBalance(f.workspaceId)).balance;
+    expect(balAfter).toBe(balBefore);
   });
 });

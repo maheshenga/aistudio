@@ -1,4 +1,5 @@
 import { INestApplication } from '@nestjs/common';
+import * as request from 'supertest';
 import { bootstrapTestApp, resetDb, registerUser } from './helpers';
 import { PrismaService } from '../src/common/prisma/prisma.service';
 import { CreditService } from '../src/billing/credit.service';
@@ -93,5 +94,30 @@ describe('CreditService (e2e)', () => {
     expect(caps).toHaveLength(1);
     expect(caps[0].delta).toBe(0);
     expect((await credit.getBalance(ws)).balance).toBe(95);
+  });
+
+  it('grant endpoint: owner can grant, non-member 403, idempotent', async () => {
+    const { accessToken, workspaceId } = await registerUser(app, 'g1@test.dev');
+    const authReq = (r: any) => r.set('Authorization', `Bearer ${accessToken}`);
+    await authReq(request(app.getHttpServer()).get(`/workspaces/${workspaceId}/credits/balance`)).expect(200);
+    const res = await authReq(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/credits/grant`)
+      .send({ amount: 200, reason: 'recharge', idempotencyKey: 'pay:xyz' })).expect(201);
+    expect(res.body.value.balance).toBe(300);
+    await authReq(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/credits/grant`)
+      .send({ amount: 200, reason: 'recharge', idempotencyKey: 'pay:xyz' })).expect(201);
+    const bal = await authReq(request(app.getHttpServer()).get(`/workspaces/${workspaceId}/credits/balance`)).expect(200);
+    expect(bal.body.value.balance).toBe(300);
+    const other = await registerUser(app, 'g2@test.dev');
+    await request(app.getHttpServer()).post(`/workspaces/${workspaceId}/credits/grant`)
+      .set('Authorization', `Bearer ${other.accessToken}`).send({ amount: 1, reason: 'recharge' }).expect(403);
+  });
+
+  it('ledger endpoint lists entries for members', async () => {
+    const { accessToken, workspaceId } = await registerUser(app, 'l1@test.dev');
+    const authReq = (r: any) => r.set('Authorization', `Bearer ${accessToken}`);
+    await authReq(request(app.getHttpServer()).get(`/workspaces/${workspaceId}/credits/balance`)).expect(200);
+    const res = await authReq(request(app.getHttpServer()).get(`/workspaces/${workspaceId}/credits/ledger`)).expect(200);
+    expect(Array.isArray(res.body.value)).toBe(true);
+    expect(res.body.value.some((e: any) => e.reason === 'monthly_grant')).toBe(true);
   });
 });
