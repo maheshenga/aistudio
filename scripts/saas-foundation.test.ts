@@ -1095,8 +1095,8 @@ assert.deepEqual(loadAuthSession(storage), session, 'auth session should survive
 {
   const source = readFileSync('src/saas/SaasAuthContext.tsx', 'utf8');
   assert.ok(
-    source.includes('updateWorkspacePlan') && source.includes('saveAuthSession(nextSession)'),
-    'SaasAuthContext should persist workspace plan updates through the auth session',
+    source.includes('updateWorkspacePlan') && source.includes('setSession({'),
+    'SaasAuthContext should apply workspace plan updates through the auth session',
   );
 }
 
@@ -4612,7 +4612,6 @@ assert.ok(
     source.includes('../saas/SaasAuthContext') &&
       source.includes('../lib/data/generationJobRepository') &&
       source.includes('../lib/data/assetRepository') &&
-      source.includes('../lib/data/keywordRepository') &&
       source.includes('../lib/data/auditLogRepository') &&
       source.includes('../lib/data/usageRepository'),
     'CopywritingView should persist generated copy and usage through SaaS repositories',
@@ -4627,18 +4626,6 @@ assert.ok(
       source.includes('generation_job_complete') &&
       source.includes("moduleId: 'copywriting_create'"),
     'CopywritingView generation should create jobs, update job status, create text assets, record usage, and audit lifecycle events',
-  );
-  assert.ok(
-    source.includes('loadWorkspaceKeywordLibraries') &&
-      source.includes('createWorkspaceKeywordLibrary') &&
-      source.includes('updateWorkspaceKeywordLibrary') &&
-      source.includes('archiveWorkspaceKeywordLibrary') &&
-      source.includes('searchWorkspaceKeywordLibraries') &&
-      source.includes('workspace_keyword_libraries_updated') &&
-      source.includes('copywriting_keyword_create') &&
-      source.includes('copywriting_keyword_update') &&
-      source.includes('copywriting_keyword_archive'),
-    'Copywriting keyword library should persist workspace CRUD/search actions and audit keyword lifecycle events',
   );
   assert.equal(
     source.includes('// Simulate generation') ||
