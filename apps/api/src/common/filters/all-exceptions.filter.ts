@@ -8,9 +8,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
     const res = host.switchToHttp().getResponse();
     let status = 500; let code: ErrorCode = 'unknown_error'; let message = 'Internal server error';
+    let metadata: Record<string, unknown> | undefined;
 
     if (exception instanceof DomainError) {
       status = exception.status; code = exception.code; message = exception.message;
+      metadata = exception.metadata;
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const r = exception.getResponse() as any;
@@ -24,6 +26,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     if (status >= 500) this.logger.error(exception instanceof Error ? exception.stack : String(exception));
-    res.status(status).json({ error: { code, message } });
+    res.status(status).json({ error: { code, message, ...(metadata ? { metadata } : {}) } });
   }
 }
