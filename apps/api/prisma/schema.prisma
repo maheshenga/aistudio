@@ -23,6 +23,7 @@ model Workspace {
   usageEvents    UsageEvent[]
   auditLogs      AuditLog[]
   creditLedger   CreditLedger[]
+  customers      Customer[]
 }
 
 model Member {
@@ -185,4 +186,29 @@ model CreditLedger {
   @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId, createdAt])
   @@index([workspaceId, reason])
+}
+
+model Customer {
+  id                String   @id @default(cuid())
+  workspaceId       String
+  userId            String?
+  name              String
+  company           String?
+  role              String?
+  channel           String   @default("manual")
+  lifecycleStage    String   @default("new_lead")
+  ownerId           String?
+  tags              String[]
+  source            Json?
+  notes             String?
+  lastInteractionAt DateTime @default(now())
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, lifecycleStage])
+  @@index([workspaceId, channel])
 }
