@@ -3,16 +3,9 @@ import { Interval } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { MULTICA_SERVER_CLIENT, type MulticaServerClient } from './multica-server-client';
+import { generationCredits } from '../billing/credit-cost';
 
 const ORPHAN_PENDING_TIMEOUT_MS = Number(process.env.ORCHESTRATION_ORPHAN_TIMEOUT_MS ?? 15 * 60 * 1000);
-
-// 与前端成本模型对齐(src/lib/data/billingRepository.ts estimateGenerationJobCredits):
-// desktop_multica 本地算力最低=1;multica 云端=3;其它(如 codex 云)=5。
-function generationCredits(job: { runtimeMode: string | null; providerKind: string | null }): number {
-  if (job.runtimeMode === 'desktop_multica') return 1;
-  if (job.providerKind === 'multica') return 3;
-  return 5;
-}
 
 @Injectable()
 export class ReconciliationService {
