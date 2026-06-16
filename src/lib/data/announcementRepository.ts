@@ -1,5 +1,6 @@
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceAnnouncementStatus = 'draft' | 'active' | 'scheduled' | 'archived';
 
@@ -46,7 +47,9 @@ function normalizeText(value: unknown, fallback: string): string {
 }
 
 function normalizeTimestamp(value: unknown, fallback: number): number {
-  const numericValue = Number(value);
+  const numericValue = typeof value === 'string' && !/^\d+$/.test(value.trim())
+    ? Date.parse(value)
+    : Number(value);
   return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : fallback;
 }
 
@@ -103,6 +106,7 @@ function writeAnnouncements(
 }
 
 export function loadWorkspaceAnnouncements(context: AnnouncementRepositoryContext): WorkspaceAnnouncement[] {
+  if (announcementApiClient.configured) return announcementCache.get(context.workspaceId) ?? [];
   return readAnnouncements(context);
 }
 
@@ -127,6 +131,15 @@ export function createWorkspaceAnnouncement(
   );
 
   writeAnnouncements([announcement, ...readAnnouncements(context)], context);
+  if (announcementApiClient.configured) {
+    announcementCache.set(context.workspaceId, sortAnnouncements([announcement, ...(announcementCache.get(context.workspaceId) ?? [])]));
+    void announcementApiClient.post(context.workspaceId, 'announcements', {
+      id: announcement.id, title: announcement.title, channel: announcement.channel, status: announcement.status,
+      publishedAt: announcement.publishedAt > 0 ? new Date(announcement.publishedAt).toISOString() : undefined,
+      metadata: announcement.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceAnnouncement write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceAnnouncement write-through failed', e));
+  }
   return announcement;
 }
 
@@ -154,5 +167,32 @@ export function updateWorkspaceAnnouncement(
   });
 
   writeAnnouncements(updatedAnnouncements, context);
+  if (announcementApiClient.configured && updatedAnnouncement) {
+    const u: WorkspaceAnnouncement = updatedAnnouncement;
+    announcementCache.set(context.workspaceId, sortAnnouncements((announcementCache.get(context.workspaceId) ?? []).map((a) => (a.id === u.id ? u : a))));
+    void announcementApiClient.patch(context.workspaceId, `announcements/${u.id}`, {
+      title: u.title, channel: u.channel, status: u.status,
+      publishedAt: u.publishedAt > 0 ? new Date(u.publishedAt).toISOString() : undefined,
+      metadata: u.metadata,
+    }).then((r) => { if (!r.ok) console.error('updateWorkspaceAnnouncement write-through failed', r); })
+      .catch((e) => console.error('updateWorkspaceAnnouncement write-through failed', e));
+  }
   return updatedAnnouncement;
+}
+
+let announcementApiClient: ApiClient = defaultApiClient;
+export function __setAnnouncementApiClientForTest(client: ApiClient): void { announcementApiClient = client; }
+
+const announcementCache = new Map<string, WorkspaceAnnouncement[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceAnnouncements(context: AnnouncementRepositoryContext): Promise<void> {
+  if (!announcementApiClient.configured) return;
+  const res = await announcementApiClient.get<{ items: WorkspaceAnnouncement[]; nextCursor: string | null }>(
+    context.workspaceId, 'announcements');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    announcementCache.set(context.workspaceId, sortAnnouncements(res.value.items.map((a) => normalizeAnnouncement(a, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('workspace_announcements_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
