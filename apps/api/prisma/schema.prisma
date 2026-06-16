@@ -12,6 +12,7 @@ model Workspace {
   name      String
   slug      String?
   plan      String   @default("free")
+  creditBalance Int @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -21,6 +22,7 @@ model Workspace {
   generationJobs GenerationJob[]
   usageEvents    UsageEvent[]
   auditLogs      AuditLog[]
+  creditLedger   CreditLedger[]
 }
 
 model Member {
@@ -164,4 +166,23 @@ model RefreshToken {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@index([userId])
+}
+
+model CreditLedger {
+  id             String   @id @default(cuid())
+  workspaceId    String
+  delta          Int
+  reason         String
+  refType        String?
+  refId          String?
+  idempotencyKey String?
+  balanceAfter   Int
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, reason])
 }
