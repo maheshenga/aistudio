@@ -75,4 +75,40 @@ describe('Orchestration (e2e)', () => {
       .post(`/workspaces/${a.workspaceId}/orchestration/dispatch`)
       .send({ type: 'image', input: {}, runtimeMode: 'web' }).expect(401);
   });
+
+  it('dispatch holds credits; insufficient balance → 402 and no job created', async () => {
+    const { workspaceId, accessToken } = await registerUser(app, 'orc6@test.dev');
+    const dispatchOnce = (rt: string) => auth(request(app.getHttpServer())
+      .post(`/workspaces/${workspaceId}/orchestration/dispatch`)
+      .send({ type: 'image', input: { p: 1 }, runtimeMode: rt, providerKind: 'codex' }), accessToken);
+
+    const ok = await dispatchOnce('web').expect(201);
+    expect(ok.body.value.job.status).toBe('pending');
+    const bal = await auth(request(app.getHttpServer()).get(`/workspaces/${workspaceId}/credits/balance`), accessToken).expect(200);
+    expect(bal.body.value.balance).toBe(95);
+
+    for (let i = 0; i < 19; i++) await dispatchOnce('web').expect(201);
+    const drained = await auth(request(app.getHttpServer()).get(`/workspaces/${workspaceId}/credits/balance`), accessToken).expect(200);
+    expect(drained.body.value.balance).toBe(0);
+
+    const jobsBefore = await prisma.generationJob.count({ where: { workspaceId } });
+    const denied = await dispatchOnce('web').expect(402);
+    expect(denied.body.error.code).toBe('insufficient_credits');
+    expect(denied.body.error.metadata).toMatchObject({ required: 5, balance: 0 });
+    const jobsAfter = await prisma.generationJob.count({ where: { workspaceId } });
+    expect(jobsAfter).toBe(jobsBefore);
+  });
+
+  it('cancel refunds the held credits', async () => {
+    const { workspaceId, accessToken } = await registerUser(app, 'orc7@test.dev');
+    const d = await auth(request(app.getHttpServer())
+      .post(`/workspaces/${workspaceId}/orchestration/dispatch`)
+      .send({ type: 'image', input: { p: 1 }, runtimeMode: 'web', providerKind: 'codex' }), accessToken).expect(201);
+    const jobId = d.body.value.job.id;
+    const afterHold = await auth(request(app.getHttpServer()).get(`/workspaces/${workspaceId}/credits/balance`), accessToken).expect(200);
+    expect(afterHold.body.value.balance).toBe(95);
+    await auth(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/orchestration/jobs/${jobId}/cancel`), accessToken).expect(201);
+    const afterCancel = await auth(request(app.getHttpServer()).get(`/workspaces/${workspaceId}/credits/balance`), accessToken).expect(200);
+    expect(afterCancel.body.value.balance).toBe(100);
+  });
 });

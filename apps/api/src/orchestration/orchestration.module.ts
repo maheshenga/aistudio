@@ -3,8 +3,10 @@ import { OrchestrationController } from './orchestration.controller';
 import { OrchestrationService } from './orchestration.service';
 import { ReconciliationService } from './reconciliation.service';
 import { MULTICA_SERVER_CLIENT, createMulticaServerClient } from './multica-server-client';
+import { BillingModule } from '../billing/billing.module';
 
 @Module({
+  imports: [BillingModule],
   controllers: [OrchestrationController],
   providers: [
     OrchestrationService,
