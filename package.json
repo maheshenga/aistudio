@@ -16,7 +16,7 @@
     "test:workspace-state": "tsx scripts/workspace-state.test.ts",
     "test:launch-readiness": "tsx scripts/launch-readiness.test.ts",
     "test:browser-smoke": "tsx scripts/browser-smoke.test.ts",
-    "test:p0-specialized": "npm run test:product-registry && npm run test:data-backend && npm run test:workspace-state && npm run test:runtime-contract && npm run test:desktop-bridge && npm run test:multica-mappers && npm run test:multica-runtime-provider && npm run test:web-runtime-provider && npm run test:multica-api-client && npm run test:credit-repo && npm run test:workspace-resource && npm run test:customer-repo && npm run test:campaign-repo && npm run test:announcement-repo && npm run test:agency-repo && npm run test:risk-repo",
+    "test:p0-specialized": "npm run test:product-registry && npm run test:data-backend && npm run test:workspace-state && npm run test:runtime-contract && npm run test:desktop-bridge && npm run test:multica-mappers && npm run test:multica-runtime-provider && npm run test:web-runtime-provider && npm run test:multica-api-client && npm run test:credit-repo && npm run test:workspace-resource && npm run test:customer-repo && npm run test:campaign-repo && npm run test:announcement-repo && npm run test:agency-repo && npm run test:risk-repo && npm run test:media-repo",
     "test:p0-release": "npm run test:p0-specialized && npm run test:launch-readiness && npm run test:saas-foundation && npm run lint && npm run build && npm run test:browser-smoke",
     "test:runtime-contract": "tsx scripts/runtime-contract.test.ts",
     "test:product-registry": "tsx scripts/product-registry.test.ts",
@@ -39,7 +39,8 @@
     "test:campaign-repo": "tsx scripts/campaign-repository.test.ts",
     "test:announcement-repo": "tsx scripts/announcement-repository.test.ts",
     "test:agency-repo": "tsx scripts/agency-repository.test.ts",
-    "test:risk-repo": "tsx scripts/risk-repository.test.ts"
+    "test:risk-repo": "tsx scripts/risk-repository.test.ts",
+    "test:media-repo": "tsx scripts/media-repository.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

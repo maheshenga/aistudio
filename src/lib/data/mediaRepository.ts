@@ -1,5 +1,6 @@
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceMediaAccountStatus = 'active' | 'rate_limited' | 'offline' | 'needs_config';
 
@@ -197,6 +198,7 @@ export function getDefaultWorkspaceMediaAccounts(context: MediaRepositoryContext
 }
 
 export function loadWorkspaceMediaAccounts(context: MediaRepositoryContext): WorkspaceMediaAccount[] {
+  if (mediaApiClient.configured) return mediaCache.get(context.workspaceId) ?? [];
   return readMediaAccounts(context);
 }
 
@@ -235,6 +237,15 @@ export function createWorkspaceMediaAccount(
   );
 
   writeMediaAccounts([account, ...ensureDefaultWorkspaceMediaAccounts(context)], context);
+  if (mediaApiClient.configured) {
+    mediaCache.set(context.workspaceId, sortMediaAccounts([account, ...(mediaCache.get(context.workspaceId) ?? [])]));
+    void mediaApiClient.post(context.workspaceId, 'media-accounts', {
+      id: account.id, platformName: account.platformName, status: account.status,
+      connectedAccounts: account.connectedAccounts, credentialRef: account.credentialRef ?? undefined,
+      clientIdLast4: account.clientIdLast4 ?? undefined, metadata: account.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceMediaAccount write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceMediaAccount write-through failed', e));
+  }
   return account;
 }
 
@@ -267,6 +278,15 @@ export function updateWorkspaceMediaAccount(
   });
 
   writeMediaAccounts(updatedAccounts, context);
+  if (mediaApiClient.configured && updatedAccount) {
+    const u: WorkspaceMediaAccount = updatedAccount;
+    mediaCache.set(context.workspaceId, sortMediaAccounts((mediaCache.get(context.workspaceId) ?? []).map((m) => (m.id === u.id ? u : m))));
+    void mediaApiClient.patch(context.workspaceId, `media-accounts/${u.id}`, {
+      platformName: u.platformName, status: u.status, connectedAccounts: u.connectedAccounts,
+      credentialRef: u.credentialRef ?? undefined, clientIdLast4: u.clientIdLast4 ?? undefined, metadata: u.metadata,
+    }).then((r) => { if (!r.ok) console.error('updateWorkspaceMediaAccount write-through failed', r); })
+      .catch((e) => console.error('updateWorkspaceMediaAccount write-through failed', e));
+  }
   return updatedAccount;
 }
 
@@ -285,4 +305,21 @@ export function summarizeWorkspaceMediaAccounts(
       rateLimitedCount: 0,
     },
   );
+}
+
+let mediaApiClient: ApiClient = defaultApiClient;
+export function __setMediaApiClientForTest(client: ApiClient): void { mediaApiClient = client; }
+
+const mediaCache = new Map<string, WorkspaceMediaAccount[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceMediaAccounts(context: MediaRepositoryContext): Promise<void> {
+  if (!mediaApiClient.configured) return;
+  const res = await mediaApiClient.get<{ items: WorkspaceMediaAccount[]; nextCursor: string | null }>(
+    context.workspaceId, 'media-accounts');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    mediaCache.set(context.workspaceId, sortMediaAccounts(res.value.items.map((m) => normalizeMediaAccount(m, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('workspace_media_accounts_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
