@@ -1,6 +1,7 @@
 import type { ModuleId } from '../../types';
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceCustomerLifecycleStage =
   | 'new_lead'
@@ -174,6 +175,7 @@ function customerMatchKey(input: Pick<WorkspaceCustomerInput, 'name' | 'company'
 }
 
 export function loadWorkspaceCustomers(context: CustomerRepositoryContext): WorkspaceCustomer[] {
+  if (customerApiClient.configured) return customerCache.get(context.workspaceId) ?? [];
   return readCustomers(context);
 }
 
@@ -212,6 +214,15 @@ export function createWorkspaceCustomer(
   );
 
   writeCustomers([customer, ...readCustomers(context)], context);
+  if (customerApiClient.configured) {
+    customerCache.set(context.workspaceId, sortCustomers([customer, ...(customerCache.get(context.workspaceId) ?? [])]));
+    void customerApiClient.post(context.workspaceId, 'customers', {
+      id: customer.id, name: customer.name, company: customer.company, role: customer.role,
+      channel: customer.channel, lifecycleStage: customer.lifecycleStage, ownerId: customer.ownerId,
+      tags: customer.tags, source: customer.source, notes: customer.notes, metadata: customer.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceCustomer write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceCustomer write-through failed', e));
+  }
   return customer;
 }
 
@@ -239,6 +250,15 @@ export function updateWorkspaceCustomer(
   });
 
   writeCustomers(customers, context);
+  if (customerApiClient.configured && updatedCustomer) {
+    const u: WorkspaceCustomer = updatedCustomer;
+    customerCache.set(context.workspaceId, sortCustomers((customerCache.get(context.workspaceId) ?? []).map((c) => (c.id === u.id ? u : c))));
+    void customerApiClient.patch(context.workspaceId, `customers/${u.id}`, {
+      name: u.name, company: u.company, role: u.role, channel: u.channel, lifecycleStage: u.lifecycleStage,
+      ownerId: u.ownerId, tags: u.tags, source: u.source, notes: u.notes, metadata: u.metadata,
+    }).then((r) => { if (!r.ok) console.error('updateWorkspaceCustomer write-through failed', r); })
+      .catch((e) => console.error('updateWorkspaceCustomer write-through failed', e));
+  }
   return updatedCustomer;
 }
 
@@ -246,6 +266,21 @@ export function createOrUpdateWorkspaceCustomerLead(
   input: WorkspaceCustomerInput,
   context: CustomerRepositoryContext,
 ): WorkspaceCustomer {
+  if (customerApiClient.configured) {
+    const now = context.now ?? Date.now();
+    const optimistic = normalizeCustomer(
+      { id: `customer_${now}_${Math.random().toString(36).slice(2, 8)}`, ...input,
+        tags: [...normalizeTags(input.tags), 'marketing_lead'], createdAt: now, updatedAt: now },
+      context);
+    customerCache.set(context.workspaceId, sortCustomers([optimistic, ...(customerCache.get(context.workspaceId) ?? []).filter((c) => customerMatchKey(c) !== customerMatchKey(input))]));
+    void customerApiClient.post(context.workspaceId, 'customers/lead', {
+      name: input.name, company: input.company, role: input.role, channel: input.channel,
+      lifecycleStage: input.lifecycleStage, ownerId: input.ownerId, tags: input.tags,
+      source: input.source, notes: input.notes, metadata: input.metadata,
+    }).then((r) => { if (r.ok && r.value) void hydrateWorkspaceCustomers(context); })
+      .catch((e) => console.error('lead write-through failed', e));
+    return optimistic;
+  }
   const existing = readCustomers(context).find((customer) => customerMatchKey(customer) === customerMatchKey(input));
   if (!existing) {
     return createWorkspaceCustomer(
@@ -278,4 +313,21 @@ export function createOrUpdateWorkspaceCustomerLead(
     },
     context,
   ) ?? existing;
+}
+
+let customerApiClient: ApiClient = defaultApiClient;
+export function __setCustomerApiClientForTest(client: ApiClient): void { customerApiClient = client; }
+
+const customerCache = new Map<string, WorkspaceCustomer[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceCustomers(context: CustomerRepositoryContext): Promise<void> {
+  if (!customerApiClient.configured) return;
+  const res = await customerApiClient.get<{ items: WorkspaceCustomer[]; nextCursor: string | null }>(
+    context.workspaceId, 'customers');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    customerCache.set(context.workspaceId, sortCustomers(res.value.items.map((c) => normalizeCustomer(c, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('workspace_customers_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
