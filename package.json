@@ -16,7 +16,7 @@
     "test:workspace-state": "tsx scripts/workspace-state.test.ts",
     "test:launch-readiness": "tsx scripts/launch-readiness.test.ts",
     "test:browser-smoke": "tsx scripts/browser-smoke.test.ts",
-    "test:p0-specialized": "npm run test:product-registry && npm run test:data-backend && npm run test:workspace-state && npm run test:runtime-contract && npm run test:desktop-bridge && npm run test:multica-mappers && npm run test:multica-runtime-provider && npm run test:web-runtime-provider && npm run test:multica-api-client && npm run test:credit-repo",
+    "test:p0-specialized": "npm run test:product-registry && npm run test:data-backend && npm run test:workspace-state && npm run test:runtime-contract && npm run test:desktop-bridge && npm run test:multica-mappers && npm run test:multica-runtime-provider && npm run test:web-runtime-provider && npm run test:multica-api-client && npm run test:credit-repo && npm run test:workspace-resource && npm run test:customer-repo",
     "test:p0-release": "npm run test:p0-specialized && npm run test:launch-readiness && npm run test:saas-foundation && npm run lint && npm run build && npm run test:browser-smoke",
     "test:runtime-contract": "tsx scripts/runtime-contract.test.ts",
     "test:product-registry": "tsx scripts/product-registry.test.ts",
@@ -33,7 +33,9 @@
     "test:audit-log-repo-api": "tsx scripts/audit-log-repository-api.test.ts",
     "test:member-repo-api": "tsx scripts/member-repository-api.test.ts",
     "test:orchestration-service": "tsx scripts/orchestration-service.test.ts",
-    "test:credit-repo": "tsx scripts/credit-repository.test.ts"
+    "test:credit-repo": "tsx scripts/credit-repository.test.ts",
+    "test:workspace-resource": "tsx scripts/workspace-resource-client.test.ts",
+    "test:customer-repo": "tsx scripts/customer-repository.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
