@@ -24,6 +24,7 @@ import {
   type WorkspaceInvoiceRow,
 } from '../lib/data/financialRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { hydrateCreditBalance, getCreditBalanceSnapshot, grantCredits } from '../lib/data/creditRepository';
 import {
   getDefaultWorkspacePaymentMethod,
   updateWorkspacePaymentMethod,
@@ -151,6 +152,10 @@ export function BillingView() {
     return () => window.removeEventListener('workspace_payment_methods_updated', handlePaymentMethodsUpdated);
   }, [session.workspace.id]);
 
+  useEffect(() => {
+    void hydrateCreditBalance({ workspaceId: session.workspace.id });
+  }, [session.workspace.id]);
+
   const rechargeCredits = useMemo(() => sumWorkspaceRechargeCredits(financialRecords), [financialRecords]);
   const promotionalCredits = useMemo(() => sumWorkspacePromotionalCredits(financialRecords), [financialRecords]);
   const addonCredits = rechargeCredits + promotionalCredits;
@@ -165,6 +170,9 @@ export function BillingView() {
     }),
     [addonCredits, generationJobs, moduleUsage, monthlyAllowance, usageEvents],
   );
+
+  const backendSnapshot = getCreditBalanceSnapshot({ workspaceId: session.workspace.id });
+  const remainingCredits = backendSnapshot?.balance ?? billingUsage.remainingCredits;
 
   const plans = billingPlans
     .filter((plan) => plan.status === 'active' || plan.id === session.workspace.plan)
@@ -415,7 +423,7 @@ export function BillingView() {
     toast(`已切换到 ${plan.name}`, 'success');
   };
 
-  const handleConfirmRecharge = () => {
+  const handleConfirmRecharge = async () => {
     if (!canManageCurrentBilling) {
       auditBillingPermissionDenied('billing_recharge_create', 'workspace', session.workspace.id, { rechargeAmount });
       return;
@@ -476,6 +484,11 @@ export function BillingView() {
     });
     setShowRechargeModal(false);
     toast(`已充值 ${selectedPackage.points.toLocaleString()} PTS`, 'success');
+    await grantCredits(
+      { workspaceId: session.workspace.id },
+      { amount: selectedPackage.points, reason: 'recharge', idempotencyKey: `pay:${paymentRecord.id}` },
+    );
+    await hydrateCreditBalance({ workspaceId: session.workspace.id });
   };
 
   const handleOpenCouponModal = () => {
@@ -488,7 +501,7 @@ export function BillingView() {
     setShowCouponModal(true);
   };
 
-  const handleRedeemCoupon = () => {
+  const handleRedeemCoupon = async () => {
     if (!canManageCurrentBilling) {
       auditBillingPermissionDenied('billing_coupon_redeem', 'workspace', session.workspace.id, {
         couponCodeConfigured: Boolean(couponCode.trim()),
@@ -537,6 +550,11 @@ export function BillingView() {
     setShowCouponModal(false);
     setCouponCode('');
     toast(`已兑换 ${coupon.points.toLocaleString()} PTS`, 'success');
+    await grantCredits(
+      { workspaceId: session.workspace.id },
+      { amount: coupon.points, reason: 'coupon', idempotencyKey: `coupon:${coupon.code}` },
+    );
+    await hydrateCreditBalance({ workspaceId: session.workspace.id });
   };
 
   return (
@@ -580,7 +598,7 @@ export function BillingView() {
               <div>
                  <p className="text-blue-200 font-bold uppercase tracking-widest text-xs mb-2">当前可用算力 (Compute Points)</p>
                  <div className="flex items-baseline space-x-2">
-                    <h3 className="text-5xl font-black tracking-tight">{billingUsage.remainingCredits.toLocaleString()}</h3>
+                    <h3 className="text-5xl font-black tracking-tight">{remainingCredits.toLocaleString()}</h3>
                     <span className="text-blue-200 font-medium">PTS</span>
                  </div>
                  <p className="text-blue-300 font-medium text-sm mt-3 flex items-center">

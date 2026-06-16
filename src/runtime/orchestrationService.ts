@@ -40,12 +40,16 @@ export function createOrchestrationService(options: OrchestrationServiceOptions)
         type: input.type, input: input.input, runtimeMode: input.runtimeMode,
         projectId: input.projectId, agentId: input.agentId, providerKind: input.providerKind,
       });
-      if (!dispatched.ok || !dispatched.value) throw new Error('dispatch failed');
+      if (!dispatched.ok) {
+        const failure = dispatched as { ok: false; error: { code: string; message: string } };
+        const err = new Error(failure.error.message) as Error & { code?: string };
+        err.code = failure.error.code;
+        throw err;
+      }
+      if (!dispatched.value) throw new Error('dispatch failed');
       const jobId = dispatched.value.job.id;
-
       // task 已由调用方(modal)通过 provider.createTask 创建,这里只绑定外部任务,避免重复创建
       const externalTaskId = extractExternalTaskId(task);
-
       if (externalTaskId) {
         await apiClient.post(workspaceId, `orchestration/jobs/${jobId}/link-external`, { externalTaskId });
       }

@@ -200,6 +200,10 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
               }, task);
               backendJobId = dispatched.jobId;
             } catch (e) {
+              if ((e as { code?: string }).code === 'insufficient_credits') {
+                setRuntimeError('算力余额不足:本次调度被后端拦截,请升级套餐或充值后重试。');
+                throw e;
+              }
               console.error('backend orchestration dispatch failed; continuing with local mirror', e);
             }
           }
@@ -387,7 +391,11 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
       );
       setDispatchResults(createdTasks);
     } catch (err) {
-      setRuntimeError(err instanceof Error ? err.message : 'Agent 调度失败。');
+      setRuntimeError(
+        (err as { code?: string }).code === 'insufficient_credits'
+          ? '算力余额不足:本次调度被后端拦截,请升级套餐或充值后重试。'
+          : err instanceof Error ? err.message : 'Agent 调度失败。',
+      );
       setAgents((prev) =>
         prev.map((agent) =>
           selectedAgents.includes(agent.id) && agent.dispatchStatus === 'running'
