@@ -9,11 +9,18 @@ describe('Workspace (e2e)', () => {
   beforeEach(async () => { await resetDb(prisma); });
   afterAll(async () => { await app.close(); });
 
-  it('POST /workspaces creates a workspace (public)', async () => {
-    const res = await request(app.getHttpServer()).post('/workspaces').send({ name: 'Acme' }).expect(201);
+  it('POST /workspaces creates a workspace and binds caller as owner; no token → 401', async () => {
+    const { accessToken, userId } = await registerUser(app, 'wsc@test.dev');
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${accessToken}`);
+    const res = await auth(request(app.getHttpServer()).post('/workspaces').send({ name: 'Acme' })).expect(201);
     expect(res.body.value.id).toBeDefined();
     expect(res.body.value.name).toBe('Acme');
     expect(res.body.value.plan).toBe('free');
+    const member = await prisma.member.findUnique({
+      where: { workspaceId_userId: { workspaceId: res.body.value.id, userId } },
+    });
+    expect(member!.role).toBe('owner');
+    await request(app.getHttpServer()).post('/workspaces').send({ name: 'NoAuth' }).expect(401);
   });
 
   it('GET /workspaces/:id returns it; unknown id → 404 not_found', async () => {
@@ -26,7 +33,9 @@ describe('Workspace (e2e)', () => {
   });
 
   it('rejects unknown fields (forbidNonWhitelisted) → 400 validation_error', async () => {
-    const res = await request(app.getHttpServer()).post('/workspaces').send({ name: 'A', hacker: 1 }).expect(400);
+    const { accessToken } = await registerUser(app, 'wsf@test.dev');
+    const res = await request(app.getHttpServer()).post('/workspaces')
+      .set('Authorization', `Bearer ${accessToken}`).send({ name: 'A', hacker: 1 }).expect(400);
     expect(res.body.error.code).toBe('validation_error');
   });
 });
