@@ -1,5 +1,6 @@
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceRiskDecision = 'blocked' | 'pending_review' | 'allowed' | 'rate_limited' | 'account_frozen';
 export type WorkspaceRiskSeverity = 'low' | 'medium' | 'high' | 'critical';
@@ -103,13 +104,17 @@ function normalizeSeverity(value: unknown): WorkspaceRiskSeverity {
 }
 
 function normalizeTimestamp(value: unknown, fallback: number): number {
-  const numericValue = Number(value);
+  const numericValue = typeof value === 'string' && !/^\d+$/.test(value.trim())
+    ? Date.parse(value)
+    : Number(value);
   return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : fallback;
 }
 
 function normalizeNullableTimestamp(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
-  const numericValue = Number(value);
+  const numericValue = typeof value === 'string' && !/^\d+$/.test(value.trim())
+    ? Date.parse(value)
+    : Number(value);
   return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : null;
 }
 
@@ -198,6 +203,7 @@ export function getDefaultWorkspaceRiskEvents(context: RiskRepositoryContext): W
 }
 
 export function loadWorkspaceRiskEvents(context: RiskRepositoryContext): WorkspaceRiskEvent[] {
+  if (riskApiClient.configured) return riskCache.get(context.workspaceId) ?? [];
   return readRiskEvents(context);
 }
 
@@ -239,6 +245,17 @@ export function createWorkspaceRiskEvent(
   );
 
   writeRiskEvents([event, ...ensureDefaultWorkspaceRiskEvents(context)], context);
+  if (riskApiClient.configured) {
+    riskCache.set(context.workspaceId, sortRiskEvents([event, ...(riskCache.get(context.workspaceId) ?? [])]));
+    void riskApiClient.post(context.workspaceId, 'risk-events', {
+      id: event.id, action: event.action, contentSummary: event.contentSummary, rule: event.rule,
+      decision: event.decision, severity: event.severity,
+      occurredAt: event.occurredAt > 0 ? new Date(event.occurredAt).toISOString() : undefined,
+      reviewedAt: event.reviewedAt && event.reviewedAt > 0 ? new Date(event.reviewedAt).toISOString() : undefined,
+      metadata: event.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceRiskEvent write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceRiskEvent write-through failed', e));
+  }
   return event;
 }
 
@@ -266,6 +283,16 @@ export function updateWorkspaceRiskEvent(
   });
 
   writeRiskEvents(updatedEvents, context);
+  if (riskApiClient.configured && updatedEvent) {
+    const u: WorkspaceRiskEvent = updatedEvent;
+    riskCache.set(context.workspaceId, sortRiskEvents((riskCache.get(context.workspaceId) ?? []).map((e) => (e.id === u.id ? u : e))));
+    void riskApiClient.patch(context.workspaceId, `risk-events/${u.id}`, {
+      action: u.action, contentSummary: u.contentSummary, rule: u.rule, decision: u.decision, severity: u.severity,
+      reviewedAt: u.reviewedAt && u.reviewedAt > 0 ? new Date(u.reviewedAt).toISOString() : undefined,
+      metadata: u.metadata,
+    }).then((r) => { if (!r.ok) console.error('updateWorkspaceRiskEvent write-through failed', r); })
+      .catch((e) => console.error('updateWorkspaceRiskEvent write-through failed', e));
+  }
   return updatedEvent;
 }
 
@@ -297,4 +324,21 @@ export function summarizeWorkspaceRiskEvents(
     highRiskCount: events.filter((event) => event.severity === 'high' || event.severity === 'critical').length,
     modelVersion,
   };
+}
+
+let riskApiClient: ApiClient = defaultApiClient;
+export function __setRiskApiClientForTest(client: ApiClient): void { riskApiClient = client; }
+
+const riskCache = new Map<string, WorkspaceRiskEvent[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceRiskEvents(context: RiskRepositoryContext): Promise<void> {
+  if (!riskApiClient.configured) return;
+  const res = await riskApiClient.get<{ items: WorkspaceRiskEvent[]; nextCursor: string | null }>(
+    context.workspaceId, 'risk-events');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    riskCache.set(context.workspaceId, sortRiskEvents(res.value.items.map((e) => normalizeRiskEvent(e, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('workspace_risk_events_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
