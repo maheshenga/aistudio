@@ -316,10 +316,6 @@ export default function App() {
         pinnedModules
       };
       try {
-        // Simulating occasional cloud sync error for demonstration
-        if (Math.random() < 0.05) {
-          throw new Error('Cloud Sync Failed');
-        }
         saveSetting('workspace_autosave', workspaceState, settingsContext);
       } catch (e) {
         toast('云端同步失败 / Cloud Sync Error', 'error', true, [
