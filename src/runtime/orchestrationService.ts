@@ -1,12 +1,10 @@
 import type { ApiClient } from '../lib/data/apiClient.ts';
-import type { AgentRuntimeProvider } from './agentRuntimeTypes.ts';
+import type { AgentRuntimeProvider, AgentTask } from './agentRuntimeTypes.ts';
 
 export interface DispatchTaskInput {
   type: string;
   input: Record<string, unknown>;
   runtimeMode: string;
-  title: string;
-  description: string;
   projectId?: string;
   agentId?: string;
   providerKind?: string;
@@ -20,11 +18,11 @@ export interface DispatchTaskResult {
 export interface OrchestrationServiceOptions {
   apiClient: ApiClient;
   workspaceId: string;
-  getProvider: () => Pick<AgentRuntimeProvider, 'createTask' | 'cancelTask'>;
+  getProvider: () => Pick<AgentRuntimeProvider, 'cancelTask'>;
 }
 
 export interface OrchestrationService {
-  dispatchTask(input: DispatchTaskInput): Promise<DispatchTaskResult>;
+  dispatchTask(input: DispatchTaskInput, task: Pick<AgentTask, 'externalRef'>): Promise<DispatchTaskResult>;
   cancelTask(jobId: string, externalTaskId?: string): Promise<void>;
   retryTask(jobId: string): Promise<void>;
 }
@@ -37,7 +35,7 @@ export function createOrchestrationService(options: OrchestrationServiceOptions)
   const { apiClient, workspaceId, getProvider } = options;
 
   return {
-    async dispatchTask(input) {
+    async dispatchTask(input, task) {
       const dispatched = await apiClient.post<{ job: { id: string } }>(workspaceId, 'orchestration/dispatch', {
         type: input.type, input: input.input, runtimeMode: input.runtimeMode,
         projectId: input.projectId, agentId: input.agentId, providerKind: input.providerKind,
@@ -45,9 +43,7 @@ export function createOrchestrationService(options: OrchestrationServiceOptions)
       if (!dispatched.ok || !dispatched.value) throw new Error('dispatch failed');
       const jobId = dispatched.value.job.id;
 
-      const task = await getProvider().createTask({
-        title: input.title, description: input.description, agentId: input.agentId,
-      });
+      // task 已由调用方(modal)通过 provider.createTask 创建,这里只绑定外部任务,避免重复创建
       const externalTaskId = extractExternalTaskId(task);
 
       if (externalTaskId) {

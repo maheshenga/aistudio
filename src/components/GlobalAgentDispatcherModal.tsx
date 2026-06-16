@@ -195,11 +195,9 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
                 type: 'agent_dispatch',
                 input: { prompt: taskInput.trim() },
                 runtimeMode: runtime.mode,
-                title: task.title,
-                description: task.description ?? taskInput.trim(),
                 agentId: id,
                 providerKind: task.source,
-              });
+              }, task);
               backendJobId = dispatched.jobId;
             } catch (e) {
               console.error('backend orchestration dispatch failed; continuing with local mirror', e);
