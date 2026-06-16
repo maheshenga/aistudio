@@ -1,6 +1,7 @@
 import type { ModuleId } from '../../types';
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceKeywordLibraryStatus = 'active' | 'paused' | 'archived';
 
@@ -62,7 +63,9 @@ function normalizeOptionalText(value: unknown): string {
 }
 
 function normalizeTimestamp(value: unknown, fallback: number): number {
-  const numericValue = Number(value);
+  const numericValue = typeof value === 'string' && !/^\d+$/.test(value.trim())
+    ? Date.parse(value)
+    : Number(value);
   return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : fallback;
 }
 
@@ -140,6 +143,7 @@ function writeLibraries(
 }
 
 export function loadWorkspaceKeywordLibraries(context: KeywordRepositoryContext): WorkspaceKeywordLibrary[] {
+  if (keywordApiClient.configured) return keywordCache.get(context.workspaceId) ?? [];
   return readLibraries(context);
 }
 
@@ -178,6 +182,16 @@ export function createWorkspaceKeywordLibrary(
   );
 
   writeLibraries([library, ...readLibraries(context)], context);
+  if (keywordApiClient.configured) {
+    keywordCache.set(context.workspaceId, sortLibraries([library, ...(keywordCache.get(context.workspaceId) ?? [])]));
+    void keywordApiClient.post(context.workspaceId, 'keyword-libraries', {
+      id: library.id, userId: library.userId, ownerId: library.ownerId, name: library.name,
+      description: library.description, channel: library.channel, sourceText: library.sourceText,
+      moduleId: library.moduleId, status: library.status, tags: library.tags, keywords: library.keywords,
+      blockedTerms: library.blockedTerms, metadata: library.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceKeywordLibrary write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceKeywordLibrary write-through failed', e));
+  }
   return library;
 }
 
@@ -205,6 +219,17 @@ export function updateWorkspaceKeywordLibrary(
   });
 
   writeLibraries(libraries, context);
+  if (keywordApiClient.configured && updatedLibrary) {
+    const u: WorkspaceKeywordLibrary = updatedLibrary;
+    keywordCache.set(context.workspaceId, sortLibraries((keywordCache.get(context.workspaceId) ?? []).map((l) => (l.id === u.id ? u : l))));
+    void keywordApiClient.patch(context.workspaceId, `keyword-libraries/${u.id}`, {
+      ownerId: u.ownerId, name: u.name, description: u.description, channel: u.channel, sourceText: u.sourceText,
+      moduleId: u.moduleId, status: u.status, tags: u.tags, keywords: u.keywords, blockedTerms: u.blockedTerms,
+      archivedAt: u.archivedAt && u.archivedAt > 0 ? new Date(u.archivedAt).toISOString() : undefined,
+      metadata: u.metadata,
+    }).then((r) => { if (!r.ok) console.error('updateWorkspaceKeywordLibrary write-through failed', r); })
+      .catch((e) => console.error('updateWorkspaceKeywordLibrary write-through failed', e));
+  }
   return updatedLibrary;
 }
 
@@ -221,7 +246,9 @@ export function searchWorkspaceKeywordLibraries(
   context: KeywordRepositoryContext,
 ): WorkspaceKeywordLibrary[] {
   const normalizedQuery = query.trim().toLowerCase();
-  const libraries = readLibraries(context);
+  const libraries = keywordApiClient.configured
+    ? (keywordCache.get(context.workspaceId) ?? [])
+    : readLibraries(context);
   if (!normalizedQuery) return libraries;
 
   return libraries.filter((library) => [
@@ -234,4 +261,21 @@ export function searchWorkspaceKeywordLibraries(
     ...library.blockedTerms,
     JSON.stringify(library.metadata),
   ].join(' ').toLowerCase().includes(normalizedQuery));
+}
+
+let keywordApiClient: ApiClient = defaultApiClient;
+export function __setKeywordApiClientForTest(client: ApiClient): void { keywordApiClient = client; }
+
+const keywordCache = new Map<string, WorkspaceKeywordLibrary[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceKeywordLibraries(context: KeywordRepositoryContext): Promise<void> {
+  if (!keywordApiClient.configured) return;
+  const res = await keywordApiClient.get<{ items: WorkspaceKeywordLibrary[]; nextCursor: string | null }>(
+    context.workspaceId, 'keyword-libraries');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    keywordCache.set(context.workspaceId, sortLibraries(res.value.items.map((l) => normalizeKeywordLibrary(l, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('workspace_keyword_libraries_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
