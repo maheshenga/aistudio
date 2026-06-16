@@ -24,6 +24,10 @@ export interface ResourceRepository<T extends { id: string }> {
   __setApiClientForTest(client: ApiClient): void;
 }
 
+function resultErrorMessage(res: { ok: boolean; error?: { message: string } }): string {
+  return res.error?.message ?? 'request failed';
+}
+
 export function createWorkspaceResourceRepository<T extends { id: string }>(
   config: ResourceRepositoryConfig<T>,
 ): ResourceRepository<T> {
@@ -77,7 +81,7 @@ export function createWorkspaceResourceRepository<T extends { id: string }>(
       const prev = cache.get(ctx.workspaceId) ?? [];
       cache.set(ctx.workspaceId, applySort([optimistic, ...prev]));
       const res = await api.post<T>(ctx.workspaceId, config.resource, input);
-      if (!res.ok || !res.value) { cache.set(ctx.workspaceId, prev); throw new Error(res.ok ? 'empty response' : res.error.message); }
+      if (!res.ok || !res.value) { cache.set(ctx.workspaceId, prev); throw new Error(res.ok ? 'empty response' : resultErrorMessage(res)); }
       const saved = config.normalize(res.value, ctx);
       cache.set(ctx.workspaceId, applySort([saved, ...prev.filter((r) => r.id !== saved.id)]));
       return saved;
@@ -96,7 +100,7 @@ export function createWorkspaceResourceRepository<T extends { id: string }>(
       }
       const prev = cache.get(ctx.workspaceId) ?? [];
       const res = await api.patch<T>(ctx.workspaceId, `${config.resource}/${id}`, patch);
-      if (!res.ok) { cache.set(ctx.workspaceId, prev); throw new Error(res.error.message); }
+      if (!res.ok) { cache.set(ctx.workspaceId, prev); throw new Error(resultErrorMessage(res)); }
       if (!res.value) return null;
       const saved = config.normalize(res.value, ctx);
       cache.set(ctx.workspaceId, applySort(prev.map((r) => (r.id === id ? saved : r))));
@@ -111,7 +115,7 @@ export function createWorkspaceResourceRepository<T extends { id: string }>(
       const prev = cache.get(ctx.workspaceId) ?? [];
       cache.set(ctx.workspaceId, prev.filter((r) => r.id !== id)); // 乐观移除
       const res = await api.del(ctx.workspaceId, `${config.resource}/${id}`);
-      if (!res.ok) { cache.set(ctx.workspaceId, prev); throw new Error(res.error.message); }
+      if (!res.ok) { cache.set(ctx.workspaceId, prev); throw new Error(resultErrorMessage(res)); }
     },
 
     __setApiClientForTest(client) { api = client; },
