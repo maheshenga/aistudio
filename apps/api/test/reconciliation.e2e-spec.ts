@@ -68,6 +68,7 @@ describe('Reconciliation (e2e)', () => {
     expect(assets).toHaveLength(1);
     const usage = await prisma.usageEvent.findMany({ where: { workspaceId, jobId: job.id } });
     expect(usage).toHaveLength(1);
+    expect(usage[0].credits).toBe(1); // runtimeMode=desktop_multica → 1 credit
     const completeAudits = await prisma.auditLog.findMany({ where: { workspaceId, action: 'generation_job_complete' } });
     expect(completeAudits).toHaveLength(1);
   });

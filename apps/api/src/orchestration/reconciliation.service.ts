@@ -6,6 +6,14 @@ import { MULTICA_SERVER_CLIENT, type MulticaServerClient } from './multica-serve
 
 const ORPHAN_PENDING_TIMEOUT_MS = Number(process.env.ORCHESTRATION_ORPHAN_TIMEOUT_MS ?? 15 * 60 * 1000);
 
+// 与前端成本模型对齐(src/lib/data/billingRepository.ts estimateGenerationJobCredits):
+// desktop_multica 本地算力最低=1;multica 云端=3;其它(如 codex 云)=5。
+function generationCredits(job: { runtimeMode: string | null; providerKind: string | null }): number {
+  if (job.runtimeMode === 'desktop_multica') return 1;
+  if (job.providerKind === 'multica') return 3;
+  return 5;
+}
+
 @Injectable()
 export class ReconciliationService {
   private readonly logger = new Logger(ReconciliationService.name);
@@ -40,7 +48,7 @@ export class ReconciliationService {
     }
   }
 
-  private async reconcileJob(job: { id: string; workspaceId: string; status: string; externalTaskId: string | null; providerKind: string | null; startedAt: Date | null }, now: Date): Promise<void> {
+  private async reconcileJob(job: { id: string; workspaceId: string; status: string; externalTaskId: string | null; runtimeMode: string | null; providerKind: string | null; startedAt: Date | null }, now: Date): Promise<void> {
     const snap = await this.client!.getTask(job.externalTaskId!);
 
     if (snap.status === 'running') {
@@ -61,7 +69,7 @@ export class ReconciliationService {
   }
 
   private async finalize(
-    job: { id: string; workspaceId: string; externalTaskId: string | null; providerKind: string | null; startedAt: Date | null },
+    job: { id: string; workspaceId: string; externalTaskId: string | null; runtimeMode: string | null; providerKind: string | null; startedAt: Date | null },
     terminal: 'succeeded' | 'failed' | 'cancelled',
     now: Date,
   ): Promise<void> {
@@ -96,8 +104,8 @@ export class ReconciliationService {
           const durationMs = job.startedAt ? Math.max(0, now.getTime() - job.startedAt.getTime()) : 0;
           await tx.usageEvent.create({
             data: {
-              workspaceId: job.workspaceId, jobId: job.id, category: 'generation', credits: 0,
-              metadata: { providerKind: job.providerKind ?? null, durationMs } as Prisma.InputJsonValue,
+              workspaceId: job.workspaceId, jobId: job.id, category: 'generation', credits: generationCredits(job),
+              metadata: { providerKind: job.providerKind ?? null, runtimeMode: job.runtimeMode ?? null, durationMs } as Prisma.InputJsonValue,
             },
           });
         }
