@@ -1,6 +1,7 @@
 import type { ModuleId } from '../../types';
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceCampaignStatus = 'draft' | 'active' | 'paused' | 'archived';
 export type WorkspaceCampaignChannel = 'viral_qr' | 'nfc_touchpoint' | 'website' | 'store_event' | 'other';
@@ -161,6 +162,7 @@ function writeCampaigns(campaigns: WorkspaceCampaign[], context: CampaignReposit
 }
 
 export function listWorkspaceCampaigns(context: CampaignRepositoryContext): WorkspaceCampaign[] {
+  if (campaignApiClient.configured) return campaignCache.get(context.workspaceId) ?? [];
   return readCampaigns(context);
 }
 
@@ -196,6 +198,15 @@ export function createWorkspaceCampaign(
   );
 
   writeCampaigns([campaign, ...readCampaigns(context)], context);
+  if (campaignApiClient.configured) {
+    campaignCache.set(context.workspaceId, sortCampaigns([campaign, ...(campaignCache.get(context.workspaceId) ?? [])]));
+    void campaignApiClient.post(context.workspaceId, 'campaigns', {
+      id: campaign.id, userId: campaign.userId, name: campaign.name, channel: campaign.channel,
+      status: campaign.status, moduleId: campaign.moduleId, landingUrl: campaign.landingUrl,
+      linkedAssetIds: campaign.linkedAssetIds, metrics: campaign.metrics, metadata: campaign.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceCampaign write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceCampaign write-through failed', e));
+  }
   return campaign;
 }
 
@@ -223,6 +234,15 @@ export function updateWorkspaceCampaign(
   });
 
   writeCampaigns(updatedCampaigns, context);
+  if (campaignApiClient.configured && updatedCampaign) {
+    const u: WorkspaceCampaign = updatedCampaign;
+    campaignCache.set(context.workspaceId, sortCampaigns((campaignCache.get(context.workspaceId) ?? []).map((c) => (c.id === u.id ? u : c))));
+    void campaignApiClient.patch(context.workspaceId, `campaigns/${u.id}`, {
+      name: u.name, channel: u.channel, status: u.status, moduleId: u.moduleId, landingUrl: u.landingUrl,
+      linkedAssetIds: u.linkedAssetIds, metrics: u.metrics, metadata: u.metadata,
+    }).then((r) => { if (!r.ok) console.error('updateWorkspaceCampaign write-through failed', r); })
+      .catch((e) => console.error('updateWorkspaceCampaign write-through failed', e));
+  }
   return updatedCampaign;
 }
 
@@ -231,5 +251,31 @@ export function deleteWorkspaceCampaigns(
   context: CampaignRepositoryContext,
 ): WorkspaceCampaign[] {
   const campaignIdSet = new Set(campaignIds);
+  if (campaignApiClient.configured) {
+    campaignCache.set(context.workspaceId, (campaignCache.get(context.workspaceId) ?? []).filter((c) => !campaignIdSet.has(c.id)));
+    for (const id of campaignIds) {
+      void campaignApiClient.del(context.workspaceId, `campaigns/${id}`)
+        .then((r) => { if (!r.ok) console.error('deleteWorkspaceCampaigns write-through failed', r); })
+        .catch((e) => console.error('deleteWorkspaceCampaigns write-through failed', e));
+    }
+    return campaignCache.get(context.workspaceId) ?? [];
+  }
   return writeCampaigns(readCampaigns(context).filter((campaign) => !campaignIdSet.has(campaign.id)), context);
+}
+
+let campaignApiClient: ApiClient = defaultApiClient;
+export function __setCampaignApiClientForTest(client: ApiClient): void { campaignApiClient = client; }
+
+const campaignCache = new Map<string, WorkspaceCampaign[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceCampaigns(context: CampaignRepositoryContext): Promise<void> {
+  if (!campaignApiClient.configured) return;
+  const res = await campaignApiClient.get<{ items: WorkspaceCampaign[]; nextCursor: string | null }>(
+    context.workspaceId, 'campaigns');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    campaignCache.set(context.workspaceId, sortCampaigns(res.value.items.map((c) => normalizeCampaign(c, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('workspace_campaigns_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
