@@ -49,14 +49,31 @@ export class CreditService {
       balanceAfter = ws.creditBalance;
     }
 
-    return tx.creditLedger.create({
-      data: {
-        workspaceId: input.workspaceId, delta: input.delta, reason: input.reason,
-        refType: input.refType ?? null, refId: input.refId ?? null,
-        idempotencyKey: input.idempotencyKey ?? null, balanceAfter,
-        metadata: (input.metadata ?? undefined) as Prisma.InputJsonValue | undefined,
-      },
-    });
+    try {
+      return await tx.creditLedger.create({
+        data: {
+          workspaceId: input.workspaceId, delta: input.delta, reason: input.reason,
+          refType: input.refType ?? null, refId: input.refId ?? null,
+          idempotencyKey: input.idempotencyKey ?? null, balanceAfter,
+          metadata: (input.metadata ?? undefined) as Prisma.InputJsonValue | undefined,
+        },
+      });
+    } catch (e) {
+      // 并发同 idempotencyKey 竞态:check-then-create 之间被另一事务抢先插入,
+      // 触发唯一约束 P2002。同 key 并发时唯一约束会让其中一个事务连同其
+      // updateMany 一起回滚(不会双扣),这里重新取出已存在分录返回即可。
+      if (
+        input.idempotencyKey &&
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        const existing = await tx.creditLedger.findUnique({
+          where: { workspaceId_idempotencyKey: { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey } },
+        });
+        if (existing) return existing;
+      }
+      throw e;
+    }
   }
 
   hold(tx: Tx, workspaceId: string, jobId: string, amount: number) {

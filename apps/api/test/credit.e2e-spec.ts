@@ -42,7 +42,7 @@ describe('CreditService (e2e)', () => {
     const ws = await freshWs('c3@test.dev');
     await credit.getBalance(ws);
     await expect(prisma.$transaction((tx) => credit.hold(tx, ws, 'job-B', 150)))
-      .rejects.toMatchObject({ code: 'insufficient_credits', status: 402 });
+      .rejects.toMatchObject({ code: 'insufficient_credits', status: 402, metadata: { required: 150, balance: 100 } });
     expect((await credit.getBalance(ws)).balance).toBe(100);
   });
 
@@ -65,5 +65,33 @@ describe('CreditService (e2e)', () => {
     const agg = await prisma.creditLedger.aggregate({ where: { workspaceId: ws }, _sum: { delta: true } });
     const ws2 = await prisma.workspace.findUnique({ where: { id: ws } });
     expect(ws2!.creditBalance).toBe(agg._sum.delta ?? 0);
+  });
+
+  it('ensureMonthlyGrant: new period expires prior grant remainder (no rollover)', async () => {
+    const ws = await freshWs('c6@test.dev');
+    await credit.getBalance(ws);
+    await prisma.$transaction((tx) => credit.hold(tx, ws, 'jx', 30));
+    expect((await credit.getBalance(ws)).balance).toBe(70);
+    const nextMonth = new Date();
+    nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+    const b = await credit.getBalance(ws, nextMonth);
+    expect(b.balance).toBe(100);
+    const expires = await prisma.creditLedger.findMany({ where: { workspaceId: ws, reason: 'expire' } });
+    expect(expires).toHaveLength(1);
+    expect(expires[0].delta).toBe(-70);
+    const grants = await prisma.creditLedger.findMany({ where: { workspaceId: ws, reason: 'monthly_grant' } });
+    expect(grants).toHaveLength(2);
+  });
+
+  it('capture writes a delta=0 ledger entry, idempotent', async () => {
+    const ws = await freshWs('c7@test.dev');
+    await credit.getBalance(ws);
+    await prisma.$transaction((tx) => credit.hold(tx, ws, 'jc', 5));
+    await prisma.$transaction((tx) => credit.capture(tx, ws, 'jc'));
+    await prisma.$transaction((tx) => credit.capture(tx, ws, 'jc'));
+    const caps = await prisma.creditLedger.findMany({ where: { workspaceId: ws, reason: 'capture', refId: 'jc' } });
+    expect(caps).toHaveLength(1);
+    expect(caps[0].delta).toBe(0);
+    expect((await credit.getBalance(ws)).balance).toBe(95);
   });
 });
