@@ -1,5 +1,6 @@
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceAgencyPayoutStatus = 'none' | 'pending' | 'paid' | 'blocked';
 export type WorkspaceAgencyStatus = 'active' | 'suspended';
@@ -192,6 +193,7 @@ export function getDefaultWorkspaceAgencyPartners(context: AgencyRepositoryConte
 }
 
 export function loadWorkspaceAgencyPartners(context: AgencyRepositoryContext): WorkspaceAgencyPartner[] {
+  if (agencyApiClient.configured) return agencyCache.get(context.workspaceId) ?? [];
   return readAgencyPartners(context);
 }
 
@@ -232,6 +234,15 @@ export function createWorkspaceAgencyPartner(
   );
 
   writeAgencyPartners([partner, ...ensureDefaultWorkspaceAgencyPartners(context)], context);
+  if (agencyApiClient.configured) {
+    agencyCache.set(context.workspaceId, sortAgencyPartners([partner, ...(agencyCache.get(context.workspaceId) ?? [])]));
+    void agencyApiClient.post(context.workspaceId, 'agency-partners', {
+      id: partner.id, name: partner.name, level: partner.level, invitedUsers: partner.invitedUsers,
+      totalCommissionCents: partner.totalCommissionCents, commissionRate: partner.commissionRate,
+      payoutStatus: partner.payoutStatus, status: partner.status, metadata: partner.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceAgencyPartner write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceAgencyPartner write-through failed', e));
+  }
   return partner;
 }
 
@@ -258,6 +269,15 @@ export function updateWorkspaceAgencyPartner(
   });
 
   writeAgencyPartners(updatedPartners, context);
+  if (agencyApiClient.configured && updatedPartner) {
+    const u: WorkspaceAgencyPartner = updatedPartner;
+    agencyCache.set(context.workspaceId, sortAgencyPartners((agencyCache.get(context.workspaceId) ?? []).map((p) => (p.id === u.id ? u : p))));
+    void agencyApiClient.patch(context.workspaceId, `agency-partners/${u.id}`, {
+      name: u.name, level: u.level, invitedUsers: u.invitedUsers, totalCommissionCents: u.totalCommissionCents,
+      commissionRate: u.commissionRate, payoutStatus: u.payoutStatus, status: u.status, metadata: u.metadata,
+    }).then((r) => { if (!r.ok) console.error('updateWorkspaceAgencyPartner write-through failed', r); })
+      .catch((e) => console.error('updateWorkspaceAgencyPartner write-through failed', e));
+  }
   return updatedPartner;
 }
 
@@ -278,4 +298,21 @@ export function summarizeWorkspaceAgencyPartners(
       pendingPayoutCents: 0,
     },
   );
+}
+
+let agencyApiClient: ApiClient = defaultApiClient;
+export function __setAgencyApiClientForTest(client: ApiClient): void { agencyApiClient = client; }
+
+const agencyCache = new Map<string, WorkspaceAgencyPartner[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceAgencyPartners(context: AgencyRepositoryContext): Promise<void> {
+  if (!agencyApiClient.configured) return;
+  const res = await agencyApiClient.get<{ items: WorkspaceAgencyPartner[]; nextCursor: string | null }>(
+    context.workspaceId, 'agency-partners');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    agencyCache.set(context.workspaceId, sortAgencyPartners(res.value.items.map((p) => normalizeAgencyPartner(p, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('workspace_agency_partners_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
