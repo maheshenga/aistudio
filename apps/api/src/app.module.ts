@@ -11,12 +11,13 @@ import { AssetModule } from './asset/asset.module';
 import { UsageEventModule } from './usage-event/usage-event.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { OrchestrationModule } from './orchestration/orchestration.module';
+import { BillingModule } from './billing/billing.module';
 import { TenantGuard } from './common/tenant/tenant.guard';
 import { AuthGuard } from './common/auth/auth.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), PrismaModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule],
+  imports: [ScheduleModule.forRoot(), PrismaModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule, BillingModule],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: TenantGuard },
