@@ -1,5 +1,6 @@
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceTicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type WorkspaceTicketPriority = 'low' | 'medium' | 'high' | 'urgent';
@@ -106,13 +107,17 @@ function normalizePriority(value: unknown): WorkspaceTicketPriority {
 }
 
 function normalizeTimestamp(value: unknown, fallback: number): number {
-  const numericValue = Number(value);
+  const numericValue = typeof value === 'string' && !/^\d+$/.test(value.trim())
+    ? Date.parse(value)
+    : Number(value);
   return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : fallback;
 }
 
 function normalizeNullableTimestamp(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
-  const numericValue = Number(value);
+  const numericValue = typeof value === 'string' && !/^\d+$/.test(value.trim())
+    ? Date.parse(value)
+    : Number(value);
   return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : null;
 }
 
@@ -210,6 +215,7 @@ export function getDefaultWorkspaceTickets(context: TicketRepositoryContext): Wo
 }
 
 export function loadWorkspaceTickets(context: TicketRepositoryContext): WorkspaceTicket[] {
+  if (ticketApiClient.configured) return ticketCache.get(context.workspaceId) ?? [];
   return readTickets(context);
 }
 
@@ -252,6 +258,16 @@ export function createWorkspaceTicket(
   );
 
   writeTickets([ticket, ...ensureDefaultWorkspaceTickets(context)], context);
+  if (ticketApiClient.configured) {
+    ticketCache.set(context.workspaceId, sortTickets([ticket, ...(ticketCache.get(context.workspaceId) ?? [])]));
+    void ticketApiClient.post(context.workspaceId, 'tickets', {
+      id: ticket.id, requesterName: ticket.requesterName, requesterEmail: ticket.requesterEmail,
+      category: ticket.category, subject: ticket.subject, status: ticket.status, priority: ticket.priority,
+      resolvedAt: ticket.resolvedAt && ticket.resolvedAt > 0 ? new Date(ticket.resolvedAt).toISOString() : undefined,
+      firstResponseMinutes: ticket.firstResponseMinutes ?? undefined, metadata: ticket.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceTicket write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceTicket write-through failed', e));
+  }
   return ticket;
 }
 
@@ -281,6 +297,17 @@ export function updateWorkspaceTicket(
   });
 
   writeTickets(updatedTickets, context);
+  if (ticketApiClient.configured && updatedTicket) {
+    const u: WorkspaceTicket = updatedTicket;
+    ticketCache.set(context.workspaceId, sortTickets((ticketCache.get(context.workspaceId) ?? []).map((t) => (t.id === u.id ? u : t))));
+    void ticketApiClient.patch(context.workspaceId, `tickets/${u.id}`, {
+      requesterName: u.requesterName, requesterEmail: u.requesterEmail, category: u.category, subject: u.subject,
+      status: u.status, priority: u.priority,
+      resolvedAt: u.resolvedAt && u.resolvedAt > 0 ? new Date(u.resolvedAt).toISOString() : undefined,
+      firstResponseMinutes: u.firstResponseMinutes ?? undefined, metadata: u.metadata,
+    }).then((r) => { if (!r.ok) console.error('updateWorkspaceTicket write-through failed', r); })
+      .catch((e) => console.error('updateWorkspaceTicket write-through failed', e));
+  }
   return updatedTicket;
 }
 
@@ -309,4 +336,21 @@ export function summarizeWorkspaceTickets(
       ? 0
       : Math.round(responseTimes.reduce((total, minutes) => total + minutes, 0) / responseTimes.length),
   };
+}
+
+let ticketApiClient: ApiClient = defaultApiClient;
+export function __setTicketApiClientForTest(client: ApiClient): void { ticketApiClient = client; }
+
+const ticketCache = new Map<string, WorkspaceTicket[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceTickets(context: TicketRepositoryContext): Promise<void> {
+  if (!ticketApiClient.configured) return;
+  const res = await ticketApiClient.get<{ items: WorkspaceTicket[]; nextCursor: string | null }>(
+    context.workspaceId, 'tickets');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    ticketCache.set(context.workspaceId, sortTickets(res.value.items.map((t) => normalizeTicket(t, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('workspace_tickets_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
