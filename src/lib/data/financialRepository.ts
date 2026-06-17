@@ -1,5 +1,6 @@
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type FinancialRecordKind = 'subscription' | 'invoice' | 'payment' | 'refund' | 'withdrawal' | 'credit';
 export type FinancialRecordStatus = 'paid' | 'pending' | 'issued' | 'refunded' | 'cancelled' | 'approved';
@@ -104,7 +105,9 @@ function normalizeCouponCode(value: unknown): string {
 }
 
 function normalizeTimestamp(value: unknown, fallback: number): number {
-  const numericValue = Number(value);
+  const numericValue = typeof value === 'string' && !/^\d+$/.test(value.trim())
+    ? Date.parse(value)
+    : Number(value);
   return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : fallback;
 }
 
@@ -167,6 +170,7 @@ function writeFinancialRecords(
 }
 
 export function loadWorkspaceFinancialRecords(context: FinancialRepositoryContext): WorkspaceFinancialRecord[] {
+  if (financialApiClient.configured) return financialCache.get(context.workspaceId) ?? [];
   return readFinancialRecords(context);
 }
 
@@ -174,6 +178,28 @@ export function saveWorkspaceFinancialRecords(
   records: WorkspaceFinancialRecord[],
   context: FinancialRepositoryContext,
 ): WorkspaceFinancialRecord[] {
+  if (financialApiClient.configured) {
+    const normalized = sortFinancialRecords(records.map((record) => normalizeFinancialRecord(record, context)));
+    const prev = new Map((financialCache.get(context.workspaceId) ?? []).map((r) => [r.id, r]));
+    financialCache.set(context.workspaceId, normalized);
+    for (const r of normalized) {
+      const before = prev.get(r.id);
+      // 只对相对缓存有变化(status/amountCents/metadata 等)的记录发 PATCH
+      if (!before || JSON.stringify(before) !== JSON.stringify(r)) {
+        void financialApiClient.patch(context.workspaceId, `financial-records/${r.id}`, {
+          kind: r.kind, status: r.status, amountCents: r.amountCents, currency: r.currency,
+          planId: r.planId ?? undefined, counterparty: r.counterparty,
+          occurredAt: r.occurredAt > 0 ? new Date(r.occurredAt).toISOString() : undefined,
+          metadata: r.metadata,
+        }).then((res) => { if (!res.ok) console.error('saveWorkspaceFinancialRecords write-through failed', res); })
+          .catch((e) => console.error('saveWorkspaceFinancialRecords write-through failed', e));
+      }
+    }
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('financial_records_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+    return normalized;
+  }
   return writeFinancialRecords(records, context);
 }
 
@@ -204,6 +230,16 @@ export function createWorkspaceFinancialRecord(
   );
 
   writeFinancialRecords([record, ...readFinancialRecords(context)], context);
+  if (financialApiClient.configured) {
+    financialCache.set(context.workspaceId, sortFinancialRecords([record, ...(financialCache.get(context.workspaceId) ?? [])]));
+    void financialApiClient.post(context.workspaceId, 'financial-records', {
+      id: record.id, kind: record.kind, status: record.status, amountCents: record.amountCents,
+      currency: record.currency, planId: record.planId ?? undefined, counterparty: record.counterparty,
+      occurredAt: record.occurredAt > 0 ? new Date(record.occurredAt).toISOString() : undefined,
+      metadata: record.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceFinancialRecord write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceFinancialRecord write-through failed', e));
+  }
   return record;
 }
 
@@ -338,4 +374,21 @@ export function buildWorkspaceInvoices(records: WorkspaceFinancialRecord[]): Wor
       status: record.status,
       sourceRecordId: record.id,
     }));
+}
+
+let financialApiClient: ApiClient = defaultApiClient;
+export function __setFinancialApiClientForTest(client: ApiClient): void { financialApiClient = client; }
+
+const financialCache = new Map<string, WorkspaceFinancialRecord[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceFinancialRecords(context: FinancialRepositoryContext): Promise<void> {
+  if (!financialApiClient.configured) return;
+  const res = await financialApiClient.get<{ items: WorkspaceFinancialRecord[]; nextCursor: string | null }>(
+    context.workspaceId, 'financial-records');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    financialCache.set(context.workspaceId, sortFinancialRecords(res.value.items.map((r) => normalizeFinancialRecord(r as Partial<WorkspaceFinancialRecord>, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('financial_records_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
