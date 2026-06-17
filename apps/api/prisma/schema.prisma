@@ -30,6 +30,10 @@ model Workspace {
   riskEvents       RiskEvent[]
   mediaAccounts    MediaAccount[]
   keywordLibraries KeywordLibrary[]
+  tickets          Ticket[]
+  paymentMethods   PaymentMethod[]
+  taxEvents        TaxEvent[]
+  tasks            Task[]
 }
 
 model Member {
@@ -326,4 +330,84 @@ model KeywordLibrary {
   workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   @@index([workspaceId, createdAt])
   @@index([workspaceId, status])
+}
+
+model Ticket {
+  id                   String    @id @default(cuid())
+  workspaceId          String
+  requesterName        String
+  requesterEmail       String    @default("")
+  category             String
+  subject              String
+  status               String    @default("open")
+  priority             String    @default("medium")
+  resolvedAt           DateTime?
+  firstResponseMinutes Int?
+  metadata             Json?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status])
+}
+
+model PaymentMethod {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  label         String
+  provider      String
+  brand         String
+  last4         String    @default("")
+  status        String    @default("active")
+  isDefault     Boolean   @default(false)
+  credentialRef String?
+  metadata      Json?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
+}
+
+model TaxEvent {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  date         String
+  title        String
+  type         String
+  description  String    @default("")
+  summary      String    @default("")
+  amount       String?
+  status       String    @default("pending")
+  metadata     Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status])
+}
+
+model Task {
+  id                  String    @id @default(cuid())
+  workspaceId         String
+  title               String
+  column              String    @default("todo")
+  priority            String    @default("Medium")
+  type                String    @default("")
+  date                String    @default("")
+  isAuto              Boolean   @default(false)
+  status              String?
+  runtimeMode         String?
+  runtimeProviderKind String?
+  runtimeTaskId       String?
+  runtimeStatus       String?
+  agentId             String?
+  runtimeId           String?
+  externalRef         String?
+  lastRuntimeEventAt  DateTime?
+  metadata            Json?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  workspace           Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, column])
 }
