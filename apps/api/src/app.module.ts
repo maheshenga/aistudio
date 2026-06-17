@@ -21,12 +21,13 @@ import { MediaModule } from './media/media.module';
 import { KeywordModule } from './keyword/keyword.module';
 import { TicketModule } from './ticket/ticket.module';
 import { PaymentModule } from './payment/payment.module';
+import { TaxEventModule } from './tax-event/tax-event.module';
 import { TenantGuard } from './common/tenant/tenant.guard';
 import { AuthGuard } from './common/auth/auth.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), PrismaModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule, BillingModule, CustomerModule, CampaignModule, AnnouncementModule, AgencyModule, RiskModule, MediaModule, KeywordModule, TicketModule, PaymentModule],
+  imports: [ScheduleModule.forRoot(), PrismaModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule, BillingModule, CustomerModule, CampaignModule, AnnouncementModule, AgencyModule, RiskModule, MediaModule, KeywordModule, TicketModule, PaymentModule, TaxEventModule],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: TenantGuard },
