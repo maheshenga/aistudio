@@ -1,5 +1,6 @@
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspacePaymentMethodStatus = 'active' | 'expired' | 'disabled' | 'needs_action';
 
@@ -72,7 +73,9 @@ function normalizeStatus(value: unknown): WorkspacePaymentMethodStatus {
 }
 
 function normalizeTimestamp(value: unknown, fallback: number): number {
-  const numericValue = Number(value);
+  const numericValue = typeof value === 'string' && !/^\d+$/.test(value.trim())
+    ? Date.parse(value)
+    : Number(value);
   return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : fallback;
 }
 
@@ -173,6 +176,7 @@ export function getDefaultWorkspacePaymentMethods(context: PaymentRepositoryCont
 }
 
 export function loadWorkspacePaymentMethods(context: PaymentRepositoryContext): WorkspacePaymentMethod[] {
+  if (paymentApiClient.configured) return paymentCache.get(context.workspaceId) ?? [];
   return readPaymentMethods(context);
 }
 
@@ -215,6 +219,25 @@ export function createWorkspacePaymentMethod(
   );
 
   writePaymentMethods([method, ...ensureDefaultWorkspacePaymentMethods(context)], context);
+  if (paymentApiClient.configured) {
+    const nextCache = sortPaymentMethods(ensureSingleDefault([method, ...(paymentCache.get(context.workspaceId) ?? [])]));
+    paymentCache.set(context.workspaceId, nextCache);
+    void paymentApiClient.post(context.workspaceId, 'payment-methods', {
+      id: method.id, label: method.label, provider: method.provider, brand: method.brand, last4: method.last4,
+      status: method.status, isDefault: method.isDefault, credentialRef: method.credentialRef ?? undefined,
+      metadata: method.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspacePaymentMethod write-through failed', r); })
+      .catch((e) => console.error('createWorkspacePaymentMethod write-through failed', e));
+    if (method.isDefault) {
+      for (const other of nextCache) {
+        if (other.id !== method.id && other.isDefault === false) {
+          void paymentApiClient.patch(context.workspaceId, `payment-methods/${other.id}`, { isDefault: false })
+            .then((r) => { if (!r.ok) console.error('payment ensureSingleDefault PATCH failed', r); })
+            .catch((e) => console.error('payment ensureSingleDefault PATCH failed', e));
+        }
+      }
+    }
+  }
   return method;
 }
 
@@ -249,9 +272,45 @@ export function updateWorkspacePaymentMethod(
   });
 
   writePaymentMethods(updatedMethods, context);
+  if (paymentApiClient.configured && updatedMethod) {
+    const u: WorkspacePaymentMethod = updatedMethod;
+    const nextCache = sortPaymentMethods(ensureSingleDefault((paymentCache.get(context.workspaceId) ?? []).map((m) => (m.id === u.id ? u : m))));
+    paymentCache.set(context.workspaceId, nextCache);
+    void paymentApiClient.patch(context.workspaceId, `payment-methods/${u.id}`, {
+      label: u.label, provider: u.provider, brand: u.brand, last4: u.last4, status: u.status,
+      isDefault: u.isDefault, credentialRef: u.credentialRef ?? undefined, metadata: u.metadata,
+    }).then((r) => { if (!r.ok) console.error('updateWorkspacePaymentMethod write-through failed', r); })
+      .catch((e) => console.error('updateWorkspacePaymentMethod write-through failed', e));
+    if (u.isDefault) {
+      for (const other of nextCache) {
+        if (other.id !== u.id && other.isDefault === false) {
+          void paymentApiClient.patch(context.workspaceId, `payment-methods/${other.id}`, { isDefault: false })
+            .then((r) => { if (!r.ok) console.error('payment ensureSingleDefault PATCH failed', r); })
+            .catch((e) => console.error('payment ensureSingleDefault PATCH failed', e));
+        }
+      }
+    }
+  }
   return updatedMethod;
 }
 
 export function getDefaultWorkspacePaymentMethod(context: PaymentRepositoryContext): WorkspacePaymentMethod | null {
   return ensureDefaultWorkspacePaymentMethods(context).find((method) => method.isDefault) ?? null;
+}
+
+let paymentApiClient: ApiClient = defaultApiClient;
+export function __setPaymentApiClientForTest(client: ApiClient): void { paymentApiClient = client; }
+
+const paymentCache = new Map<string, WorkspacePaymentMethod[]>(); // key = workspaceId
+
+export async function hydrateWorkspacePaymentMethods(context: PaymentRepositoryContext): Promise<void> {
+  if (!paymentApiClient.configured) return;
+  const res = await paymentApiClient.get<{ items: WorkspacePaymentMethod[]; nextCursor: string | null }>(
+    context.workspaceId, 'payment-methods');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    paymentCache.set(context.workspaceId, sortPaymentMethods(ensureSingleDefault(res.value.items.map((m) => normalizePaymentMethod(m, context)))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('workspace_payment_methods_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
