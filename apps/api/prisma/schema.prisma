@@ -34,6 +34,7 @@ model Workspace {
   paymentMethods   PaymentMethod[]
   taxEvents        TaxEvent[]
   tasks            Task[]
+  financialRecords FinancialRecord[]
 }
 
 model Member {
@@ -410,4 +411,22 @@ model Task {
   workspace           Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   @@index([workspaceId, createdAt])
   @@index([workspaceId, column])
+}
+
+model FinancialRecord {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  kind         String
+  status       String
+  amountCents  Int       @default(0)
+  currency     String    @default("CNY")
+  planId       String?
+  counterparty String    @default("Workspace Customer")
+  occurredAt   DateTime  @default(now())
+  metadata     Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, occurredAt])
+  @@index([workspaceId, kind])
 }
