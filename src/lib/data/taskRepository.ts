@@ -6,6 +6,7 @@ import type {
   RuntimeProviderKind,
 } from '../../runtime/agentRuntimeTypes';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceTaskColumn = 'todo' | 'in_progress' | 'auto_exec' | 'review' | 'done';
 export type WorkspaceTaskPriority = 'High' | 'Medium' | 'Low';
@@ -77,7 +78,9 @@ function normalizeTask(task: WorkspaceTask, context: TaskRepositoryContext): Wor
     runtimeStatus: task.runtimeStatus,
     agentId: task.agentId ? String(task.agentId) : undefined,
     runtimeId: task.runtimeId ? String(task.runtimeId) : undefined,
-    externalRef: task.externalRef,
+    externalRef: typeof task.externalRef === 'string'
+      ? (() => { try { return JSON.parse(task.externalRef as unknown as string); } catch { return task.externalRef; } })()
+      : task.externalRef,
     lastRuntimeEventAt: task.lastRuntimeEventAt,
     metadata,
     createdAt: task.createdAt ?? now,
@@ -110,6 +113,7 @@ function writeTasks(tasks: WorkspaceTask[], context: TaskRepositoryContext): Wor
 }
 
 export function loadWorkspaceTasks(context: TaskRepositoryContext): WorkspaceTask[] {
+  if (taskApiClient.configured) return taskCache.get(context.workspaceId) ?? [];
   return readTasks(context);
 }
 
@@ -143,6 +147,18 @@ export function createWorkspaceTask(input: WorkspaceTaskInput, context: TaskRepo
   };
 
   writeTasks([...readTasks(context), task], context);
+  if (taskApiClient.configured) {
+    taskCache.set(context.workspaceId, [...(taskCache.get(context.workspaceId) ?? []), task]);
+    void taskApiClient.post(context.workspaceId, 'tasks', {
+      id: task.id, title: task.title, column: task.column, priority: task.priority, type: task.type,
+      date: task.date, isAuto: task.isAuto, status: task.status, runtimeMode: task.runtimeMode,
+      runtimeProviderKind: task.runtimeProviderKind, runtimeTaskId: task.runtimeTaskId,
+      runtimeStatus: task.runtimeStatus, agentId: task.agentId, runtimeId: task.runtimeId,
+      externalRef: task.externalRef === undefined ? undefined : JSON.stringify(task.externalRef),
+      lastRuntimeEventAt: task.lastRuntimeEventAt, metadata: task.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceTask write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceTask write-through failed', e));
+  }
   return task;
 }
 
@@ -160,11 +176,33 @@ export function updateWorkspaceTask(
   });
 
   writeTasks(updatedTasks, context);
+  if (taskApiClient.configured && updatedTask) {
+    const u: WorkspaceTask = updatedTask;
+    taskCache.set(context.workspaceId, (taskCache.get(context.workspaceId) ?? []).map((t) => (t.id === u.id ? u : t)));
+    void taskApiClient.patch(context.workspaceId, `tasks/${u.id}`, {
+      title: u.title, column: u.column, priority: u.priority, type: u.type, date: u.date, isAuto: u.isAuto,
+      status: u.status, runtimeMode: u.runtimeMode, runtimeProviderKind: u.runtimeProviderKind,
+      runtimeTaskId: u.runtimeTaskId, runtimeStatus: u.runtimeStatus, agentId: u.agentId, runtimeId: u.runtimeId,
+      externalRef: u.externalRef === undefined ? undefined : JSON.stringify(u.externalRef),
+      lastRuntimeEventAt: u.lastRuntimeEventAt, metadata: u.metadata,
+    }).then((r) => { if (!r.ok) console.error('updateWorkspaceTask write-through failed', r); })
+      .catch((e) => console.error('updateWorkspaceTask write-through failed', e));
+  }
   return updatedTask;
 }
 
 export function deleteWorkspaceTasks(taskIds: string[], context: TaskRepositoryContext): WorkspaceTask[] {
   const taskIdSet = new Set(taskIds);
+  if (taskApiClient.configured) {
+    const next = (taskCache.get(context.workspaceId) ?? []).filter((task) => !taskIdSet.has(task.id));
+    taskCache.set(context.workspaceId, next);
+    for (const id of taskIds) {
+      void taskApiClient.del(context.workspaceId, `tasks/${id}`)
+        .then((r) => { if (!r.ok) console.error('deleteWorkspaceTasks write-through failed', r); })
+        .catch((e) => console.error('deleteWorkspaceTasks write-through failed', e));
+    }
+    return next;
+  }
   return writeTasks(readTasks(context).filter((task) => !taskIdSet.has(task.id)), context);
 }
 
@@ -176,4 +214,21 @@ export function calculateTaskCompletion(tasks: WorkspaceTask[]) {
     completed,
     percent: total === 0 ? 0 : Math.round((completed / total) * 100),
   };
+}
+
+let taskApiClient: ApiClient = defaultApiClient;
+export function __setTaskApiClientForTest(client: ApiClient): void { taskApiClient = client; }
+
+const taskCache = new Map<string, WorkspaceTask[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceTasks(context: TaskRepositoryContext): Promise<void> {
+  if (!taskApiClient.configured) return;
+  const res = await taskApiClient.get<{ items: WorkspaceTask[]; nextCursor: string | null }>(
+    context.workspaceId, 'tasks');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    taskCache.set(context.workspaceId, res.value.items.map((t) => normalizeTask(t as WorkspaceTask, context)));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('tasks_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
