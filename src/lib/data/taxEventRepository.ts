@@ -1,5 +1,6 @@
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceTaxEventType = 'tax_deadline' | 'audit_window' | 'invoice_due';
 export type WorkspaceTaxEventStatus = 'pending' | 'completed' | 'urgent';
@@ -66,7 +67,9 @@ function normalizeText(value: unknown, fallback: string): string {
 }
 
 function normalizeTimestamp(value: unknown, fallback: number): number {
-  const numericValue = Number(value);
+  const numericValue = typeof value === 'string' && !/^\d+$/.test(value.trim())
+    ? Date.parse(value)
+    : Number(value);
   return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : fallback;
 }
 
@@ -214,6 +217,7 @@ function buildSeedTaxEvents(context: TaxEventRepositoryContext): WorkspaceTaxEve
 }
 
 export function loadWorkspaceTaxEvents(context: TaxEventRepositoryContext): WorkspaceTaxEvent[] {
+  if (taxEventApiClient.configured) return taxEventCache.get(context.workspaceId) ?? [];
   return readTaxEvents(context);
 }
 
@@ -239,6 +243,15 @@ export function createWorkspaceTaxEvent(
     context,
   );
   writeTaxEvents([...readTaxEvents(context), event], context);
+  if (taxEventApiClient.configured) {
+    taxEventCache.set(context.workspaceId, sortTaxEvents([...(taxEventCache.get(context.workspaceId) ?? []), event]));
+    void taxEventApiClient.post(context.workspaceId, 'tax-events', {
+      id: event.id, date: event.date, title: event.title, type: event.type,
+      description: event.description, summary: event.summary, amount: event.amount,
+      status: event.status, metadata: event.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceTaxEvent write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceTaxEvent write-through failed', e));
+  }
   return event;
 }
 
@@ -256,4 +269,21 @@ export function seedWorkspaceTaxEvents(context: TaxEventRepositoryContext): Work
     context,
   ));
   return writeTaxEvents(seededEvents, context);
+}
+
+let taxEventApiClient: ApiClient = defaultApiClient;
+export function __setTaxEventApiClientForTest(client: ApiClient): void { taxEventApiClient = client; }
+
+const taxEventCache = new Map<string, WorkspaceTaxEvent[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceTaxEvents(context: TaxEventRepositoryContext): Promise<void> {
+  if (!taxEventApiClient.configured) return;
+  const res = await taxEventApiClient.get<{ items: WorkspaceTaxEvent[]; nextCursor: string | null }>(
+    context.workspaceId, 'tax-events');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    taxEventCache.set(context.workspaceId, sortTaxEvents(res.value.items.map((e) => normalizeTaxEvent(e as WorkspaceTaxEventDraft, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('tax_events_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
