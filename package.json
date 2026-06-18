@@ -34,6 +34,7 @@
     "test:member-repo-api": "tsx scripts/member-repository-api.test.ts",
     "test:orchestration-service": "tsx scripts/orchestration-service.test.ts",
     "test:credit-repo": "tsx scripts/credit-repository.test.ts",
+    "test:credit-preflight": "tsx scripts/credit-preflight.test.ts",
     "test:workspace-resource": "tsx scripts/workspace-resource-client.test.ts",
     "test:customer-repo": "tsx scripts/customer-repository.test.ts",
     "test:campaign-repo": "tsx scripts/campaign-repository.test.ts",
