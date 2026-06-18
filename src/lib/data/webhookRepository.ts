@@ -1,5 +1,6 @@
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceWebhookStatus = 'active' | 'disabled' | 'failing';
 
@@ -104,7 +105,9 @@ function slugify(value: string): string {
 }
 
 function randomToken(): string {
-  return `${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 12)}`;
+  const bytes = new Uint8Array(16);
+  (globalThis.crypto ?? require('node:crypto').webcrypto).getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function generatedSigningSecret(name: string): string {
@@ -217,6 +220,7 @@ function buildWebhookEndpoint(
 }
 
 export function loadWorkspaceWebhookEndpoints(context: WebhookRepositoryContext): WorkspaceWebhookEndpoint[] {
+  if (webhookApiClient.configured) return webhookCache.get(context.workspaceId) ?? [];
   return readWebhookEndpoints(context);
 }
 
@@ -234,6 +238,14 @@ export function createWorkspaceWebhookEndpoint(
   const signingSecret = input.signingSecret?.trim() || generatedSigningSecret(input.name);
   const record = buildWebhookEndpoint(input, signingSecret, context);
   writeWebhookEndpoints([record, ...readWebhookEndpoints(context)], context);
+  if (webhookApiClient.configured) {
+    webhookCache.set(context.workspaceId, sortWebhookEndpoints([record, ...(webhookCache.get(context.workspaceId) ?? [])]));
+    void webhookApiClient.post(context.workspaceId, 'webhooks', {
+      id: record.id, name: record.name, url: record.url, signingSecret,
+      events: record.events, status: record.status, metadata: record.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceWebhookEndpoint write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceWebhookEndpoint write-through failed', e));
+  }
   return { record, signingSecret };
 }
 
@@ -268,6 +280,18 @@ export function updateWorkspaceWebhookEndpoint(
   });
 
   writeWebhookEndpoints(endpoints, context);
+  if (webhookApiClient.configured && updatedEndpoint) {
+    const u: WorkspaceWebhookEndpoint = updatedEndpoint;
+    webhookCache.set(context.workspaceId, sortWebhookEndpoints((webhookCache.get(context.workspaceId) ?? []).map((w) => (w.id === u.id ? u : w))));
+    const body: Record<string, unknown> = {
+      name: u.name, url: u.url, events: u.events, status: u.status,
+      failureCount: u.failureCount, metadata: u.metadata,
+    };
+    if (patch.signingSecret?.trim()) body.signingSecret = patch.signingSecret.trim();
+    void webhookApiClient.patch(context.workspaceId, `webhooks/${u.id}`, body)
+      .then((r) => { if (!r.ok) console.error('updateWorkspaceWebhookEndpoint write-through failed', r); })
+      .catch((e) => console.error('updateWorkspaceWebhookEndpoint write-through failed', e));
+  }
   return updatedEndpoint;
 }
 
@@ -279,6 +303,12 @@ export function deleteWorkspaceWebhookEndpoint(
   const remaining = endpoints.filter((endpoint) => endpoint.id !== endpointId);
   if (remaining.length === endpoints.length) return false;
   writeWebhookEndpoints(remaining, context);
+  if (webhookApiClient.configured) {
+    webhookCache.set(context.workspaceId, (webhookCache.get(context.workspaceId) ?? []).filter((w) => w.id !== endpointId));
+    void webhookApiClient.del(context.workspaceId, `webhooks/${endpointId}`)
+      .then((r) => { if (!r.ok) console.error('deleteWorkspaceWebhookEndpoint write-through failed', r); })
+      .catch((e) => console.error('deleteWorkspaceWebhookEndpoint write-through failed', e));
+  }
   return true;
 }
 
@@ -294,4 +324,21 @@ export function exportWorkspaceWebhookEndpointRows(
     signingSecretLast4: endpoint.signingSecretLast4,
     failureCount: endpoint.failureCount,
   }));
+}
+
+let webhookApiClient: ApiClient = defaultApiClient;
+export function __setWebhookApiClientForTest(client: ApiClient): void { webhookApiClient = client; }
+
+const webhookCache = new Map<string, WorkspaceWebhookEndpoint[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceWebhookEndpoints(context: WebhookRepositoryContext): Promise<void> {
+  if (!webhookApiClient.configured) return;
+  const res = await webhookApiClient.get<{ items: WorkspaceWebhookEndpoint[]; nextCursor: string | null }>(
+    context.workspaceId, 'webhooks');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    webhookCache.set(context.workspaceId, sortWebhookEndpoints(res.value.items.map((w) => normalizeWebhookEndpoint(w, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('workspace_webhooks_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }

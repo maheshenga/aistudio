@@ -16,7 +16,7 @@
     "test:workspace-state": "tsx scripts/workspace-state.test.ts",
     "test:launch-readiness": "tsx scripts/launch-readiness.test.ts",
     "test:browser-smoke": "tsx scripts/browser-smoke.test.ts",
-    "test:p0-specialized": "npm run test:product-registry && npm run test:data-backend && npm run test:workspace-state && npm run test:runtime-contract && npm run test:desktop-bridge && npm run test:multica-mappers && npm run test:multica-runtime-provider && npm run test:web-runtime-provider && npm run test:multica-api-client && npm run test:credit-repo && npm run test:workspace-resource && npm run test:customer-repo && npm run test:campaign-repo && npm run test:announcement-repo && npm run test:agency-repo && npm run test:risk-repo && npm run test:media-repo && npm run test:keyword-repo && npm run test:ticket-repo && npm run test:payment-repo && npm run test:tax-event-repo && npm run test:task-repo && npm run test:financial-repo && npm run test:settings-repo && npm run test:api-key-repo",
+    "test:p0-specialized": "npm run test:product-registry && npm run test:data-backend && npm run test:workspace-state && npm run test:runtime-contract && npm run test:desktop-bridge && npm run test:multica-mappers && npm run test:multica-runtime-provider && npm run test:web-runtime-provider && npm run test:multica-api-client && npm run test:credit-repo && npm run test:workspace-resource && npm run test:customer-repo && npm run test:campaign-repo && npm run test:announcement-repo && npm run test:agency-repo && npm run test:risk-repo && npm run test:media-repo && npm run test:keyword-repo && npm run test:ticket-repo && npm run test:payment-repo && npm run test:tax-event-repo && npm run test:task-repo && npm run test:financial-repo && npm run test:settings-repo && npm run test:api-key-repo && npm run test:webhook-repo",
     "test:p0-release": "npm run test:p0-specialized && npm run test:launch-readiness && npm run test:saas-foundation && npm run lint && npm run build && npm run test:browser-smoke",
     "test:runtime-contract": "tsx scripts/runtime-contract.test.ts",
     "test:product-registry": "tsx scripts/product-registry.test.ts",
@@ -48,7 +48,8 @@
     "test:task-repo": "tsx scripts/task-repository.test.ts",
     "test:financial-repo": "tsx scripts/financial-repository.test.ts",
     "test:settings-repo": "tsx scripts/settings-repository.test.ts",
-    "test:api-key-repo": "tsx scripts/api-key-repository.test.ts"
+    "test:api-key-repo": "tsx scripts/api-key-repository.test.ts",
+    "test:webhook-repo": "tsx scripts/webhook-repository.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
