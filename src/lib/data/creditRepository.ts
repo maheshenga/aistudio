@@ -24,6 +24,10 @@ export interface CreditRepositoryContext {
 let creditApiClient: ApiClient = defaultApiClient;
 export function __setCreditApiClientForTest(client: ApiClient): void { creditApiClient = client; }
 
+export function isCreditBackendConfigured(): boolean {
+  return creditApiClient.configured;
+}
+
 const balanceCache = new Map<string, CreditBalanceSnapshot>();
 
 export async function hydrateCreditBalance(context: CreditRepositoryContext): Promise<void> {

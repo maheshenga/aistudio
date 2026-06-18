@@ -1,7 +1,7 @@
-import { hydrateCreditBalance, getCreditBalanceSnapshot } from '../data/creditRepository';
+import { isCreditBackendConfigured, hydrateCreditBalance, getCreditBalanceSnapshot } from '../data/creditRepository';
 
 export type CreditPreflightResult =
-  | { ok: true; balance: number }
+  | { ok: true; balance: number | null }
   | { ok: false; balance: number | null; reason: 'insufficient' | 'unavailable' };
 
 export async function preflightCredits(params: {
@@ -9,6 +9,10 @@ export async function preflightCredits(params: {
   requiredCredits: number;
 }): Promise<CreditPreflightResult> {
   const { workspaceId, requiredCredits } = params;
+  if (!isCreditBackendConfigured()) {
+    // 后端未接入(local MVP 稳态):没有计费系统需要守卫,直接放行
+    return { ok: true, balance: null };
+  }
   try {
     await hydrateCreditBalance({ workspaceId });
   } catch {

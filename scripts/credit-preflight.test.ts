@@ -63,12 +63,11 @@ async function run() {
   assert.equal(insufficient.balance, 3);
   assert.equal(insufficient.reason, 'insufficient');
 
-  // 3) 未配置后端 → snapshot 为 null → unavailable
+  // 3) 后端未接入(configured=false)→ 放行(ok),不再是 unavailable
   __setCreditApiClientForTest(unconfiguredApi());
-  const nullSnap = await preflightCredits({ workspaceId: 'ws-null', requiredCredits: 10 });
-  assert.equal(nullSnap.ok, false);
-  assert.equal(nullSnap.balance, null);
-  assert.equal(nullSnap.reason, 'unavailable');
+  const notConfigured = await preflightCredits({ workspaceId: 'ws-null', requiredCredits: 10 });
+  assert.equal(notConfigured.ok, true);
+  assert.equal(notConfigured.balance, null);
 
   // 3b) 已配置后端但水合未写入缓存(res.ok=false)→ 缓存 miss → unavailable
   __setCreditApiClientForTest(configuredButEmptyApi());
