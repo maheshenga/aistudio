@@ -64,6 +64,7 @@ quota = canStartBillableGeneration({
 `preflightCredits` 内部:
 
 ```
+if (!isCreditBackendConfigured()) → { ok: true, balance: null }   // 后端未接入(local MVP 稳态),无计费系统可守,直接放行
 await hydrateCreditBalance({ workspaceId })          // 主动拉后端最新余额
 snapshot = getCreditBalanceSnapshot({ workspaceId })
 if (!snapshot) → { ok: false, balance: null, reason: 'unavailable' }
@@ -72,25 +73,26 @@ else → { ok: false, balance, reason: 'insufficient' }
 // hydrateCreditBalance 抛异常 → catch → { ok: false, balance: null, reason: 'unavailable' }
 ```
 
+**关键区分**:`unavailable` 只代表"后端已接入、但本次拿不到余额"(水合抛错 / 缓存未命中)这种真·瞬时异常。"后端根本没接入"(`VITE_DATA_API_URL` 为空,即 CLAUDE.md 所述 local MVP 默认)是另一回事——此时没有计费系统需要守卫,直接放行,绝不能让导出被永久 fail-closed 拦死。`isCreditBackendConfigured()` 由 `creditRepository` 暴露,语义等同 `apiClient.configured`。
+
 ## 组件单元
 
 ### 1. 共享守卫工具(新文件)
 
 - 路径:`src/lib/billing/creditPreflight.ts`
-- 导出:
+- 导出(实现为判别联合,使消费端类型更精确):
   ```ts
-  export interface CreditPreflightResult {
-    ok: boolean;
-    balance: number | null;
-    reason?: 'insufficient' | 'unavailable';
-  }
+  export type CreditPreflightResult =
+    | { ok: true; balance: number | null }
+    | { ok: false; balance: number | null; reason: 'insufficient' | 'unavailable' };
   export async function preflightCredits(params: {
     workspaceId: string;
     requiredCredits: number;
   }): Promise<CreditPreflightResult>;
   ```
-- 职责:水合 + 读快照 + 比对 + 捕获水合异常。**不**做任何 toast / audit / usage-event 写入(那是调用方各自的责任)。
-- 依赖:`creditRepository`(`hydrateCreditBalance` + `getCreditBalanceSnapshot`)。
+  注:后端未接入时返回 `{ ok: true, balance: null }`(放行但无真值),余额充足时 `{ ok: true, balance: number }`。
+- 职责:判断后端是否接入 → 水合 + 读快照 + 比对 + 捕获水合异常。**不**做任何 toast / audit / usage-event 写入(那是调用方各自的责任)。
+- 依赖:`creditRepository`(`isCreditBackendConfigured` + `hydrateCreditBalance` + `getCreditBalanceSnapshot`)。
 
 ### 2. AssetsView.tsx
 
@@ -98,9 +100,9 @@ else → { ok: false, balance, reason: 'insufficient' }
 - 移除本地聚合(`loadWorkspaceFinancialRecords` / `loadWorkspaceBillingPlans` / `sumWorkspaceRechargeCredits` / `sumWorkspacePromotionalCredits` / `canStartBillableGeneration`)的守卫用途。
 - 调用点 `handleExportCSV`、`handleBulkDownload` 改为 `await preflightAssetExport(...)`。
 - 决策:
-  - `ok: true` → 放行。
+  - `ok: true` → 放行(含"余额充足"与"后端未接入"两种情形)。
   - `reason: 'insufficient'` → 拦截,维持现有处理:写 `quota_block` usage event + audit log + `toast('算力额度不足:...', 'warning')`,返回 false。
-  - `reason: 'unavailable'` → **拦截(fail-closed)**。导出是配额管控点且无后端 402 兜底,拿不到真值不放水。toast 提示"无法核验算力额度,请稍后重试",返回 false。
+  - `reason: 'unavailable'` → **拦截(fail-closed)**。仅当后端已接入、但本次拿不到余额(水合抛错/缓存未命中)才会到此分支。导出是配额管控点且无后端 402 兜底,已接入计费后拿不到真值不放水。toast 提示"无法核验算力额度,请稍后重试",返回 false。
 
 ### 3. GlobalAgentDispatcherModal.tsx
 
@@ -113,19 +115,22 @@ else → { ok: false, balance, reason: 'insufficient' }
 
 ## 错误处理
 
-- 水合网络异常 / snapshot 为 null,统一在 `preflightCredits` 内归为 `reason: 'unavailable'`,由调用方分别决策(AssetsView 拦截、Dispatcher 放行)。理由:导出无后端兜底,需 fail-closed 保安全;调度有后端原子兜底,可 fail-open 避免因网络抖动卡死用户。
+- **后端未接入**(`isCreditBackendConfigured() === false`,local MVP 默认):`preflightCredits` 直接返回 `{ ok: true, balance: null }`,两个守卫都放行。此时没有计费系统需要守卫,绝不能让导出被永久拦死。
+- **已接入但本次拿不到余额**(水合网络异常 / 缓存未命中):归为 `reason: 'unavailable'`,由调用方分别决策——AssetsView 拦截(fail-closed,导出无后端兜底,需保安全),Dispatcher 放行(fail-open,有后端原子兜底,避免网络抖动卡死用户)。
+- `insufficient`:余额明确不足,两个守卫都拦截。
 - 守卫通过后的本地 usage event 写入维持现状(本地事件日志,不影响后端扣减)。
 
 ## 测试
 
 项目用独立 `tsx` 脚本 + `node:assert/strict`,无测试框架。
 
-新增 `scripts/credit-preflight.test.ts`,对 `preflightCredits` 做单元测试,mock `creditRepository` 的 `hydrateCreditBalance` / `getCreditBalanceSnapshot`,覆盖四态:
+新增 `scripts/credit-preflight.test.ts`,对 `preflightCredits` 做单元测试,通过 `__setCreditApiClientForTest` 注入 fake ApiClient 驱动 `creditRepository`,覆盖五态:
 
-1. 余额充足 → `{ ok: true }`。
+1. 余额充足 → `{ ok: true, balance }`。
 2. 余额不足 → `{ ok: false, reason: 'insufficient' }`。
-3. snapshot 为 null → `{ ok: false, reason: 'unavailable' }`。
-4. `hydrateCreditBalance` reject → `{ ok: false, reason: 'unavailable' }`(且不抛出)。
+3. 后端未接入(`configured === false`)→ `{ ok: true, balance: null }`(放行,不再是 unavailable)。
+4. 已接入但缓存未命中(`configured === true` 但水合未写入缓存)→ `{ ok: false, reason: 'unavailable' }`。
+5. `hydrateCreditBalance` reject → `{ ok: false, reason: 'unavailable' }`(且不抛出)。
 
 集成验证:仓库根 `npm run lint`(tsc --noEmit)+ `npm run build`。
 
