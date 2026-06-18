@@ -36,6 +36,8 @@ model Workspace {
   tasks            Task[]
   financialRecords FinancialRecord[]
   settings         Setting[]
+  apiKeys          ApiKey[]
+  webhookEndpoints WebhookEndpoint[]
 }
 
 model Member {
@@ -443,4 +445,40 @@ model Setting {
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   @@unique([workspaceId, ownerId, key])
   @@index([workspaceId, ownerId])
+}
+
+model ApiKey {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  name            String
+  prefix          String    @default("sk")
+  last4           String    @default("0000")
+  keyPreview      String    @default("")
+  secretCiphertext String?
+  status          String    @default("active")
+  lastUsedAt      DateTime?
+  expiresAt       DateTime?
+  metadata        Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
+}
+
+model WebhookEndpoint {
+  id                      String    @id @default(cuid())
+  workspaceId             String
+  name                    String
+  url                     String
+  status                  String    @default("active")
+  events                  String[]
+  signingSecretCiphertext String?
+  signingSecretLast4      String    @default("0000")
+  lastDeliveredAt         DateTime?
+  failureCount            Int       @default(0)
+  metadata                Json?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  workspace               Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, createdAt])
 }

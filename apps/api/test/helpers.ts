@@ -36,6 +36,8 @@ export async function resetDb(prisma: PrismaService) {
   await prisma.task.deleteMany();
   await prisma.financialRecord.deleteMany();
   await prisma.setting.deleteMany();
+  await prisma.apiKey.deleteMany();
+  await prisma.webhookEndpoint.deleteMany();
   await prisma.project.deleteMany();
   await prisma.member.deleteMany();
   await prisma.refreshToken.deleteMany();
