@@ -3,24 +3,15 @@ import { AlertTriangle, CheckCircle2, FileText, Loader2, Network, Send, X } from
 
 import type { AgentSummary, AgentTask } from '../runtime/agentRuntimeTypes.ts';
 import { useAgentRuntime } from '../runtime/AgentRuntimeContext.tsx';
-import {
-  canStartBillableGeneration,
-  estimateRequestedGenerationCredits,
-  getPlanMonthlyAllowance,
-  loadWorkspaceBillingPlans,
-} from '../lib/data/billingRepository';
-import {
-  loadWorkspaceFinancialRecords,
-  sumWorkspacePromotionalCredits,
-  sumWorkspaceRechargeCredits,
-} from '../lib/data/financialRepository';
-import { createGenerationJob, listGenerationJobs, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { estimateRequestedGenerationCredits } from '../lib/data/billingRepository';
+import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
 import { createWorkspaceTask, updateWorkspaceTask } from '../lib/data/taskRepository';
-import { createWorkspaceUsageEvent, listWorkspaceUsageEvents, loadModuleUsage } from '../lib/data/usageRepository';
+import { createWorkspaceUsageEvent } from '../lib/data/usageRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { apiClient } from '../lib/data/apiClient';
 import { createOrchestrationService } from '../runtime/orchestrationService.ts';
 import { useSaasSession } from '../saas/SaasAuthContext';
+import { preflightCredits, type CreditPreflightResult } from '../lib/billing/creditPreflight';
 import { canDispatchAgent } from '../saas/permissions';
 import { BaseModal } from './ui/BaseModal';
 
@@ -113,59 +104,57 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
       pricingAction: 'runtime_dispatch',
       taskCount: selectedAgents.length,
     });
-    const billingPlans = loadWorkspaceBillingPlans({ workspaceId: session.workspace.id });
-    const financialRecords = loadWorkspaceFinancialRecords({ workspaceId: session.workspace.id });
-    const rechargeCredits =
-      sumWorkspaceRechargeCredits(financialRecords) + sumWorkspacePromotionalCredits(financialRecords);
-    const quota = canStartBillableGeneration({
-      monthlyAllowance: getPlanMonthlyAllowance(session.workspace.plan, billingPlans),
-      rechargeCredits,
-      generationJobs: listGenerationJobs(billingContext),
-      moduleUsage: loadModuleUsage(billingContext),
-      usageEvents: listWorkspaceUsageEvents(billingContext),
-      requestedCredits,
+    const result = await preflightCredits({
+      workspaceId: session.workspace.id,
+      requiredCredits: requestedCredits,
     });
 
-    if (!quota.allowed) {
-      setRuntimeError(
-        `算力额度不足：本次调度需要 ${quota.requestedCredits} 点，当前剩余 ${quota.remainingCredits} 点，请升级套餐或充值后重试。`,
-      );
-      setAgents((prev) =>
-        prev.map((agent) =>
-          selectedAgents.includes(agent.id) ? { ...agent, dispatchStatus: 'failed', progress: 100 } : agent,
-        ),
-      );
-      logAuditEvent({
-        action: 'generation_job_failed',
-        targetType: 'generation_job',
-        targetId: 'billing_quota',
-        metadata: {
-          reason: 'quota_exceeded',
-          requestedCredits: quota.requestedCredits,
-          remainingCredits: quota.remainingCredits,
-          overageCredits: quota.overageCredits,
-          selectedAgentCount: selectedAgents.length,
-          runtimeMode: runtime.mode,
+    if (!result.ok) {
+      const failure = result as Extract<CreditPreflightResult, { ok: false }>;
+      if (failure.reason === 'insufficient') {
+        const remainingCredits = failure.balance ?? 0;
+        const overageCredits = Math.max(0, requestedCredits - remainingCredits);
+        setRuntimeError(
+          `算力额度不足：本次调度需要 ${requestedCredits} 点，当前剩余 ${remainingCredits} 点，请升级套餐或充值后重试。`,
+        );
+        setAgents((prev) =>
+          prev.map((agent) =>
+            selectedAgents.includes(agent.id) ? { ...agent, dispatchStatus: 'failed', progress: 100 } : agent,
+          ),
+        );
+        logAuditEvent({
+          action: 'generation_job_failed',
+          targetType: 'generation_job',
+          targetId: 'billing_quota',
+          metadata: {
+            reason: 'quota_exceeded',
+            requestedCredits,
+            remainingCredits,
+            overageCredits,
+            selectedAgentCount: selectedAgents.length,
+            runtimeMode: runtime.mode,
+            providerKind: runtime.providerKind,
+          },
+        }, { session });
+        createWorkspaceUsageEvent({
+          moduleId: 'tasks',
+          kind: 'quota_block',
+          targetType: 'runtime',
+          targetId: 'billing_quota',
           providerKind: runtime.providerKind,
-        },
-      }, { session });
-      createWorkspaceUsageEvent({
-        moduleId: 'tasks',
-        kind: 'quota_block',
-        targetType: 'runtime',
-        targetId: 'billing_quota',
-        providerKind: runtime.providerKind,
-        runtimeMode: runtime.mode,
-        credits: 0,
-        metadata: {
-          reason: 'quota_exceeded',
-          requestedCredits: quota.requestedCredits,
-          remainingCredits: quota.remainingCredits,
-          overageCredits: quota.overageCredits,
-          selectedAgentCount: selectedAgents.length,
-        },
-      }, billingContext);
-      return;
+          runtimeMode: runtime.mode,
+          credits: 0,
+          metadata: {
+            reason: 'quota_exceeded',
+            requestedCredits,
+            remainingCredits,
+            overageCredits,
+            selectedAgentCount: selectedAgents.length,
+          },
+        }, billingContext);
+        return;
+      }
+      // reason === 'unavailable':核验不到余额，fail-open 放行，交由后端 dispatch 的 402 insufficient_credits 原子兜底
     }
 
     setIsDispatching(true);
