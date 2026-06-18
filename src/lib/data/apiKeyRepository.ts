@@ -1,5 +1,6 @@
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
+import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
 
 export type WorkspaceApiKeyStatus = 'active' | 'rotating' | 'revoked' | 'expired';
 
@@ -87,9 +88,9 @@ function slugify(value: string): string {
 }
 
 function randomToken(): string {
-  const first = Math.random().toString(36).slice(2, 12);
-  const second = Math.random().toString(36).slice(2, 12);
-  return `${first}${second}`;
+  const bytes = new Uint8Array(16);
+  (globalThis.crypto ?? require('node:crypto').webcrypto).getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function generatedSecret(name: string): string {
@@ -202,6 +203,7 @@ function buildApiKeyRecord(input: WorkspaceApiKeyInput, secret: string, context:
 }
 
 export function loadWorkspaceApiKeys(context: ApiKeyRepositoryContext): WorkspaceApiKey[] {
+  if (apiKeyApiClient.configured) return apiKeyCache.get(context.workspaceId) ?? [];
   return readApiKeys(context);
 }
 
@@ -216,6 +218,14 @@ export function createWorkspaceApiKey(
   const secret = input.secret?.trim() || generatedSecret(input.name);
   const record = buildApiKeyRecord(input, secret, context);
   writeApiKeys([record, ...readApiKeys(context)], context);
+  if (apiKeyApiClient.configured) {
+    apiKeyCache.set(context.workspaceId, sortApiKeys([record, ...(apiKeyCache.get(context.workspaceId) ?? [])]));
+    void apiKeyApiClient.post(context.workspaceId, 'api-keys', {
+      id: record.id, name: record.name, secret,
+      status: record.status, expiresAt: record.expiresAt ?? undefined, metadata: record.metadata,
+    }).then((r) => { if (!r.ok) console.error('createWorkspaceApiKey write-through failed', r); })
+      .catch((e) => console.error('createWorkspaceApiKey write-through failed', e));
+  }
   return { record, secret };
 }
 
@@ -255,6 +265,15 @@ export function rotateWorkspaceApiKey(
     [replacement, previous, ...existingRecords.filter((record) => record.id !== keyId)],
     context,
   );
+  if (apiKeyApiClient.configured) {
+    apiKeyCache.set(context.workspaceId, sortApiKeys([replacement, previous, ...(apiKeyCache.get(context.workspaceId) ?? []).filter((k) => k.id !== keyId)]));
+    void apiKeyApiClient.post(context.workspaceId, 'api-keys', {
+      id: replacement.id, name: replacement.name, secret,
+      status: replacement.status, expiresAt: replacement.expiresAt ?? undefined, metadata: replacement.metadata,
+    }).then((r) => { if (!r.ok) console.error('rotateWorkspaceApiKey create write-through failed', r); }).catch((e) => console.error(e));
+    void apiKeyApiClient.patch(context.workspaceId, `api-keys/${previous.id}`, { status: previous.status, expiresAt: previous.expiresAt ?? undefined })
+      .then((r) => { if (!r.ok) console.error('rotateWorkspaceApiKey patch write-through failed', r); }).catch((e) => console.error(e));
+  }
   return { previous, replacement, secret };
 }
 
@@ -279,6 +298,13 @@ export function revokeWorkspaceApiKey(
   });
 
   writeApiKeys(records, context);
+  if (apiKeyApiClient.configured && revoked) {
+    const rev: WorkspaceApiKey = revoked;
+    apiKeyCache.set(context.workspaceId, sortApiKeys((apiKeyCache.get(context.workspaceId) ?? []).map((k) => (k.id === rev.id ? rev : k))));
+    void apiKeyApiClient.patch(context.workspaceId, `api-keys/${rev.id}`, { status: rev.status, expiresAt: rev.expiresAt ?? undefined })
+      .then((r) => { if (!r.ok) console.error('revokeWorkspaceApiKey write-through failed', r); })
+      .catch((e) => console.error('revokeWorkspaceApiKey write-through failed', e));
+  }
   return revoked;
 }
 
@@ -291,4 +317,21 @@ export function exportWorkspaceApiKeyRows(records: WorkspaceApiKey[]): Workspace
     lastUsedAt: record.lastUsedAt,
     expiresAt: record.expiresAt,
   }));
+}
+
+let apiKeyApiClient: ApiClient = defaultApiClient;
+export function __setApiKeyApiClientForTest(client: ApiClient): void { apiKeyApiClient = client; }
+
+const apiKeyCache = new Map<string, WorkspaceApiKey[]>(); // key = workspaceId
+
+export async function hydrateWorkspaceApiKeys(context: ApiKeyRepositoryContext): Promise<void> {
+  if (!apiKeyApiClient.configured) return;
+  const res = await apiKeyApiClient.get<{ items: WorkspaceApiKey[]; nextCursor: string | null }>(
+    context.workspaceId, 'api-keys');
+  if (res.ok && res.value && Array.isArray(res.value.items)) {
+    apiKeyCache.set(context.workspaceId, sortApiKeys(res.value.items.map((k) => normalizeApiKey(k, context))));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('workspace_api_keys_updated', { detail: { workspaceId: context.workspaceId } }));
+    }
+  }
 }
