@@ -27,12 +27,13 @@ import { TaskModule } from './task/task.module';
 import { FinancialModule } from './financial/financial.module';
 import { SettingsModule } from './settings/settings.module';
 import { ApiKeyModule } from './api-key/api-key.module';
+import { WebhookModule } from './webhook/webhook.module';
 import { TenantGuard } from './common/tenant/tenant.guard';
 import { AuthGuard } from './common/auth/auth.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), PrismaModule, EncryptionModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule, BillingModule, CustomerModule, CampaignModule, AnnouncementModule, AgencyModule, RiskModule, MediaModule, KeywordModule, TicketModule, PaymentModule, TaxEventModule, TaskModule, FinancialModule, SettingsModule, ApiKeyModule],
+  imports: [ScheduleModule.forRoot(), PrismaModule, EncryptionModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule, BillingModule, CustomerModule, CampaignModule, AnnouncementModule, AgencyModule, RiskModule, MediaModule, KeywordModule, TicketModule, PaymentModule, TaxEventModule, TaskModule, FinancialModule, SettingsModule, ApiKeyModule, WebhookModule],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: TenantGuard },
