@@ -5,28 +5,14 @@ import { saveAs } from 'file-saver';
 import { toast } from './Toast';
 import { useWorkspaceAssets } from '../hooks/useWorkspaceAssets';
 import { useSaasSession } from '../saas/SaasAuthContext';
+import { preflightCredits, type CreditPreflightResult } from '../lib/billing/creditPreflight';
 import {
   createWorkspaceAsset,
   deleteWorkspaceAssets,
   type WorkspaceAsset,
 } from '../lib/data/assetRepository';
-import {
-  canStartBillableGeneration,
-  getPlanMonthlyAllowance,
-  loadWorkspaceBillingPlans,
-} from '../lib/data/billingRepository';
-import {
-  loadWorkspaceFinancialRecords,
-  sumWorkspacePromotionalCredits,
-  sumWorkspaceRechargeCredits,
-} from '../lib/data/financialRepository';
-import { listGenerationJobs } from '../lib/data/generationJobRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
-import {
-  createWorkspaceUsageEvent,
-  listWorkspaceUsageEvents,
-  loadModuleUsage,
-} from '../lib/data/usageRepository';
+import { createWorkspaceUsageEvent } from '../lib/data/usageRepository';
 import { buildPermissionDeniedMetadata, hasWorkspacePermission } from '../saas/permissions';
 
 const fileTypes = [
@@ -105,55 +91,58 @@ export function AssetsView() {
 
   const estimateAssetExportCredits = (assetCount: number) => Math.max(1, Math.ceil(assetCount / 5));
 
-  const preflightAssetExport = (format: 'csv' | 'zip', selectedAssetRecords: WorkspaceAsset[]) => {
+  const preflightAssetExport = async (format: 'csv' | 'zip', selectedAssetRecords: WorkspaceAsset[]) => {
     const requestedCredits = estimateAssetExportCredits(selectedAssetRecords.length);
-    const billingPlans = loadWorkspaceBillingPlans({ workspaceId: session.workspace.id });
-    const financialRecords = loadWorkspaceFinancialRecords({ workspaceId: session.workspace.id });
-    const rechargeCredits =
-      sumWorkspaceRechargeCredits(financialRecords) + sumWorkspacePromotionalCredits(financialRecords);
-    const quota = canStartBillableGeneration({
-      monthlyAllowance: getPlanMonthlyAllowance(session.workspace.plan, billingPlans),
-      rechargeCredits,
-      generationJobs: listGenerationJobs(assetContext),
-      moduleUsage: loadModuleUsage(assetContext),
-      usageEvents: listWorkspaceUsageEvents(assetContext),
-      requestedCredits,
+    const result = await preflightCredits({
+      workspaceId: session.workspace.id,
+      requiredCredits: requestedCredits,
     });
 
-    if (quota.allowed) return true;
+    if (!result.ok) {
+      const failure = result as Extract<CreditPreflightResult, { ok: false }>;
+      if (failure.reason === 'unavailable') {
+        // 导出无后端兜底,核验不到余额时 fail-closed
+        toast('无法核验算力额度，请稍后重试。', 'warning');
+        return false;
+      }
 
-    createWorkspaceUsageEvent({
-      moduleId: 'assets',
-      kind: 'quota_block',
-      targetType: 'asset',
-      targetId: selectedAssetRecords.length === 1 ? selectedAssetRecords[0]?.id : 'asset_export',
-      credits: 0,
-      metadata: {
-        format,
-        reason: 'quota_exceeded',
-        requestedCredits: quota.requestedCredits,
-        remainingCredits: quota.remainingCredits,
-        overageCredits: quota.overageCredits,
-        assetCount: selectedAssetRecords.length,
-        assetIds: selectedAssetRecords.map((asset) => asset.id),
-      },
-    }, assetContext);
-    logAuditEvent({
-      action: 'general',
-      moduleId: 'billing',
-      targetType: 'workspace',
-      targetId: session.workspace.id,
-      metadata: {
-        operation: 'asset_export_quota_block',
-        format,
-        requestedCredits: quota.requestedCredits,
-        remainingCredits: quota.remainingCredits,
-        overageCredits: quota.overageCredits,
-        assetCount: selectedAssetRecords.length,
-      },
-    }, { session });
-    toast(`算力额度不足：导出需要 ${quota.requestedCredits} 点，当前剩余 ${quota.remainingCredits} 点。`, 'warning');
-    return false;
+      const remainingCredits = failure.balance ?? 0;
+      const overageCredits = Math.max(0, requestedCredits - remainingCredits);
+      createWorkspaceUsageEvent({
+        moduleId: 'assets',
+        kind: 'quota_block',
+        targetType: 'asset',
+        targetId: selectedAssetRecords.length === 1 ? selectedAssetRecords[0]?.id : 'asset_export',
+        credits: 0,
+        metadata: {
+          format,
+          reason: 'quota_exceeded',
+          requestedCredits,
+          remainingCredits,
+          overageCredits,
+          assetCount: selectedAssetRecords.length,
+          assetIds: selectedAssetRecords.map((asset) => asset.id),
+        },
+      }, assetContext);
+      logAuditEvent({
+        action: 'general',
+        moduleId: 'billing',
+        targetType: 'workspace',
+        targetId: session.workspace.id,
+        metadata: {
+          operation: 'asset_export_quota_block',
+          format,
+          requestedCredits,
+          remainingCredits,
+          overageCredits,
+          assetCount: selectedAssetRecords.length,
+        },
+      }, { session });
+      toast(`算力额度不足：导出需要 ${requestedCredits} 点，当前剩余 ${remainingCredits} 点。`, 'warning');
+      return false;
+    }
+
+    return true;
   };
 
   const recordAssetExportUsage = (format: 'csv' | 'zip', selectedAssetRecords: WorkspaceAsset[]) => {
@@ -182,13 +171,13 @@ export function AssetsView() {
     return false;
   };
 
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     if (!requireAssetManagement('asset_export', 'asset_export', { format: 'csv', selectedAssetCount: selectedAssets.length })) return;
     if (selectedAssets.length === 0) return;
     const selectedAssetRecords = selectedAssets
       .map(id => assets.find(a => a.id === id))
       .filter((asset): asset is WorkspaceAsset => Boolean(asset));
-    if (!preflightAssetExport('csv', selectedAssetRecords)) return;
+    if (!(await preflightAssetExport('csv', selectedAssetRecords))) return;
 
     const headers = ['ID', 'File Name', 'Type', 'Size', 'Date'];
     const rows = selectedAssetRecords.map(asset => (
@@ -226,7 +215,7 @@ export function AssetsView() {
       const selectedAssetRecords = selectedAssets
         .map(id => assets.find(a => a.id === id))
         .filter((asset): asset is WorkspaceAsset => Boolean(asset));
-      if (!preflightAssetExport('zip', selectedAssetRecords)) return;
+      if (!(await preflightAssetExport('zip', selectedAssetRecords))) return;
 
       const manifest = selectedAssetRecords.map((asset) => ({
         id: asset.id,
