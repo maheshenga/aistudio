@@ -1,10 +1,8 @@
 import { hydrateCreditBalance, getCreditBalanceSnapshot } from '../data/creditRepository';
 
-export interface CreditPreflightResult {
-  ok: boolean;
-  balance: number | null;
-  reason?: 'insufficient' | 'unavailable';
-}
+export type CreditPreflightResult =
+  | { ok: true; balance: number }
+  | { ok: false; balance: number | null; reason: 'insufficient' | 'unavailable' };
 
 export async function preflightCredits(params: {
   workspaceId: string;
