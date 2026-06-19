@@ -1,5 +1,9 @@
-import React, { useState } from 'react';
-import { UserCircle2, Video, Mic, Plus, Play, MoreHorizontal, Check, Search, Filter, MonitorPlay, Clock, Wand2 } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { UserCircle2, Video, Mic, Plus, Play, MoreHorizontal, Check, Search, Filter, MonitorPlay, Clock, Wand2, ShieldCheck } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { loadWorkspaceAvatarConsents, createWorkspaceAvatarConsent, revokeWorkspaceAvatarConsent, createWorkspaceAvatarSource, type AvatarRepositoryContext, type WorkspaceAvatarConsent } from '../lib/data/avatarRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { toast } from './Toast';
 
 interface AvatarViewProps {
   moduleId: string;
@@ -382,14 +386,78 @@ function AvatarCreate() {
 }
 
 function AvatarVoice() {
+  const session = useSaasSession();
+  const repoContext = useMemo<AvatarRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [consents, setConsents] = useState<WorkspaceAvatarConsent[]>([]);
+
+  useEffect(() => {
+    setConsents(loadWorkspaceAvatarConsents(repoContext).filter(c => c.consentType === 'voice_clone'));
+  }, [repoContext]);
+
+  useEffect(() => {
+    const handler = () => setConsents(loadWorkspaceAvatarConsents(repoContext).filter(c => c.consentType === 'voice_clone'));
+    if (typeof window !== 'undefined') window.addEventListener('workspace_avatar_updated', handler);
+    return () => { if (typeof window !== 'undefined') window.removeEventListener('workspace_avatar_updated', handler); };
+  }, [repoContext]);
+
+  const handleCloneVoice = () => {
+    const subjectName = (typeof window !== 'undefined' ? window.prompt('请输入被克隆人姓名（用于授权登记）') : '')?.trim();
+    if (!subjectName) {
+      toast('已取消：声音克隆必须登记授权主体', 'warning');
+      return;
+    }
+    const consent = createWorkspaceAvatarConsent({
+      subjectName,
+      consentType: 'voice_clone',
+      status: 'granted',
+      source: 'avatar_voice_manager',
+      ownerId: session.user.id,
+      metadata: { confirmedBy: session.user.id },
+    }, repoContext);
+    createWorkspaceAvatarSource({
+      consentId: consent.id,
+      name: `${subjectName} 声纹样本`,
+      type: 'audio',
+      ownerId: session.user.id,
+      metadata: {},
+    }, repoContext);
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: 'avatar_voice',
+      targetType: 'workspace',
+      targetId: consent.id,
+      metadata: { subjectName, consentType: 'voice_clone' },
+    }, { session });
+    setConsents(loadWorkspaceAvatarConsents(repoContext).filter(c => c.consentType === 'voice_clone'));
+    toast('声音克隆授权已登记，可用于创作', 'success');
+  };
+
+  const handleRevoke = (id: string, subjectName: string) => {
+    revokeWorkspaceAvatarConsent(id, repoContext);
+    logAuditEvent({
+      action: 'asset_delete',
+      moduleId: 'avatar_voice',
+      targetType: 'workspace',
+      targetId: id,
+      metadata: { subjectName, action: 'revoke_consent' },
+    }, { session });
+    setConsents(loadWorkspaceAvatarConsents(repoContext).filter(c => c.consentType === 'voice_clone'));
+    toast('已撤销该声音的克隆授权', 'success');
+  };
+
+  const grantedCount = consents.filter(c => c.status === 'granted').length;
+
   return (
     <div className="p-[var(--spacing-xl)] space-y-[var(--spacing-lg)] max-w-5xl mx-auto">
       <div className="flex justify-between items-end">
         <div>
           <h2 className="text-2xl font-bold text-[var(--text-main)] mb-2 mt-1">声音管理</h2>
-          <p className="text-[var(--text-muted)] text-sm">在这里克隆、管理并优化为数字人配音的音色。</p>
+          <p className="text-[var(--text-muted)] text-sm">在这里克隆、管理并优化为数字人配音的音色。每个克隆音色均需登记授权。</p>
         </div>
-        <button className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors shadow-sm flex items-center">
+        <button onClick={handleCloneVoice} className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors shadow-sm flex items-center">
           <Mic className="icon-sm mr-2" />
           克隆新声音
         </button>
@@ -398,7 +466,7 @@ function AvatarVoice() {
       <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-lg)] shadow-sm overflow-hidden">
          <div className="p-4 border-b border-[var(--border-color)] flex items-center justify-between bg-gray-50/50">
             <div className="flex space-x-2">
-               <button className="px-4 py-1.5 bg-gray-200 text-[var(--text-main)] text-sm font-bold rounded-lg border border-gray-300">我的克隆 (3)</button>
+               <button className="px-4 py-1.5 bg-gray-200 text-[var(--text-main)] text-sm font-bold rounded-lg border border-gray-300">已授权克隆 ({grantedCount})</button>
                <button className="px-4 py-1.5 text-gray-600 hover:bg-gray-100 text-sm font-medium rounded-lg">公共音色库</button>
             </div>
             <div className="relative">
@@ -407,34 +475,46 @@ function AvatarVoice() {
             </div>
          </div>
          <div className="divide-y divide-gray-100">
-            {[
-              { name: '我的声音-演示', gender: '男声', tags: ['稳重', '培训'], id: 'clone-001' },
-              { name: '主播小雅', gender: '女声', tags: ['活泼', '带货'], id: 'clone-002' },
-              { name: '客服专属', gender: '女声', tags: ['亲和', '服务'], id: 'clone-003' },
-            ].map((voice, i) => (
-              <div key={i} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors group">
-                 <div className="flex items-center space-x-4">
-                    <button className="w-10 h-10 rounded-full bg-gray-100 text-[var(--text-main)] flex items-center justify-center hover:bg-gray-200 transition-colors">
-                       <Play className="icon-sm ml-0.5" fill="currentColor" />
-                    </button>
-                    <div>
-                       <h4 className="font-bold text-[var(--text-main)]">{voice.name}</h4>
-                       <div className="flex items-center mt-1 space-x-2">
-                          <span className="text-[11px] text-[var(--text-muted)] bg-gray-100 px-1.5 py-0.5 rounded">{voice.gender}</span>
-                          {voice.tags.map(t => (
-                             <span key={t} className="text-[11px] text-[var(--text-muted)] bg-gray-100 px-1.5 py-0.5 rounded">{t}</span>
-                          ))}
-                          <span className="text-[11px] text-gray-400 font-mono ml-2">ID: {voice.id}</span>
-                       </div>
-                    </div>
-                 </div>
-                 <div className="flex space-x-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button className="text-sm font-medium text-[var(--text-main)] hover:underline">编辑</button>
-                    <button className="text-sm font-medium text-[var(--text-main)] hover:underline">去创作</button>
-                    <button className="text-gray-400 hover:text-gray-600"><MoreHorizontal className="icon-md" /></button>
-                 </div>
+            {consents.length === 0 ? (
+              <div className="p-10 flex flex-col items-center justify-center text-center text-[var(--text-muted)]">
+                 <ShieldCheck className="w-10 h-10 text-gray-300 mb-3" />
+                 <p className="text-sm font-bold text-gray-600">尚无已授权的克隆音色</p>
+                 <p className="text-xs mt-1">点击右上角“克隆新声音”，登记授权主体后即可开始克隆。</p>
               </div>
-            ))}
+            ) : (
+              consents.map((voice) => (
+                <div key={voice.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors group">
+                   <div className="flex items-center space-x-4">
+                      <button className="w-10 h-10 rounded-full bg-gray-100 text-[var(--text-main)] flex items-center justify-center hover:bg-gray-200 transition-colors">
+                         <Play className="icon-sm ml-0.5" fill="currentColor" />
+                      </button>
+                      <div>
+                         <h4 className="font-bold text-[var(--text-main)] flex items-center">
+                           {voice.subjectName}
+                           {voice.status === 'granted' ? (
+                             <span className="ml-2 text-[10px] font-bold text-green-700 bg-green-50 border border-green-200 px-1.5 py-0.5 rounded flex items-center"><ShieldCheck className="w-3 h-3 mr-0.5" /> 已授权</span>
+                           ) : (
+                             <span className="ml-2 text-[10px] font-bold text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">已撤销</span>
+                           )}
+                         </h4>
+                         <div className="flex items-center mt-1 space-x-2">
+                            <span className="text-[11px] text-[var(--text-muted)] bg-gray-100 px-1.5 py-0.5 rounded">声音克隆</span>
+                            <span className="text-[11px] text-gray-400 font-mono ml-2">登记于 {new Date(voice.grantedAt).toLocaleDateString()}</span>
+                         </div>
+                      </div>
+                   </div>
+                   <div className="flex space-x-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {voice.status === 'granted' && (
+                        <>
+                          <button className="text-sm font-medium text-[var(--text-main)] hover:underline">去创作</button>
+                          <button onClick={() => handleRevoke(voice.id, voice.subjectName)} className="text-sm font-medium text-red-500 hover:underline">撤销授权</button>
+                        </>
+                      )}
+                      <button className="text-gray-400 hover:text-gray-600"><MoreHorizontal className="icon-md" /></button>
+                   </div>
+                </div>
+              ))
+            )}
          </div>
       </div>
     </div>

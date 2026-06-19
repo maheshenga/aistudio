@@ -8,12 +8,12 @@ import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
 import { GenerationFailureRecoveryPanel } from './GenerationFailureRecoveryPanel';
 
 const VOICES = [
-  { id: 'v1', name: 'Alloy', lang: '多语种', gender: '女声', type: '新闻联播 / 旁白', bg: 'bg-emerald-50', text: 'text-emerald-600', tags: ['清晰', '专业', '中立'] },
-  { id: 'v2', name: 'Echo', lang: '单语种 (中)', gender: '男声', type: '日常对话 / 播客', bg: 'bg-blue-50', text: 'text-[var(--color-primary)]', tags: ['自然', '温暖', '磁性'] },
-  { id: 'v3', name: 'Fable', lang: '多语种', gender: '童声', type: '有声书 / 故事传记', bg: 'bg-purple-50', text: 'text-purple-600', tags: ['活泼', '张力', '纯真'] },
-  { id: 'v4', name: 'Onyx', lang: '多语种', gender: '男声', type: '纪录片 / 严肃科普', bg: 'bg-slate-50', text: 'text-slate-600', tags: ['浑厚', '低沉', '权威'] },
-  { id: 'v5', name: 'Nova', lang: '单语种 (英)', gender: '女声', type: '商业广告 / 宣传片', bg: 'bg-rose-50', text: 'text-rose-600', tags: ['热情', '清脆', '悦耳'] },
-  { id: 'v6', name: 'Shimmer', lang: '多语种', gender: '女声', type: '情感电台 / 冥想', bg: 'bg-indigo-50', text: 'text-indigo-600', tags: ['空灵', '疗愈', '舒缓'] },
+  { id: 'v1', name: 'Alloy', lang: '多语种', gender: '女声', type: '新闻联播 / 旁白', bg: 'bg-emerald-50', text: 'text-emerald-600', tags: ['清晰', '专业', '中立'], consentRequired: false, provider: 'google-tts' },
+  { id: 'v2', name: 'Echo', lang: '单语种 (中)', gender: '男声', type: '日常对话 / 播客', bg: 'bg-blue-50', text: 'text-[var(--color-primary)]', tags: ['自然', '温暖', '磁性'], consentRequired: false, provider: 'azure-tts' },
+  { id: 'v3', name: 'Fable', lang: '多语种', gender: '童声', type: '有声书 / 故事传记', bg: 'bg-purple-50', text: 'text-purple-600', tags: ['活泼', '张力', '纯真'], consentRequired: true, provider: 'elevenlabs', consentReason: '童声模拟需确认合规授权' },
+  { id: 'v4', name: 'Onyx', lang: '多语种', gender: '男声', type: '纪录片 / 严肃科普', bg: 'bg-slate-50', text: 'text-slate-600', tags: ['浑厚', '低沉', '权威'], consentRequired: false, provider: 'google-tts' },
+  { id: 'v5', name: 'Nova', lang: '单语种 (英)', gender: '女声', type: '商业广告 / 宣传片', bg: 'bg-rose-50', text: 'text-rose-600', tags: ['热情', '清脆', '悦耳'], consentRequired: false, provider: 'azure-tts' },
+  { id: 'v6', name: 'Shimmer', lang: '多语种', gender: '女声', type: '情感电台 / 冥想', bg: 'bg-indigo-50', text: 'text-indigo-600', tags: ['空灵', '疗愈', '舒缓'], consentRequired: true, provider: 'elevenlabs', consentReason: '克隆/定制音色需确认声纹授权' },
 ];
 
 const MOCK_HISTORY = [
@@ -47,6 +47,15 @@ export function SpeechView() {
   const [clarity, setClarity] = useState(0.75);
 
   const [searchQuery, setSearchQuery] = useState('');
+  // P1-R08: Speech voice/provider consent 策略
+  const [consentConfirmed, setConsentConfirmed] = useState(false);
+  const [showConsentPrompt, setShowConsentPrompt] = useState(false);
+
+  // 切换 voice 时重置 consent
+  useEffect(() => {
+    setConsentConfirmed(false);
+    setShowConsentPrompt(false);
+  }, [activeVoice]);
 
   const progressRef = useRef<HTMLDivElement>(null);
 
@@ -79,6 +88,13 @@ export function SpeechView() {
       : scriptLines.map(line => `${line.role}: ${line.text.trim()}`).filter(line => line.trim()).join('\n');
     const hasContent = Boolean(speechText);
     if (!hasContent || isGenerating) return;
+
+    // P1-R08: consent-sensitive voice 必须先确认
+    if (activeVoice.consentRequired && !consentConfirmed) {
+      setShowConsentPrompt(true);
+      return;
+    }
+
     setIsGenerating(true);
     setAudioReady(false);
     setIsPlaying(false);
@@ -94,9 +110,15 @@ export function SpeechView() {
       metadata: {
         mode,
         voice: activeVoice.name,
+        voiceId: activeVoice.id,
+        provider: activeVoice.provider,
         speed,
         stability,
         clarity,
+        consentRequired: activeVoice.consentRequired,
+        consentConfirmed: activeVoice.consentRequired ? consentConfirmed : undefined,
+        consentReason: activeVoice.consentReason,
+        language: activeVoice.lang,
       },
     }, jobContext);
     logAuditEvent({
@@ -107,7 +129,11 @@ export function SpeechView() {
       metadata: {
         mode,
         voice: activeVoice.name,
+        voiceId: activeVoice.id,
+        provider: activeVoice.provider,
         characterCount: speechText.length,
+        consentRequired: activeVoice.consentRequired,
+        consentConfirmed: activeVoice.consentRequired ? consentConfirmed : undefined,
       },
     }, { session });
 
@@ -127,9 +153,13 @@ export function SpeechView() {
           textPreview: speechText.slice(0, 160),
           mode,
           voice: activeVoice.name,
+          voiceId: activeVoice.id,
+          provider: activeVoice.provider,
           speed,
           stability,
           clarity,
+          consentRequired: activeVoice.consentRequired,
+          consentConfirmed: activeVoice.consentRequired ? consentConfirmed : undefined,
           scriptLines: mode === 'batch' ? scriptLines : undefined,
         },
       }, jobContext);
@@ -198,6 +228,39 @@ export function SpeechView() {
       setIsPlaying(!isPlaying);
     }
   };
+
+  // P1-R08: Consent 确认弹窗
+  const consentPrompt = showConsentPrompt && activeVoice.consentRequired ? (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowConsentPrompt(false)}>
+      <div className="bg-[var(--bg-panel)] rounded-[24px] shadow-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center space-x-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center">
+            <Mic className="w-5 h-5" />
+          </div>
+          <h3 className="text-lg font-black text-[var(--text-main)]">声纹授权确认</h3>
+        </div>
+        <p className="text-sm text-[var(--text-muted)] leading-relaxed mb-2">
+          您选择的音色 <strong className="text-[var(--text-main)]">{activeVoice.name}</strong> 使用了 {activeVoice.provider} 提供的{activeVoice.consentReason ?? '克隆/定制声纹技术'}。
+        </p>
+        <p className="text-sm text-[var(--text-muted)] leading-relaxed mb-6">
+          请确认您已获得相关声纹使用授权，并理解生成的音频内容需遵守平台合规要求。授权记录将写入审计日志。
+        </p>
+        <div className="flex gap-3">
+          <button onClick={() => setShowConsentPrompt(false)} className="flex-1 border border-[var(--border-color)] text-gray-700 font-bold py-2.5 rounded-[var(--radius-lg)] text-sm hover:bg-gray-50">取消</button>
+          <button
+            onClick={() => {
+              setConsentConfirmed(true);
+              setShowConsentPrompt(false);
+              handleGenerate();
+            }}
+            className="flex-1 bg-[var(--color-primary)] hover:bg-blue-700 text-white font-bold py-2.5 rounded-[var(--radius-lg)] text-sm"
+          >
+            已授权，继续生成
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div className="h-[calc(100vh-4rem)] flex overflow-hidden bg-[#FDFDFE]">
@@ -693,6 +756,7 @@ export function SpeechView() {
           </div>
         </div>
       </div>
+      {consentPrompt}
     </div>
   );
 }

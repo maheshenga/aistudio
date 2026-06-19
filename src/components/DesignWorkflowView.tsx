@@ -1,17 +1,37 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useUndoRedo } from '../context/UndoRedoContext';
 import { Sparkles, Palette, MonitorPlay, Save, Download, Settings, Layers, Box, Wand2, Lightbulb, Hexagon, Network, Type, Image as ImageIcon, Camera, LayoutTemplate, Briefcase, Ruler, Sunset } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { loadWorkspaceDesignBriefs, createWorkspaceDesignBrief, type DesignRepositoryContext, type WorkspaceDesignBrief } from '../lib/data/designRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { toast } from './Toast';
 
 interface Props {
   moduleType: 'logo' | 'packaging' | 'ads' | 'interior' | 'fashion';
 }
 
 export function DesignWorkflowView({ moduleType }: Props) {
+  const session = useSaasSession();
+  const repoContext = useMemo<DesignRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
   const [viewMode, setViewMode] = useState<'canvas' | 'workflow'>('canvas');
   const [prompt, setPrompt] = useState("");
+  const [briefs, setBriefs] = useState<WorkspaceDesignBrief[]>([]);
   const { pushAction } = useUndoRedo();
-  
-  const handlePromptChange = (newPromptText) => {
+
+  useEffect(() => {
+    setBriefs(loadWorkspaceDesignBriefs(repoContext).filter(b => b.module === moduleType));
+  }, [repoContext, moduleType]);
+
+  useEffect(() => {
+    const handler = () => setBriefs(loadWorkspaceDesignBriefs(repoContext).filter(b => b.module === moduleType));
+    if (typeof window !== 'undefined') window.addEventListener('workspace_design_briefs_updated', handler);
+    return () => { if (typeof window !== 'undefined') window.removeEventListener('workspace_design_briefs_updated', handler); };
+  }, [repoContext, moduleType]);
+
+  const handlePromptChange = (newPromptText: string) => {
       const oldPrompt = prompt;
       setPrompt(newPromptText);
       // Not ideal to push on every keystroke, but for demonstration:
@@ -19,6 +39,62 @@ export function DesignWorkflowView({ moduleType }: Props) {
           undo: () => setPrompt(oldPrompt),
           redo: () => setPrompt(newPromptText)
       });
+  };
+
+  const handleSaveBrief = () => {
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      toast('请先输入核心设计意图（提示词）', 'warning');
+      return;
+    }
+    const brief = createWorkspaceDesignBrief({
+      module: moduleType,
+      businessGoal: trimmed,
+      audience: '',
+      style: '',
+      constraints: '',
+      references: [] as string[],
+      ownerId: session.user.id,
+      status: 'draft',
+      metadata: { source: 'design_workflow_canvas' },
+    }, repoContext);
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: `design_${moduleType}` as never,
+      targetType: 'workspace',
+      targetId: brief.id,
+      metadata: { module: moduleType, businessGoal: trimmed },
+    }, { session });
+    setBriefs(loadWorkspaceDesignBriefs(repoContext).filter(b => b.module === moduleType));
+    toast('设计需求已保存为资产', 'success');
+  };
+
+  const handleLaunchCompute = () => {
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      toast('请先输入核心提示词后再启动算力', 'warning');
+      return;
+    }
+    const brief = createWorkspaceDesignBrief({
+      module: moduleType,
+      businessGoal: trimmed,
+      audience: '',
+      style: '',
+      constraints: '',
+      references: [] as string[],
+      ownerId: session.user.id,
+      status: 'in_progress',
+      metadata: { source: 'design_workflow_compute', launchedAt: Date.now() },
+    }, repoContext);
+    logAuditEvent({
+      action: 'canvas_workflow_run',
+      moduleId: `design_${moduleType}` as never,
+      targetType: 'workspace',
+      targetId: brief.id,
+      metadata: { module: moduleType, businessGoal: trimmed },
+    }, { session });
+    setBriefs(loadWorkspaceDesignBriefs(repoContext).filter(b => b.module === moduleType));
+    toast('已提交至云端算力群组，需求已记录', 'success');
   };
 
   
@@ -246,9 +322,14 @@ export function DesignWorkflowView({ moduleType }: Props) {
                   </div>
                 </div>
                 
-                <button className="w-full py-3 bg-[var(--color-primary)] text-white font-bold text-[14px] rounded-[var(--radius-lg)] shadow-md hover:bg-black hover:shadow-lg transition-all flex items-center justify-center mt-2 group leading-none">
+                <button onClick={handleLaunchCompute} className="w-full py-3 bg-[var(--color-primary)] text-white font-bold text-[14px] rounded-[var(--radius-lg)] shadow-md hover:bg-black hover:shadow-lg transition-all flex items-center justify-center mt-2 group leading-none">
                    <Sparkles className="icon-sm mr-2 group-hover:animate-pulse" /> 启动云端算力群组
                 </button>
+                {briefs.length > 0 && (
+                  <p className="text-[11px] text-[var(--text-muted)] text-center font-medium pt-1">
+                    本模块已保存 {briefs.length} 条设计需求
+                  </p>
+                )}
               </>
             ) : (
               <div className="space-y-[var(--spacing-md)]">
@@ -322,7 +403,7 @@ export function DesignWorkflowView({ moduleType }: Props) {
              </div>
              
              <div className="flex items-center space-x-2">
-                <button className="text-[12px] bg-[var(--bg-panel)] border border-[var(--border-color)] text-gray-700 px-3 py-1.5 flex items-center rounded-lg hover:bg-gray-50 font-bold shadow-sm transition-all">
+                <button onClick={handleSaveBrief} className="text-[12px] bg-[var(--bg-panel)] border border-[var(--border-color)] text-gray-700 px-3 py-1.5 flex items-center rounded-lg hover:bg-gray-50 font-bold shadow-sm transition-all">
                   <Save className="w-3.5 h-3.5 mr-1" /> 保存资产
                 </button>
                 {viewMode === 'canvas' ? (

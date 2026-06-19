@@ -3,10 +3,10 @@ import { AlertTriangle, CheckCircle2, FileText, Loader2, Network, Send, X } from
 
 import type { AgentSummary, AgentTask } from '../runtime/agentRuntimeTypes.ts';
 import { useAgentRuntime } from '../runtime/AgentRuntimeContext.tsx';
-import { estimateRequestedGenerationCredits } from '../lib/data/billingRepository';
-import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { estimateRequestedGenerationCredits, canStartBillableGeneration, getPlanMonthlyAllowance, loadWorkspaceBillingPlans } from '../lib/data/billingRepository';
+import { createGenerationJob, updateGenerationJob, listGenerationJobs } from '../lib/data/generationJobRepository';
 import { createWorkspaceTask, updateWorkspaceTask } from '../lib/data/taskRepository';
-import { createWorkspaceUsageEvent } from '../lib/data/usageRepository';
+import { createWorkspaceUsageEvent, listWorkspaceUsageEvents, loadModuleUsage } from '../lib/data/usageRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { apiClient } from '../lib/data/apiClient';
 import { createOrchestrationService } from '../runtime/orchestrationService.ts';
@@ -104,6 +104,25 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
       pricingAction: 'runtime_dispatch',
       taskCount: selectedAgents.length,
     });
+    // Local billing quota guard — canStartBillableGeneration 基于本地用量快照做同步拦截,
+    // 与后续 preflightCredits 异步后端校验形成双层防护
+    const billingCtx = { workspaceId: session.workspace.id };
+    const plans = loadWorkspaceBillingPlans(billingCtx);
+    const monthlyAllowance = getPlanMonthlyAllowance(session.workspace.plan, plans);
+    const localQuotaGuard = canStartBillableGeneration({
+      monthlyAllowance,
+      generationJobs: listGenerationJobs(billingCtx),
+      moduleUsage: loadModuleUsage(billingCtx),
+      usageEvents: listWorkspaceUsageEvents(billingCtx),
+      requestedCredits,
+    });
+    if (!localQuotaGuard.allowed) {
+      setRuntimeError(
+        `算力额度不足：本次调度需要 ${requestedCredits} 点，当前剩余 ${localQuotaGuard.remainingCredits} 点，请升级套餐或充值后重试。`,
+      );
+      return;
+    }
+
     const result = await preflightCredits({
       workspaceId: session.workspace.id,
       requiredCredits: requestedCredits,

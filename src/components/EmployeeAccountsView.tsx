@@ -1,12 +1,72 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { UserCircle2, Plus, Search, Shield, Edit2, PlayCircle, MoreHorizontal, Power, Briefcase, Mail } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { loadWorkspaceEmployeeAccounts, createWorkspaceEmployeeAccount, updateEmployeeAccountStatus, deleteWorkspaceEmployeeAccount, type EmployeeAccountRepositoryContext, type WorkspaceEmployeeAccount } from '../lib/data/employeeAccountRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { toast } from './Toast';
 
 export function EmployeeAccountsView() {
-  const [employees, setEmployees] = useState([
-    { id: 1, name: 'Alice Wang', role: '内容创作者', email: 'alice@company.com', status: '正常', lastLogin: '今天 09:30', views: ['工作台概览', '文案创作', '智能混剪'] },
-    { id: 2, name: 'Ethan Lin', role: '运营专员', email: 'ethan@company.com', status: '正常', lastLogin: '昨天 14:15', views: ['数据分析', '营销中心', '媒体账号'] },
-    { id: 3, name: 'Diana Zhao', role: '设计师', email: 'diana@company.com', status: '离线', lastLogin: '3 天前', views: ['主图设计', '创意海报', '素材管理'] },
-  ]);
+  const session = useSaasSession();
+  const repoContext = useMemo<EmployeeAccountRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [employees, setEmployees] = useState<WorkspaceEmployeeAccount[]>([]);
+
+  useEffect(() => {
+    setEmployees(loadWorkspaceEmployeeAccounts(repoContext));
+  }, [repoContext]);
+
+  useEffect(() => {
+    const handler = () => setEmployees(loadWorkspaceEmployeeAccounts(repoContext));
+    if (typeof window !== 'undefined') window.addEventListener('workspace_employee_accounts_updated', handler);
+    return () => { if (typeof window !== 'undefined') window.removeEventListener('workspace_employee_accounts_updated', handler); };
+  }, [repoContext]);
+
+  const handleCreate = () => {
+    const emp = createWorkspaceEmployeeAccount({
+      name: '新员工', email: 'new@test.dev', role: 'viewer',
+      status: 'available', allowedModules: ['dashboard'], metadata: {},
+    }, repoContext);
+    logAuditEvent({
+      action: 'member_create', moduleId: 'employee_accounts', targetType: 'workspace',
+      targetId: emp.id, metadata: { name: emp.name, role: emp.role },
+    }, { session });
+    setEmployees(loadWorkspaceEmployeeAccounts(repoContext));
+    toast('员工账号已创建', 'success');
+  };
+
+  const handleSuspend = (id: string) => {
+    updateEmployeeAccountStatus(id, 'suspend', 'suspended', repoContext, '手动暂停');
+    logAuditEvent({
+      action: 'member_update', moduleId: 'employee_accounts', targetType: 'workspace',
+      targetId: id, metadata: { action: 'suspend' },
+    }, { session });
+    setEmployees(loadWorkspaceEmployeeAccounts(repoContext));
+    toast('账号已暂停', 'success');
+  };
+
+  const handleReactivate = (id: string) => {
+    updateEmployeeAccountStatus(id, 'reactivate', 'available', repoContext);
+    logAuditEvent({
+      action: 'member_update', moduleId: 'employee_accounts', targetType: 'workspace',
+      targetId: id, metadata: { action: 'reactivate' },
+    }, { session });
+    setEmployees(loadWorkspaceEmployeeAccounts(repoContext));
+    toast('账号已恢复', 'success');
+  };
+
+  const handleDelete = (id: string) => {
+    updateEmployeeAccountStatus(id, 'remove', 'removed', repoContext);
+    logAuditEvent({
+      action: 'member_delete', moduleId: 'employee_accounts', targetType: 'workspace',
+      targetId: id, metadata: {},
+    }, { session });
+    setEmployees(loadWorkspaceEmployeeAccounts(repoContext));
+    toast('账号已移除', 'success');
+  };
+
+  const activeCount = employees.filter(e => e.status === 'available' || e.status === 'assigned').length;
 
   return (
     <div className="p-4 sm:p-[var(--spacing-lg)] lg:p-[var(--spacing-xl)] max-w-[1600px] mx-auto space-y-[var(--spacing-lg)]">
@@ -27,7 +87,7 @@ export function EmployeeAccountsView() {
             <button className="bg-[var(--bg-panel)] border border-[var(--border-color)] text-gray-700 px-5 py-2.5 rounded-[var(--radius-lg)] font-bold shadow-sm hover:bg-gray-50 transition-colors text-sm">
                权限组配置
             </button>
-            <button className="bg-green-600 text-white px-5 py-2.5 rounded-[var(--radius-lg)] font-bold hover:bg-green-700 shadow-sm transition-colors text-sm flex items-center">
+            <button className="bg-green-600 text-white px-5 py-2.5 rounded-[var(--radius-lg)] font-bold hover:bg-green-700 shadow-sm transition-colors text-sm flex items-center" onClick={handleCreate}>
                <Plus className="icon-sm mr-2" />
                新增外包/兼职账号
             </button>
@@ -37,11 +97,11 @@ export function EmployeeAccountsView() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-[var(--spacing-md)]">
          <div className="bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] p-[var(--spacing-lg)] flex flex-col justify-center">
             <h3 className="text-sm font-bold text-[var(--text-muted)] mb-1">兼职/外包总数</h3>
-            <div className="text-[var(--text-main)]xl font-black text-[var(--text-main)] mt-2">12 <span className="text-sm font-bold text-gray-400">个</span></div>
+            <div className="text-[var(--text-main)]xl font-black text-[var(--text-main)] mt-2">{employees.length} <span className="text-sm font-bold text-gray-400">个</span></div>
          </div>
          <div className="bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] p-[var(--spacing-lg)] flex flex-col justify-center">
             <h3 className="text-sm font-bold text-[var(--text-muted)] mb-1">今日活跃(在线)</h3>
-            <div className="text-[var(--text-main)]xl font-black text-[var(--text-main)] mt-2">4 <span className="text-sm font-bold text-gray-400">人</span></div>
+            <div className="text-[var(--text-main)]xl font-black text-[var(--text-main)] mt-2">{activeCount} <span className="text-sm font-bold text-gray-400">人</span></div>
          </div>
          <div className="bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] p-[var(--spacing-lg)] flex flex-col justify-center">
             <h3 className="text-sm font-bold text-[var(--text-muted)] mb-1">即将到期的权限</h3>
@@ -62,13 +122,18 @@ export function EmployeeAccountsView() {
             </div>
          </div>
          <div className="overflow-x-auto min-h-[400px]">
+            {employees.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <UserCircle2 className="icon-xl text-gray-300 mb-4" />
+                <p className="text-[var(--text-muted)] font-medium">还没有员工账号。点击「新增外包/兼职账号」开始管理。</p>
+              </div>
+            ) : (
             <table className="w-full text-left border-collapse min-w-[900px]">
                <thead>
                   <tr className="bg-[var(--bg-app)] border-b border-[var(--border-color)]">
                      <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">基本信息</th>
                      <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">角色/岗位</th>
                      <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">已授权面板</th>
-                     <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap text-right">上次登录</th>
                      <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">状态</th>
                      <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest text-right whitespace-nowrap">操作</th>
                   </tr>
@@ -94,40 +159,45 @@ export function EmployeeAccountsView() {
                         </td>
                         <td className="py-4 px-6">
                            <div className="flex flex-wrap gap-1">
-                              {emp.views.map((v, i) => (
+                              {emp.allowedModules.map((m, i) => (
                                 <span key={i} className="text-[10px] font-bold text-[var(--color-primary)] bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded">
-                                   {v}
+                                   {m}
                                 </span>
                               ))}
                            </div>
                         </td>
-                        <td className="py-4 px-6 text-right font-bold text-[var(--text-muted)] text-xs">
-                           {emp.lastLogin}
-                        </td>
                         <td className="py-4 px-6">
-                           {emp.status === '正常' ? (
+                           {emp.status === 'available' || emp.status === 'assigned' ? (
                               <span className="inline-flex items-center text-[11px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-100">
-                                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5 animate-pulse"></span>正常
+                                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5 animate-pulse"></span>{emp.status === 'available' ? '可用' : '已分配'}
                               </span>
                            ) : (
                               <span className="inline-flex items-center text-[11px] font-bold text-gray-600 bg-gray-50 px-2 py-0.5 rounded border border-[var(--border-color)]">
-                                 <span className="w-1.5 h-1.5 rounded-full bg-gray-400 mr-1.5"></span>离线/冻结
+                                 <span className="w-1.5 h-1.5 rounded-full bg-gray-400 mr-1.5"></span>{emp.status === 'suspended' ? '已暂停' : '已移除'}
                               </span>
                            )}
                         </td>
                         <td className="py-4 px-6 text-right space-x-2">
-                           <button className="text-[11px] font-bold text-green-600 hover:text-white hover:bg-green-600 border border-green-200 bg-green-50 px-2 py-1 rounded transition-colors tooltip" title="模拟登录以预览其控制面板">
-                              <PlayCircle className="w-3.5 h-3.5 inline mr-1" />
-                              预览面板
-                           </button>
-                           <button className="text-[11px] font-bold text-gray-600 hover:text-white hover:bg-gray-800 border border-[var(--border-color)] bg-gray-50 px-2 py-1 rounded transition-colors tooltip" title="编辑授权">
-                              <Edit2 className="w-3.5 h-3.5" />
-                           </button>
+                           {emp.status === 'suspended' ? (
+                             <button onClick={() => handleReactivate(emp.id)} className="text-[11px] font-bold text-green-600 hover:text-white hover:bg-green-600 border border-green-200 bg-green-50 px-2 py-1 rounded transition-colors">
+                               恢复
+                             </button>
+                           ) : emp.status !== 'removed' ? (
+                             <button onClick={() => handleSuspend(emp.id)} className="text-[11px] font-bold text-amber-600 hover:text-white hover:bg-amber-600 border border-amber-200 bg-amber-50 px-2 py-1 rounded transition-colors">
+                               暂停
+                             </button>
+                           ) : null}
+                           {emp.status !== 'removed' && (
+                             <button onClick={() => handleDelete(emp.id)} className="text-[11px] font-bold text-red-500 hover:text-white hover:bg-red-500 border border-red-100 bg-red-50 px-2 py-1 rounded transition-colors">
+                               移除
+                             </button>
+                           )}
                         </td>
                      </tr>
                   ))}
                </tbody>
             </table>
+            )}
          </div>
       </div>
     </div>

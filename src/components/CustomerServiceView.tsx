@@ -1,4 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { loadWorkspaceCustomerServiceResponses, createWorkspaceCustomerServiceResponse, updateCustomerServiceResponseStatus, type CustomerServiceRepositoryContext, type WorkspaceCustomerServiceResponse } from '../lib/data/customerServiceRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createWorkspaceTask } from '../lib/data/taskRepository';
 import { 
   Headphones, 
   MessageSquare, 
@@ -86,6 +90,23 @@ interface ChatSession {
 }
 
 export function CustomerServiceView() {
+  const session = useSaasSession();
+  const repoContext = useMemo<CustomerServiceRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [csResponses, setCsResponses] = useState<WorkspaceCustomerServiceResponse[]>([]);
+
+  useEffect(() => {
+    setCsResponses(loadWorkspaceCustomerServiceResponses(repoContext));
+  }, [repoContext]);
+
+  useEffect(() => {
+    const handler = () => setCsResponses(loadWorkspaceCustomerServiceResponses(repoContext));
+    if (typeof window !== 'undefined') window.addEventListener('workspace_cs_responses_updated', handler);
+    return () => { if (typeof window !== 'undefined') window.removeEventListener('workspace_cs_responses_updated', handler); };
+  }, [repoContext]);
+
   const [uiLang, setUiLang] = useState<AppLang>('zh-CN');
   const [isBotEnabled, setIsBotEnabled] = useState(true);
   const [activeTab, setActiveTab] = useState<CSTab>('monitor');
@@ -160,6 +181,39 @@ export function CustomerServiceView() {
 
   const handleTransfer = () => {
     if (!takeoverSessionId) return;
+    const current = sessions.find(s => s.id === takeoverSessionId);
+    const lastUserMsg = current?.messages.filter(m => m.role === 'user').slice(-1)[0]?.content ?? '';
+    const escalationTask = createWorkspaceTask({
+      title: `客服升级: ${current?.intent ?? '会话转接'}`,
+      column: 'todo',
+      priority: 'High',
+      type: 'cs_escalation',
+      date: new Date().toISOString().slice(0, 10),
+      isAuto: false,
+      metadata: {
+        sessionId: takeoverSessionId,
+        customer: current?.user,
+        intent: current?.intent,
+        lastUserMessage: lastUserMsg,
+      },
+    }, repoContext);
+    const record = createWorkspaceCustomerServiceResponse({
+      customerId: takeoverSessionId,
+      channel: current?.user.includes('微信') ? 'wechat' : 'web',
+      draft: lastUserMsg,
+      status: 'escalated',
+      editorId: session.user.id,
+      escalationTaskId: escalationTask.id,
+      metadata: { intent: current?.intent },
+    }, repoContext);
+    logAuditEvent({
+      action: 'crm_followup_task_sync',
+      moduleId: 'customer_service',
+      targetType: 'task',
+      targetId: escalationTask.id,
+      metadata: { responseId: record.id, sessionId: takeoverSessionId },
+    }, { session });
+    setCsResponses(loadWorkspaceCustomerServiceResponses(repoContext));
     setSessions(prev => prev.map(s => {
       if (s.id === takeoverSessionId) {
         return {
@@ -169,7 +223,7 @@ export function CustomerServiceView() {
             ...s.messages,
             { 
               role: 'system', 
-              content: `【内部转接日志】当前客服已将此会话转接给技术支持节点。原用户意图 [${s.intent}] 的对话快照已生成。`, 
+              content: `【内部转接日志】当前客服已将此会话转接给技术支持节点。原用户意图 [${s.intent}] 的对话快照已生成，升级工单已创建。`, 
               time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
             }
           ]
@@ -177,17 +231,36 @@ export function CustomerServiceView() {
       }
       return s;
     }));
-    toast('会话已完成转接并保存系统快照日志', 'success');
+    toast('会话已转接，升级工单已同步至任务中心', 'success');
   };
 
   const handleSendReply = () => {
     if (!replyText.trim() || !takeoverSessionId) return;
+    const current = sessions.find(s => s.id === takeoverSessionId);
     
     let complianceWarning: string | undefined;
     if (replyText.includes('绝对') || replyText.includes('保证') || replyText.includes('第一')) {
       complianceWarning = '违规词汇警告：检测到绝对化用语或过度承诺，已触发内部审查记录。';
       toast('触发合规告警：内容包含敏感词汇', 'error');
     }
+
+    const record = createWorkspaceCustomerServiceResponse({
+      customerId: takeoverSessionId,
+      channel: current?.user.includes('微信') ? 'wechat' : 'web',
+      draft: replyText,
+      status: 'sent',
+      editorId: session.user.id,
+      editedAt: Date.now(),
+      metadata: { compliance: complianceWarning ?? 'ok' },
+    }, repoContext);
+    logAuditEvent({
+      action: 'crm_email_draft_generate',
+      moduleId: 'customer_service',
+      targetType: 'workspace',
+      targetId: record.id,
+      metadata: { sessionId: takeoverSessionId, compliance: complianceWarning ? 'flagged' : 'ok' },
+    }, { session });
+    setCsResponses(loadWorkspaceCustomerServiceResponses(repoContext));
 
     setSessions(prev => prev.map(s => {
       if (s.id === takeoverSessionId) {
@@ -350,6 +423,11 @@ export function CustomerServiceView() {
                     <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[11px] font-bold rounded">
                        {sessions.length} 个进行中
                     </span>
+                    {csResponses.filter(r => r.status === 'escalated').length > 0 && (
+                      <span className="px-2 py-0.5 bg-red-50 border border-red-100 text-red-600 text-[11px] font-bold rounded ml-1">
+                         {csResponses.filter(r => r.status === 'escalated').length} 已升级
+                      </span>
+                    )}
                  </div>
                  
                  <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">

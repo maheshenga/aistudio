@@ -1,4 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { loadWorkspaceStores, createWorkspaceStore, updateWorkspaceStore, deleteWorkspaceStore, loadWorkspaceStoreOrders, loadWorkspaceStoreInventory, adjustWorkspaceStoreInventory, loadWorkspaceStoreStaff, createWorkspaceStoreStaff, type StoreRepositoryContext, type WorkspaceStore, type WorkspaceStoreOrder, type WorkspaceStoreInventory, type WorkspaceStoreStaff } from '../lib/data/storeRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { 
   Store, 
   MapPin, 
@@ -173,13 +176,46 @@ export function StoreDashboardView({ onNavigate }: { onNavigate?: (id: string) =
   );
 }
 
+const ORDER_STATUS_LABEL: Record<WorkspaceStoreOrder['status'], string> = {
+  pending: '待处理',
+  paid: '待发货',
+  shipped: '配送中',
+  completed: '已完成',
+  refunded: '已退款',
+  cancelled: '已取消',
+};
+
+function formatAmount(amountCents: number, currency: string): string {
+  const symbol = currency === 'CNY' || currency === 'RMB' ? '¥' : '';
+  return `${symbol}${(amountCents / 100).toFixed(2)}`;
+}
+
 export function StoreOrdersView() {
+  const session = useSaasSession();
+  const repoContext = useMemo<StoreRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [orders, setOrders] = useState<WorkspaceStoreOrder[]>([]);
+
+  useEffect(() => {
+    setOrders(loadWorkspaceStoreOrders(repoContext));
+  }, [repoContext]);
+
+  useEffect(() => {
+    const handler = () => setOrders(loadWorkspaceStoreOrders(repoContext));
+    if (typeof window !== 'undefined') window.addEventListener('workspace_stores_updated', handler);
+    return () => {
+      if (typeof window !== 'undefined') window.removeEventListener('workspace_stores_updated', handler);
+    };
+  }, [repoContext]);
+
   return (
     <div className="w-full max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 pt-20 lg:pt-24 pb-12">
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-[28px] font-black text-[var(--text-main)] tracking-tighter leading-tight">单店订单流转与履约</h2>
-          <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2 tracking-wide">处理本门店的线上自提、同城配送与线下开单</p>
+          <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2 tracking-wide">处理本门店的线上自提、同城配送与线下开单{orders.length > 0 ? `（共 ${orders.length} 笔）` : ''}</p>
         </div>
         <div className="flex space-x-2">
           <button className="bg-[var(--bg-panel)] border-[1.5px] border-[var(--border-color)] hover:border-gray-300 hover:bg-gray-50 text-gray-700 px-5 py-3 rounded-[var(--radius-xl)] font-bold transition-all shadow-sm">
@@ -199,56 +235,104 @@ export function StoreOrdersView() {
           <button className="text-[var(--text-muted)] hover:text-[var(--text-main)] pb-2">待自提</button>
           <button className="text-[var(--text-muted)] hover:text-[var(--text-main)] pb-2">退款/售后</button>
         </div>
+        {orders.length === 0 ? (
+          <div className="p-12 text-center">
+            <div className="bg-blue-50 p-4 rounded-full w-fit mx-auto mb-4">
+              <ShoppingBag className="icon-lg text-[var(--color-primary)]" />
+            </div>
+            <h3 className="font-bold text-[var(--text-main)] text-[16px] mb-2">暂无订单</h3>
+            <p className="text-[13px] text-[var(--text-muted)]">线上下单或 POS 开单后将在此显示</p>
+          </div>
+        ) : (
         <table className="w-full text-left">
           <thead>
             <tr className="bg-[var(--bg-app)] border-b border-[var(--border-color)] text-[11px] font-black text-gray-400 uppercase tracking-[0.15em] bg-gray-50/50">
               <th className="py-5 px-6">订单号 / 时间</th>
-              <th className="py-5 px-6">商品摘要</th>
+              <th className="py-5 px-6">渠道</th>
               <th className="py-5 px-6">支付金额</th>
-              <th className="py-5 px-6">履约方式</th>
               <th className="py-5 px-6">状态</th>
-              <th className="py-5 px-6 text-right">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {[
-              { id: 'ORD-8821039481', time: '10:45 AM', items: '春季风衣 (米白) x1...', price: '¥299.00', type: '门店自提', status: '待自提' },
-              { id: 'ORD-8821039482', time: '11:12 AM', items: '极简百搭针织衫 x2', price: '¥198.00', type: '同城急送', status: '骑手已接单' },
-              { id: 'ORD-8821039483', time: '11:30 AM', items: '抗皱冰丝休闲长裤 x1', price: '¥199.00', type: '门店收银', status: '已完成' },
-            ].map((o, i) => (
-              <tr key={i} className="hover:bg-gray-50/50">
+            {orders.map((o) => (
+              <tr key={o.id} className="hover:bg-gray-50/50">
                 <td className="py-5 px-6">
-                   <p className="font-mono text-[13px] text-[var(--text-main)] font-bold">{o.id}</p>
-                   <p className="text-[12px] text-[var(--text-muted)]">{o.time}</p>
-                </td>
-                <td className="py-5 px-6 text-[13px] text-gray-700 max-w-[150px] truncate">{o.items}</td>
-                <td className="py-5 px-6 font-bold text-[var(--text-main)]">{o.price}</td>
-                <td className="py-5 px-6">
-                   <span className="text-[12px] font-bold text-[var(--color-primary)] bg-blue-50 px-2 py-1 rounded">{o.type}</span>
+                   <p className="font-mono text-[13px] text-[var(--text-main)] font-bold">{o.orderNumber}</p>
+                   <p className="text-[12px] text-[var(--text-muted)]">{new Date(o.placedAt).toLocaleString('zh-CN')}</p>
                 </td>
                 <td className="py-5 px-6">
-                   <span className={`px-2.5 py-1 text-[11px] font-bold rounded-lg ${o.status === '已完成' ? 'bg-gray-100 text-gray-600' : 'bg-green-50 text-green-600'}`}>{o.status}</span>
+                   <span className="text-[12px] font-bold text-[var(--color-primary)] bg-blue-50 px-2 py-1 rounded">{o.customerChannel ?? '门店收银'}</span>
                 </td>
-                <td className="py-5 px-6 text-right space-x-3">
-                  <button className="text-[var(--color-primary)] font-bold hover:text-blue-800 text-[13px]">详情</button>
-                  {o.status === '待自提' && <button className="text-green-600 font-bold hover:text-green-800 text-[13px]">核销</button>}
+                <td className="py-5 px-6 font-bold text-[var(--text-main)]">{formatAmount(o.amountCents, o.currency)}</td>
+                <td className="py-5 px-6">
+                   <span className={`px-2.5 py-1 text-[11px] font-bold rounded-lg ${o.status === 'completed' ? 'bg-gray-100 text-gray-600' : o.status === 'refunded' || o.status === 'cancelled' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>{ORDER_STATUS_LABEL[o.status]}</span>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        )}
       </div>
     </div>
   );
 }
 
 export function StoreInventoryView() {
+  const session = useSaasSession();
+  const repoContext = useMemo<StoreRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [inventory, setInventory] = useState<WorkspaceStoreInventory[]>([]);
+
+  useEffect(() => {
+    setInventory(loadWorkspaceStoreInventory(repoContext));
+  }, [repoContext]);
+
+  useEffect(() => {
+    const handler = () => setInventory(loadWorkspaceStoreInventory(repoContext));
+    if (typeof window !== 'undefined') window.addEventListener('workspace_stores_updated', handler);
+    return () => {
+      if (typeof window !== 'undefined') window.removeEventListener('workspace_stores_updated', handler);
+    };
+  }, [repoContext]);
+
+  const handleReplenish = (item: WorkspaceStoreInventory) => {
+    const raw = typeof window !== 'undefined' ? window.prompt(`向总仓要货数量（当前可用 ${item.stock} 件）`, '20') : null;
+    if (!raw) return;
+    const qty = Number(raw);
+    if (!Number.isFinite(qty) || qty <= 0) return;
+    adjustWorkspaceStoreInventory(
+      item.id,
+      {
+        sku: item.sku,
+        storeId: item.storeId,
+        beforeCount: item.stock,
+        afterCount: item.stock + qty,
+        reason: '向总仓要货',
+        actorId: session.user.id,
+      },
+      repoContext,
+    );
+    logAuditEvent(
+      {
+        action: 'asset_create',
+        moduleId: 'store_inventory',
+        targetType: 'inventory',
+        targetId: item.id,
+        metadata: { sku: item.sku, delta: qty },
+      },
+      { session },
+    );
+    setInventory(loadWorkspaceStoreInventory(repoContext));
+  };
+
   return (
     <div className="w-full max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 pt-20 lg:pt-24 pb-12">
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-[28px] font-black text-[var(--text-main)] tracking-tighter leading-tight">门店库存与智能调拨</h2>
-          <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2 tracking-wide">控制本门店现货库存，支持跨店调拨或向总仓要货</p>
+          <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2 tracking-wide">控制本门店现货库存，支持跨店调拨或向总仓要货{inventory.length > 0 ? `（共 ${inventory.length} 个 SKU）` : ''}</p>
         </div>
         <div className="flex space-x-2">
           <button className="bg-[var(--bg-panel)] border-[1.5px] border-[var(--border-color)] hover:border-gray-300 hover:bg-gray-50 text-gray-700 px-5 py-3 rounded-[var(--radius-xl)] font-bold transition-all shadow-sm">
@@ -270,99 +354,211 @@ export function StoreInventoryView() {
               </label>
            </div>
          </div>
+         {inventory.length === 0 ? (
+          <div className="p-12 text-center">
+            <div className="bg-blue-50 p-4 rounded-full w-fit mx-auto mb-4">
+              <ShoppingBag className="icon-lg text-[var(--color-primary)]" />
+            </div>
+            <h3 className="font-bold text-[var(--text-main)] text-[16px] mb-2">暂无库存记录</h3>
+            <p className="text-[13px] text-[var(--text-muted)]">导入或新建 SKU 后将在此显示</p>
+          </div>
+         ) : (
          <table className="w-full text-left">
           <thead>
             <tr className="bg-[var(--bg-app)] border-b border-[var(--border-color)] text-[11px] font-black text-gray-400 uppercase tracking-[0.15em] bg-gray-50/50">
               <th className="py-5 px-6">SKU 编码</th>
               <th className="py-5 px-6">商品信息</th>
               <th className="py-5 px-6">可用库存</th>
-              <th className="py-5 px-6">占用/在途</th>
+              <th className="py-5 px-6">预警阈值</th>
               <th className="py-5 px-6">状态</th>
               <th className="py-5 px-6 text-right">补货建议</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {[
-              { sku: 'CLO-SPR-001', name: '春季风衣 (米白)', stock: 5, locked: '2在途', stat: '严重缺货' },
-              { sku: 'CLO-SUM-042', name: '抗皱冰丝休闲长裤 (黑) M', stock: 42, locked: '0', stat: '充足' },
-              { sku: 'CLO-BAS-099', name: '极简百搭针织衫 (灰) L', stock: 12, locked: '1在途', stat: '临界' },
-            ].map((o, i) => (
-              <tr key={i} className="hover:bg-gray-50/50">
+            {inventory.map((o) => {
+              const stat = o.stock <= 0 ? '严重缺货' : o.stock < o.threshold ? '临界' : '充足';
+              return (
+              <tr key={o.id} className="hover:bg-gray-50/50">
                 <td className="py-5 px-6 font-mono text-[13px] text-[var(--text-muted)]">{o.sku}</td>
                 <td className="py-5 px-6 font-bold text-[14px] text-[var(--text-main)]">{o.name}</td>
                 <td className="py-5 px-6">
-                   <span className={`text-[15px] font-extrabold ${o.stock < 10 ? 'text-red-600' : 'text-[var(--text-main)]'}`}>{o.stock}</span>
+                   <span className={`text-[15px] font-extrabold ${o.stock < o.threshold ? 'text-red-600' : 'text-[var(--text-main)]'}`}>{o.stock}</span>
                 </td>
-                <td className="py-5 px-6 text-[13px] text-[var(--text-muted)]">{o.locked}</td>
+                <td className="py-5 px-6 text-[13px] text-[var(--text-muted)]">{o.threshold}</td>
                 <td className="py-5 px-6">
                    <span className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border ${
-                     o.stat === '严重缺货' ? 'bg-red-50 text-red-600 border-red-100' :
-                     o.stat === '临界' ? 'bg-orange-50 text-orange-600 border-orange-100' : 'bg-green-50 text-green-600 border-green-100'
-                   }`}>{o.stat}</span>
+                     stat === '严重缺货' ? 'bg-red-50 text-red-600 border-red-100' :
+                     stat === '临界' ? 'bg-orange-50 text-orange-600 border-orange-100' : 'bg-green-50 text-green-600 border-green-100'
+                   }`}>{stat}</span>
                 </td>
                 <td className="py-5 px-6 text-right">
-                  <button className="text-[var(--color-primary)] font-bold hover:text-blue-800 text-[13px]">向总仓要货</button>
+                  <button onClick={() => handleReplenish(o)} className="text-[var(--color-primary)] font-bold hover:text-blue-800 text-[13px]">向总仓要货</button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
+         )}
       </div>
     </div>
   );
 }
 
+const STORE_STATUS_LABEL: Record<WorkspaceStore['status'], string> = {
+  active: '营业中',
+  paused: '暂停营业',
+  closed: '已关店',
+};
+
+const STORE_CHANNEL_LABEL: Record<string, string> = {
+  direct: '直营店',
+  flagship: '直营总店',
+  franchise: '加盟店',
+  online: '线上店',
+};
+
 export function StoreListView() {
+  const session = useSaasSession();
+  const repoContext = useMemo<StoreRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [stores, setStores] = useState<WorkspaceStore[]>([]);
+
+  useEffect(() => {
+    setStores(loadWorkspaceStores(repoContext));
+  }, [repoContext]);
+
+  useEffect(() => {
+    const handler = () => setStores(loadWorkspaceStores(repoContext));
+    if (typeof window !== 'undefined') window.addEventListener('workspace_stores_updated', handler);
+    return () => {
+      if (typeof window !== 'undefined') window.removeEventListener('workspace_stores_updated', handler);
+    };
+  }, [repoContext]);
+
+  const handleCreateStore = () => {
+    const name = typeof window !== 'undefined' ? window.prompt('请输入新门店名称')?.trim() : '';
+    if (!name) return;
+    const channel = (typeof window !== 'undefined' ? window.prompt('请输入门店类型（direct/flagship/franchise/online）', 'direct')?.trim() : 'direct') || 'direct';
+    const store = createWorkspaceStore(
+      {
+        name,
+        channel,
+        ownerId: session.user.id,
+        status: 'active',
+        metadata: {},
+      },
+      repoContext,
+    );
+    logAuditEvent(
+      {
+        action: 'asset_create',
+        moduleId: 'store_list',
+        targetType: 'store',
+        targetId: store.id,
+        metadata: { name, channel },
+      },
+      { session },
+    );
+    setStores(loadWorkspaceStores(repoContext));
+  };
+
+  const handleToggleStatus = (store: WorkspaceStore) => {
+    const nextStatus: WorkspaceStore['status'] = store.status === 'active' ? 'paused' : 'active';
+    updateWorkspaceStore(store.id, { status: nextStatus }, repoContext);
+    logAuditEvent(
+      {
+        action: 'asset_create',
+        moduleId: 'store_list',
+        targetType: 'store',
+        targetId: store.id,
+        metadata: { status: nextStatus },
+      },
+      { session },
+    );
+    setStores(loadWorkspaceStores(repoContext));
+  };
+
+  const handleDeleteStore = (store: WorkspaceStore) => {
+    if (typeof window !== 'undefined' && !window.confirm(`确定要关闭并删除门店「${store.name}」吗？此操作将级联删除其订单/库存/员工数据。`)) return;
+    deleteWorkspaceStore(store.id, repoContext);
+    logAuditEvent(
+      {
+        action: 'asset_delete',
+        moduleId: 'store_list',
+        targetType: 'store',
+        targetId: store.id,
+        metadata: { name: store.name },
+      },
+      { session },
+    );
+    setStores(loadWorkspaceStores(repoContext));
+  };
+
   return (
     <div className="w-full max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 pt-20 lg:pt-24 pb-12">
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-[28px] font-black text-[var(--text-main)] tracking-tighter leading-tight">门店官网与结构展现</h2>
-          <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2 tracking-wide">管理品牌旗舰总店及各个下属分店/加盟店</p>
+          <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2 tracking-wide">管理品牌旗舰总店及各个下属分店/加盟店{stores.length > 0 ? `（共 ${stores.length} 家）` : ''}</p>
         </div>
-        <button className="flex items-center space-x-2 bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-[var(--radius-xl)] font-bold transition-all shadow-[0_4px_12px_rgba(0,0,0,0.1)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.2)] hover:-translate-y-0.5">
+        <button
+          onClick={handleCreateStore}
+          className="flex items-center space-x-2 bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-[var(--radius-xl)] font-bold transition-all shadow-[0_4px_12px_rgba(0,0,0,0.1)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.2)] hover:-translate-y-0.5">
           <Plus className="icon-sm" />
           <span>创建新门店</span>
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-[var(--spacing-md)]">
-        {[
-          { name: '北京朝阳大悦城旗舰店', type: '直营总店', status: '营业中', revenue: '¥145,200', views: '2,400' },
-          { name: '上海静安寺体验店', type: '直营店', status: '营业中', revenue: '¥98,500', views: '1,850' },
-          { name: '杭州西湖银泰加盟店', type: '加盟店', status: '装修中', revenue: '¥0', views: '120' },
-        ].map((store, i) => (
-          <div key={i} className="bg-[var(--bg-panel)] border text-left border-[var(--border-color)]/80 rounded-[28px] p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-shadow duration-300 flex flex-col hover:border-blue-300 transition-all">
-            <div className="flex justify-between items-start mb-4">
-              <div className="bg-blue-50 p-3 rounded-[var(--radius-xl)]">
-                <Store className="icon-lg text-[var(--color-primary)]" />
-              </div>
-              <span className={`px-2.5 py-1 text-[11px] font-bold rounded-lg ${store.status === '营业中' ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-600'}`}>
-                {store.status}
-              </span>
-            </div>
-            <h3 className="font-bold text-[var(--text-main)] text-[16px] mb-1">{store.name}</h3>
-            <div className="flex items-center text-[12px] text-[var(--text-muted)] mb-[var(--spacing-md)]">
-              <MapPin className="w-3.5 h-3.5 mr-1" />
-              <span>{store.type}</span>
-            </div>
-            <div className="grid grid-cols-2 gap-[var(--spacing-md)] mb-4">
-              <div>
-                <p className="text-[11px] text-gray-400 font-bold uppercase mb-1">本月营收</p>
-                <p className="font-bold text-[var(--text-main)]">{store.revenue}</p>
-              </div>
-              <div>
-                <p className="text-[11px] text-gray-400 font-bold uppercase mb-1">今日官网访问</p>
-                <p className="font-bold text-[var(--text-main)]">{store.views}</p>
-              </div>
-            </div>
-            <div className="flex items-center justify-between border-t border-[var(--border-color)] pt-4 mt-auto">
-              <button className="text-sm font-bold text-[var(--color-primary)] hover:text-blue-800">门店主页</button>
-              <button className="text-sm font-bold text-[var(--text-muted)] hover:text-gray-700">管理后台</button>
-            </div>
+      {stores.length === 0 ? (
+        <div className="bg-[var(--bg-panel)] border border-dashed border-[var(--border-color)] rounded-[28px] p-12 text-center">
+          <div className="bg-blue-50 p-4 rounded-full w-fit mx-auto mb-4">
+            <Store className="icon-lg text-[var(--color-primary)]" />
           </div>
-        ))}
-      </div>
+          <h3 className="font-bold text-[var(--text-main)] text-[16px] mb-2">还没有门店</h3>
+          <p className="text-[13px] text-[var(--text-muted)] mb-6">点击「创建新门店」开始搭建你的门店网络</p>
+          <button
+            onClick={handleCreateStore}
+            className="inline-flex items-center space-x-2 bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-[var(--radius-xl)] font-bold transition-all">
+            <Plus className="icon-sm" />
+            <span>创建新门店</span>
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-[var(--spacing-md)]">
+          {stores.map((store) => (
+            <div key={store.id} className="bg-[var(--bg-panel)] border text-left border-[var(--border-color)]/80 rounded-[28px] p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-shadow duration-300 flex flex-col hover:border-blue-300 transition-all">
+              <div className="flex justify-between items-start mb-4">
+                <div className="bg-blue-50 p-3 rounded-[var(--radius-xl)]">
+                  <Store className="icon-lg text-[var(--color-primary)]" />
+                </div>
+                <span className={`px-2.5 py-1 text-[11px] font-bold rounded-lg ${store.status === 'active' ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-600'}`}>
+                  {STORE_STATUS_LABEL[store.status]}
+                </span>
+              </div>
+              <h3 className="font-bold text-[var(--text-main)] text-[16px] mb-1">{store.name}</h3>
+              <div className="flex items-center text-[12px] text-[var(--text-muted)] mb-[var(--spacing-md)]">
+                <MapPin className="w-3.5 h-3.5 mr-1" />
+                <span>{STORE_CHANNEL_LABEL[store.channel] ?? store.channel}{store.location ? ` · ${store.location}` : ''}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-[var(--border-color)] pt-4 mt-auto">
+                <button
+                  onClick={() => handleToggleStatus(store)}
+                  className="text-sm font-bold text-[var(--color-primary)] hover:text-blue-800">
+                  {store.status === 'active' ? '暂停营业' : '恢复营业'}
+                </button>
+                <button
+                  onClick={() => handleDeleteStore(store)}
+                  className="text-sm font-bold text-red-500 hover:text-red-700">
+                  删除门店
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -444,44 +640,118 @@ export function StoreDesignView() {
   );
 }
 
+const STAFF_STATUS_LABEL: Record<WorkspaceStoreStaff['status'], string> = {
+  active: '在职',
+  on_leave: '休假中',
+  terminated: '已离职',
+};
+
 export function StoreStaffView() {
+  const session = useSaasSession();
+  const repoContext = useMemo<StoreRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [staff, setStaff] = useState<WorkspaceStoreStaff[]>([]);
+  const [stores, setStores] = useState<WorkspaceStore[]>([]);
+
+  useEffect(() => {
+    setStaff(loadWorkspaceStoreStaff(repoContext));
+    setStores(loadWorkspaceStores(repoContext));
+  }, [repoContext]);
+
+  useEffect(() => {
+    const handler = () => {
+      setStaff(loadWorkspaceStoreStaff(repoContext));
+      setStores(loadWorkspaceStores(repoContext));
+    };
+    if (typeof window !== 'undefined') window.addEventListener('workspace_stores_updated', handler);
+    return () => {
+      if (typeof window !== 'undefined') window.removeEventListener('workspace_stores_updated', handler);
+    };
+  }, [repoContext]);
+
+  const storeNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    stores.forEach((s) => { map[s.id] = s.name; });
+    return map;
+  }, [stores]);
+
+  const handleAddStaff = () => {
+    if (stores.length === 0) {
+      if (typeof window !== 'undefined') window.alert('请先创建门店，再添加店员');
+      return;
+    }
+    const name = typeof window !== 'undefined' ? window.prompt('请输入店员姓名')?.trim() : '';
+    if (!name) return;
+    const role = (typeof window !== 'undefined' ? window.prompt('请输入角色（如 店长 / 导购）', '导购')?.trim() : '导购') || '导购';
+    const created = createWorkspaceStoreStaff(
+      {
+        storeId: stores[0].id,
+        name,
+        role,
+        status: 'active',
+        ownerId: session.user.id,
+      },
+      repoContext,
+    );
+    logAuditEvent(
+      {
+        action: 'member_create',
+        moduleId: 'store_staff',
+        targetType: 'store_staff',
+        targetId: created.id,
+        metadata: { name, role, storeId: stores[0].id },
+      },
+      { session },
+    );
+    setStaff(loadWorkspaceStoreStaff(repoContext));
+  };
+
   return (
     <div className="w-full max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 pt-20 lg:pt-24 pb-12">
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-[28px] font-black text-[var(--text-main)] tracking-tighter leading-tight">员工与排班管理</h2>
-          <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2 tracking-wide">控制员工系统权限及业务绩效跟踪</p>
+          <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2 tracking-wide">控制员工系统权限及业务绩效跟踪{staff.length > 0 ? `（共 ${staff.length} 人）` : ''}</p>
         </div>
-        <button className="flex items-center space-x-2 bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-[var(--radius-xl)] font-bold transition-all shadow-[0_4px_12px_rgba(0,0,0,0.1)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.2)] hover:-translate-y-0.5">
+        <button onClick={handleAddStaff} className="flex items-center space-x-2 bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-[var(--radius-xl)] font-bold transition-all shadow-[0_4px_12px_rgba(0,0,0,0.1)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.2)] hover:-translate-y-0.5">
           <Plus className="icon-sm" />
           <span>添加店员</span>
         </button>
       </div>
       
       <div className="bg-[var(--bg-panel)] border border-[var(--border-color)]/80 rounded-[28px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden">
+        {staff.length === 0 ? (
+          <div className="p-12 text-center">
+            <div className="bg-blue-50 p-4 rounded-full w-fit mx-auto mb-4">
+              <UsersRound className="icon-lg text-[var(--color-primary)]" />
+            </div>
+            <h3 className="font-bold text-[var(--text-main)] text-[16px] mb-2">还没有店员</h3>
+            <p className="text-[13px] text-[var(--text-muted)]">点击「添加店员」开始组建你的门店团队</p>
+          </div>
+        ) : (
         <table className="w-full text-left">
           <thead>
             <tr className="bg-[var(--bg-app)] border-b border-[var(--border-color)] text-[11px] font-black text-gray-400 uppercase tracking-[0.15em] bg-gray-50/50">
               <th className="py-5 px-6">员工姓名</th>
               <th className="py-5 px-6">所属门店</th>
               <th className="py-5 px-6">角色权限</th>
-              <th className="py-5 px-6">本月拉新/订单数</th>
+              <th className="py-5 px-6">状态</th>
               <th className="py-5 px-6 text-right">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {[
-              { name: '王梦', store: '北京朝阳大悦城店', role: '店长', kpi: '42 / 120' },
-              { name: '李静', store: '北京朝阳大悦城店', role: '导购', kpi: '15 / 55' },
-              { name: '陈浩', store: '上海静安寺体验店', role: '店长', kpi: '30 / 105' },
-            ].map((p, i) => (
-              <tr key={i} className="hover:bg-gray-50/50">
+            {staff.map((p) => (
+              <tr key={p.id} className="hover:bg-gray-50/50">
                 <td className="py-5 px-6 text-[14px] font-bold text-[var(--text-main)]">{p.name}</td>
-                <td className="py-5 px-6 text-[13px] text-[var(--text-muted)]">{p.store}</td>
+                <td className="py-5 px-6 text-[13px] text-[var(--text-muted)]">{storeNameById[p.storeId] ?? '未分配'}</td>
                 <td className="py-5 px-6">
                    <span className="px-2 py-1 text-[11px] font-bold bg-blue-50 text-[var(--color-primary)] rounded">{p.role}</span>
                 </td>
-                <td className="py-5 px-6 text-[14px] font-bold text-[var(--text-main)]">{p.kpi}</td>
+                <td className="py-5 px-6">
+                   <span className={`px-2 py-1 text-[11px] font-bold rounded ${p.status === 'active' ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-600'}`}>{STAFF_STATUS_LABEL[p.status]}</span>
+                </td>
                 <td className="py-5 px-6 text-right">
                   <button className="text-[var(--color-primary)] font-bold hover:text-blue-800 text-[14px]">管理权限</button>
                 </td>
@@ -489,6 +759,7 @@ export function StoreStaffView() {
             ))}
           </tbody>
         </table>
+        )}
       </div>
     </div>
   );

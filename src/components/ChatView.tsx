@@ -1,11 +1,13 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useUndoRedo } from '../context/UndoRedoContext';
-import { Send, Bot, Sparkles, Plus, Image as ImageIcon, FileText, Code, Settings2, MoreVertical, Search, Paperclip, MessageSquare, Briefcase, Hash, History, PenTool, Database, Megaphone, Check, Compass, Users, Video, Music, Layout, BookOpen, Star, TrendingUp, Brain, ToggleLeft, ToggleRight, Copy, ThumbsUp, ThumbsDown, RefreshCcw, Command, Square, X, Trash2 } from 'lucide-react';
+import { Send, Bot, Sparkles, Plus, Image as ImageIcon, FileText, Code, Settings2, MoreVertical, Search, Paperclip, MessageSquare, Briefcase, Hash, History, PenTool, Database, Megaphone, Check, Compass, Users, Video, Music, Layout, BookOpen, Star, TrendingUp, Brain, ToggleLeft, ToggleRight, Copy, ThumbsUp, ThumbsDown, RefreshCcw, Command, Square, X, Trash2, Bookmark, CheckSquare } from 'lucide-react';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
 import { createWorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
+import { createWorkspaceTask } from '../lib/data/taskRepository';
+import { toast } from './Toast';
 
 const AGENTS = [
   { id: 'general', name: '全能顾问', icon: Bot, color: 'text-blue-500', bg: 'bg-blue-50', desc: '通用的强大 AI 助手，解答各种问题' },
@@ -257,6 +259,80 @@ export function ChatView() {
     setAttachments(p => [...p, { name: `data_export_${Math.random().toString(36).substring(7)}.csv`, size: '2.4MB' }]);
   };
 
+  // P1-R07: 显式保存 Chat 输出为 asset note 或 task，而非隐式无限记忆
+  const handleSaveChatOutput = (
+    messageId: string,
+    content: string,
+    target: 'asset_note' | 'task',
+    agentName: string,
+  ) => {
+    if (!content.trim()) return;
+    const promptSummary = content.slice(0, 80);
+
+    if (target === 'asset_note') {
+      const asset = createWorkspaceAsset({
+        name: `chat-memory-${Date.now()}.md`,
+        type: 'text',
+        size: `${content.length} chars`,
+        source: 'generated',
+        moduleId: 'chat',
+        tags: ['chat-memory', agentName],
+        metadata: {
+          saveTarget: 'asset_note',
+          agent: activeAgent.id,
+          agentName,
+          promptSummary,
+          sourceMessageId: messageId,
+          savedAt: Date.now(),
+        },
+      }, jobContext);
+      logAuditEvent({
+        action: 'asset_create',
+        moduleId: 'chat',
+        targetType: 'asset',
+        targetId: asset.id,
+        metadata: {
+          saveTarget: 'asset_note',
+          agent: activeAgent.id,
+          sourceMessageId: messageId,
+          promptSummary,
+        },
+      }, { session });
+      toast('已保存为笔记', 'success');
+    } else {
+      const task = createWorkspaceTask({
+        title: `Chat 跟进: ${promptSummary}...`,
+        column: 'todo',
+        priority: 'Medium',
+        type: 'chat_followup',
+        date: new Date().toISOString().slice(0, 10),
+        isAuto: false,
+        metadata: {
+          saveTarget: 'task',
+          agent: activeAgent.id,
+          agentName,
+          sourceMessageId: messageId,
+          fullContent: content,
+          promptSummary,
+          savedAt: Date.now(),
+        },
+      }, jobContext);
+      logAuditEvent({
+        action: 'task_create',
+        moduleId: 'chat',
+        targetType: 'task',
+        targetId: task.id,
+        metadata: {
+          saveTarget: 'task',
+          agent: activeAgent.id,
+          sourceMessageId: messageId,
+          promptSummary,
+        },
+      }, { session });
+      toast('已保存为跟进任务', 'success');
+    }
+  };
+
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -496,6 +572,20 @@ export function ChatView() {
                     <div className="flex items-center space-x-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors tooltip tooltip-top" title="复制文本">
                         <Copy className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleSaveChatOutput(msg.id, msg.content, 'asset_note', activeAgent.name)}
+                        className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-colors tooltip tooltip-top"
+                        title="保存为笔记（持久化到资产库）"
+                      >
+                        <Bookmark className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleSaveChatOutput(msg.id, msg.content, 'task', activeAgent.name)}
+                        className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-md transition-colors tooltip tooltip-top"
+                        title="保存为跟进任务"
+                      >
+                        <CheckSquare className="w-3.5 h-3.5" />
                       </button>
                       <button className="p-1.5 text-gray-400 hover:text-[var(--color-primary)] hover:bg-blue-50 rounded-md transition-colors tooltip tooltip-top" title="点赞">
                         <ThumbsUp className="w-3.5 h-3.5" />

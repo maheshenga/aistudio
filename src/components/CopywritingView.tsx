@@ -1,11 +1,20 @@
-import React, { useMemo, useState } from 'react';
-import { PenTool, Wrench, BookType, Sparkles, Plus, Search, Tag, Copy, Share, Database, Layout, Loader2, Wand2, RefreshCw, Languages, FileText, CheckCircle2, ChevronRight, Hash, ArrowUpRight } from 'lucide-react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import { PenTool, Wrench, BookType, Sparkles, Plus, Search, Tag, Copy, Share, Database, Layout, Loader2, Wand2, RefreshCw, Languages, FileText, CheckCircle2, ChevronRight, Hash, ArrowUpRight, Archive, Edit3, Trash2, X } from 'lucide-react';
 import { useSessionAutoSave } from '../hooks/useSessionAutoSave';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
 import { createWorkspaceAsset, recordWorkspaceAssetExport, type WorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
+import {
+  loadWorkspaceKeywordLibraries,
+  createWorkspaceKeywordLibrary,
+  updateWorkspaceKeywordLibrary,
+  archiveWorkspaceKeywordLibrary,
+  searchWorkspaceKeywordLibraries,
+  type WorkspaceKeywordLibrary,
+  type WorkspaceKeywordLibraryStatus,
+} from '../lib/data/keywordRepository';
 import { toast } from './Toast';
 
 interface CopywritingViewProps {
@@ -453,81 +462,290 @@ function CopywritingTools() {
 }
 
 function CopywritingKeywords() {
+  const session = useSaasSession();
+  const repoContext = useMemo(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [libraries, setLibraries] = useState<WorkspaceKeywordLibrary[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingLibrary, setEditingLibrary] = useState<WorkspaceKeywordLibrary | null>(null);
+
+  const refresh = useCallback(() => {
+    const loaded = searchQuery.trim()
+      ? searchWorkspaceKeywordLibraries(searchQuery, repoContext)
+      : loadWorkspaceKeywordLibraries(repoContext);
+    setLibraries(loaded);
+  }, [repoContext, searchQuery]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const handler = () => refresh();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('workspace_keyword_libraries_updated', handler);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('workspace_keyword_libraries_updated', handler);
+      }
+    };
+  }, [refresh]);
+
+  const handleCreate = (input: { name: string; description: string; channel: string; keywords: string[]; tags: string[]; blockedTerms: string[]; sourceText: string }) => {
+    const library = createWorkspaceKeywordLibrary(input, repoContext);
+    logAuditEvent({
+      action: 'copywriting_keyword_create',
+      moduleId: 'copywriting_keywords',
+      targetType: 'settings',
+      targetId: library.id,
+      metadata: { name: library.name, channel: library.channel, keywordCount: library.keywords.length },
+    }, { session });
+    toast('词库已创建', 'success');
+    setShowCreateModal(false);
+    refresh();
+  };
+
+  const handleUpdate = (libraryId: string, patch: Partial<WorkspaceKeywordLibrary>) => {
+    const updated = updateWorkspaceKeywordLibrary(libraryId, patch, repoContext);
+    if (updated) {
+      logAuditEvent({
+        action: 'copywriting_keyword_update',
+        moduleId: 'copywriting_keywords',
+        targetType: 'settings',
+        targetId: libraryId,
+        metadata: { name: updated.name, keywordCount: updated.keywords.length },
+      }, { session });
+      toast('词库已更新', 'success');
+    }
+    setEditingLibrary(null);
+    refresh();
+  };
+
+  const handleArchive = (libraryId: string) => {
+    const archived = archiveWorkspaceKeywordLibrary(libraryId, repoContext);
+    if (archived) {
+      logAuditEvent({
+        action: 'copywriting_keyword_archive',
+        moduleId: 'copywriting_keywords',
+        targetType: 'settings',
+        targetId: libraryId,
+        metadata: { name: archived.name },
+      }, { session });
+      toast('词库已归档', 'success');
+    }
+    refresh();
+  };
+
+  const statusLabel = (status: WorkspaceKeywordLibraryStatus) => {
+    switch (status) {
+      case 'active': return '活跃挂载中';
+      case 'paused': return '已暂停应用';
+      case 'archived': return '已归档';
+    }
+  };
+
+  const statusColor = (status: WorkspaceKeywordLibraryStatus) => {
+    switch (status) {
+      case 'active': return 'text-green-600';
+      case 'paused': return 'text-[var(--text-muted)]';
+      case 'archived': return 'text-gray-400';
+    }
+  };
+
   return (
     <div className="p-[var(--spacing-lg)] md:p-10 max-w-7xl mx-auto space-y-8 animate-in fade-in duration-300 bg-[var(--bg-app)] min-h-[calc(100vh-4rem)]">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-[var(--spacing-md)] bg-[var(--bg-panel)] p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] rounded-[24px] border border-[var(--border-color)] shadow-sm relative overflow-hidden">
-        <div className="absolute right-0 top-0 w-64 h-64 bg-blue-50/50 rounded-bl-full   pointer-events-none"></div>
+        <div className="absolute right-0 top-0 w-64 h-64 bg-blue-50/50 rounded-bl-full pointer-events-none"></div>
         <div className="relative z-10">
           <span className="bg-blue-100 text-blue-700 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-widest mb-3 inline-block">Data Center</span>
           <h2 className="text-[var(--text-main)]xl font-black text-[var(--text-main)] mb-3 tracking-tight">专属语料与知识库</h2>
           <p className="text-[var(--text-muted)] text-[15px] font-medium max-w-2xl leading-relaxed">沉淀主理人专属黑话、防违规高压线词库，以及行业爆款高频词。通过挂载外部词库强化 AI 输出的垂直精准度。</p>
         </div>
-        <button className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-6 py-3 rounded-[var(--radius-lg)] font-black text-sm transition-all shadow-md shadow-gray-300 hover:-translate-y-0.5 flex items-center relative z-10">
-           <Plus className="icon-sm mr-2" /> 建立新型集市词库
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="bg-[var(--color-primary)] hover:bg-blue-700 text-white px-6 py-3 rounded-[var(--radius-lg)] font-black text-sm transition-all shadow-md shadow-gray-300 hover:-translate-y-0.5 flex items-center relative z-10"
+        >
+           <Plus className="icon-sm mr-2" /> 建立新词库
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-[var(--spacing-md)]">
-         {[
-           { name: '美妆护肤高频词', desc: '包含了最新的美白、抗初老相关营销高频词。', count: 128, tags: ['种草', '成分党'], status: '活跃挂载中', color: 'green' },
-           { name: '数码科技评测词库', desc: '跑分、硬件参数、手感细节等标准化描述句式。', count: 86, tags: ['专业', '硬核'], status: '活跃挂载中', color: 'blue' },
-           { name: '全局防暴/违禁词', desc: '广告法禁用词与多平台敏感封杀词汇汇总。', count: 432, tags: ['风控', '安全第一'], status: '全局强效拦截', color: 'rose' },
-           { name: '女装穿搭风格词', desc: '穿搭灵感、版型剪裁、面料质感等描绘。', count: 54, tags: ['常青树', 'OOTD'], status: '已暂停应用', color: 'gray' }
-         ].map((lib, i) => (
-           <div key={i} className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[24px] p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] shadow-sm hover:shadow-xl transition-all duration-300 relative group">
+      <div className="relative">
+        <Search className="icon-sm text-gray-400 absolute left-3 top-3" />
+        <input
+          type="text"
+          placeholder="搜索词库名称、关键词、标签..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-lg)] pl-9 pr-4 py-2.5 text-[13px] outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all shadow-sm"
+        />
+      </div>
+
+      {libraries.length === 0 ? (
+        <div className="bg-[var(--bg-panel)] border border-dashed border-[var(--border-color)] rounded-[24px] p-12 text-center">
+          <Database className="icon-xl text-gray-300 mx-auto mb-4" />
+          <p className="text-[var(--text-muted)] font-medium">还没有词库。点击「建立新词库」开始沉淀你的专属语料。</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-[var(--spacing-md)]">
+          {libraries.map((lib) => (
+            <div key={lib.id} className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[24px] p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] shadow-sm hover:shadow-xl transition-all duration-300 relative group">
               <div className="flex justify-between items-start mb-5">
-                 <div className="flex items-center space-x-4">
-                    <div className={`w-14 h-14 rounded-[20px] flex items-center justify-center shrink-0 border shadow-inner group-hover:scale-105 transition-transform ${
-                     lib.color === 'green' ? 'bg-green-50 text-green-600 border-green-100' :
-                     lib.color === 'blue' ? 'bg-blue-50 text-[var(--color-primary)] border-blue-100' :
-                     lib.color === 'rose' ? 'bg-rose-50 text-rose-600 border-rose-100' :
-                     'bg-gray-50 text-gray-600 border-[var(--border-color)]'
-                   }`}>
-                       <Database className="w-7 h-7 stroke-[2]" />
-                    </div>
-                    <div>
-                       <h3 className="text-[18px] font-black text-[var(--text-main)] tracking-tight group-hover:text-[var(--color-primary)] transition-colors">{lib.name}</h3>
-                       <p className="text-[var(--text-muted)] text-sm font-medium mt-1">{lib.desc}</p>
-                    </div>
-                 </div>
-              </div>
-              
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-[var(--spacing-md)] mt-6 p-4 bg-gray-50 rounded-[var(--radius-xl)] border border-[var(--border-color)]">
-                 <div className="flex items-center space-x-4">
-                    <div className="flex flex-col">
-                       <span className="text-[10px] uppercase font-black text-gray-400 mb-1">实体词数量</span>
-                       <span className="text-lg font-black text-[var(--text-main)]">{lib.count}</span>
-                    </div>
-                    <div className="w-px h-8 bg-gray-200"></div>
-                    <div className="flex flex-col">
-                       <span className="text-[10px] uppercase font-black text-gray-400 mb-1">系统策略</span>
-                       <span className={`text-[12px] font-bold ${
-                         lib.color === 'rose' ? 'text-rose-600' :
-                         lib.color === 'gray' ? 'text-[var(--text-muted)]' : 'text-green-600'
-                       } flex items-center mt-1`}>
-                          {lib.color === 'green' || lib.color === 'blue' ? <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> : null}
-                          {lib.status}
-                       </span>
-                    </div>
-                 </div>
-                 
-                 <div className="flex flex-wrap gap-2">
-                    {lib.tags.map(t => (
-                      <span key={t} className="bg-[var(--bg-panel)] border border-[var(--border-color)] text-gray-600 text-[11px] font-bold px-2.5 py-1 rounded-md shadow-sm">{t}</span>
-                    ))}
-                 </div>
+                <div className="flex items-center space-x-4">
+                  <div className="w-14 h-14 rounded-[20px] flex items-center justify-center shrink-0 border shadow-inner group-hover:scale-105 transition-transform bg-blue-50 text-[var(--color-primary)] border-blue-100">
+                    <Database className="w-7 h-7 stroke-[2]" />
+                  </div>
+                  <div>
+                    <h3 className="text-[18px] font-black text-[var(--text-main)] tracking-tight group-hover:text-[var(--color-primary)] transition-colors">{lib.name}</h3>
+                    <p className="text-[var(--text-muted)] text-sm font-medium mt-1">{lib.description || '无描述'}</p>
+                  </div>
+                </div>
               </div>
 
-              <div className="flex space-x-3 mt-6 pt-6 border-t border-[var(--border-color)] disabled:opacity-50">
-                 <button className="flex-1 bg-[var(--bg-panel)] border-2 border-[var(--border-color)] hover:border-gray-300 hover:bg-gray-50 text-gray-700 font-bold py-2.5 rounded-[var(--radius-lg)] text-sm transition-all flex items-center justify-center">
-                   <Tag className="icon-sm mr-2 text-gray-400" /> 管理索引
-                 </button>
-                 <button className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold py-2.5 rounded-[var(--radius-lg)] text-sm transition-all border border-blue-100">
-                   版本日志 <ChevronRight className="icon-sm ml-1 inline" />
-                 </button>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-[var(--spacing-md)] mt-6 p-4 bg-gray-50 rounded-[var(--radius-xl)] border border-[var(--border-color)]">
+                <div className="flex items-center space-x-4">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] uppercase font-black text-gray-400 mb-1">关键词数量</span>
+                    <span className="text-lg font-black text-[var(--text-main)]">{lib.keywords.length}</span>
+                  </div>
+                  <div className="w-px h-8 bg-gray-200"></div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] uppercase font-black text-gray-400 mb-1">渠道</span>
+                    <span className="text-[12px] font-bold text-[var(--text-main)] mt-1">{lib.channel}</span>
+                  </div>
+                  <div className="w-px h-8 bg-gray-200"></div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] uppercase font-black text-gray-400 mb-1">状态</span>
+                    <span className={`text-[12px] font-bold ${statusColor(lib.status)} flex items-center mt-1`}>
+                      {lib.status === 'active' && <CheckCircle2 className="w-3.5 h-3.5 mr-1" />}
+                      {statusLabel(lib.status)}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {lib.tags.map(t => (
+                    <span key={t} className="bg-[var(--bg-panel)] border border-[var(--border-color)] text-gray-600 text-[11px] font-bold px-2.5 py-1 rounded-md shadow-sm">{t}</span>
+                  ))}
+                </div>
               </div>
-           </div>
-         ))}
+
+              {lib.keywords.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-4">
+                  {lib.keywords.slice(0, 8).map(kw => (
+                    <span key={kw} className="bg-blue-50 text-blue-700 text-[11px] font-medium px-2 py-0.5 rounded">{kw}</span>
+                  ))}
+                  {lib.keywords.length > 8 && <span className="text-[11px] text-[var(--text-muted)] py-0.5">+{lib.keywords.length - 8}</span>}
+                </div>
+              )}
+
+              <div className="flex space-x-3 mt-6 pt-6 border-t border-[var(--border-color)]">
+                <button
+                  onClick={() => setEditingLibrary(lib)}
+                  className="flex-1 bg-[var(--bg-panel)] border-2 border-[var(--border-color)] hover:border-gray-300 hover:bg-gray-50 text-gray-700 font-bold py-2.5 rounded-[var(--radius-lg)] text-sm transition-all flex items-center justify-center"
+                >
+                  <Edit3 className="icon-sm mr-2 text-gray-400" /> 编辑词库
+                </button>
+                {lib.status !== 'archived' && (
+                  <button
+                    onClick={() => handleArchive(lib.id)}
+                    className="flex-1 bg-gray-50 hover:bg-gray-100 text-gray-600 font-bold py-2.5 rounded-[var(--radius-lg)] text-sm transition-all border border-[var(--border-color)] flex items-center justify-center"
+                  >
+                    <Archive className="icon-sm mr-2" /> 归档
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(showCreateModal || editingLibrary) && (
+        <KeywordLibraryModal
+          library={editingLibrary}
+          onCreate={handleCreate}
+          onUpdate={handleUpdate}
+          onClose={() => { setShowCreateModal(false); setEditingLibrary(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function KeywordLibraryModal({
+  library,
+  onCreate,
+  onUpdate,
+  onClose,
+}: {
+  library: WorkspaceKeywordLibrary | null;
+  onCreate: (input: { name: string; description: string; channel: string; keywords: string[]; tags: string[]; blockedTerms: string[]; sourceText: string }) => void;
+  onUpdate: (libraryId: string, patch: Partial<WorkspaceKeywordLibrary>) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(library?.name ?? '');
+  const [description, setDescription] = useState(library?.description ?? '');
+  const [channel, setChannel] = useState(library?.channel ?? 'general');
+  const [keywordsText, setKeywordsText] = useState(library?.keywords.join('\n') ?? '');
+  const [tagsText, setTagsText] = useState(library?.tags.join(', ') ?? '');
+  const [blockedTermsText, setBlockedTermsText] = useState(library?.blockedTerms.join('\n') ?? '');
+  const [sourceText, setSourceText] = useState(library?.sourceText ?? '');
+
+  const handleSubmit = () => {
+    if (!name.trim()) return;
+    const keywords = keywordsText.split('\n').map(k => k.trim()).filter(Boolean);
+    const tags = tagsText.split(',').map(t => t.trim()).filter(Boolean);
+    const blockedTerms = blockedTermsText.split('\n').map(t => t.trim()).filter(Boolean);
+    if (library) {
+      onUpdate(library.id, { name, description, channel, keywords, tags, blockedTerms, sourceText });
+    } else {
+      onCreate({ name, description, channel, keywords, tags, blockedTerms, sourceText });
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-[var(--bg-panel)] rounded-[24px] shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-6 border-b border-[var(--border-color)]">
+          <h3 className="text-lg font-black text-[var(--text-main)]">{library ? '编辑词库' : '建立新词库'}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="icon-md" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5 block">词库名称 *</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="例如：美妆护肤高频词" className="w-full border border-[var(--border-color)] rounded-[var(--radius-lg)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100" />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5 block">描述</label>
+            <input value={description} onChange={e => setDescription(e.target.value)} placeholder="词库用途说明" className="w-full border border-[var(--border-color)] rounded-[var(--radius-lg)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100" />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5 block">渠道</label>
+            <input value={channel} onChange={e => setChannel(e.target.value)} placeholder="general / xiaohongshu / douyin..." className="w-full border border-[var(--border-color)] rounded-[var(--radius-lg)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100" />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5 block">关键词（每行一个）</label>
+            <textarea value={keywordsText} onChange={e => setKeywordsText(e.target.value)} rows={5} placeholder="视黄醇&#10;抗初老&#10;敏感肌" className="w-full border border-[var(--border-color)] rounded-[var(--radius-lg)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 resize-none" />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5 block">标签（逗号分隔）</label>
+            <input value={tagsText} onChange={e => setTagsText(e.target.value)} placeholder="种草, 成分党" className="w-full border border-[var(--border-color)] rounded-[var(--radius-lg)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100" />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5 block">屏蔽词（每行一个）</label>
+            <textarea value={blockedTermsText} onChange={e => setBlockedTermsText(e.target.value)} rows={3} placeholder="广告法禁用词..." className="w-full border border-[var(--border-color)] rounded-[var(--radius-lg)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 resize-none" />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5 block">原始素材文本（可选）</label>
+            <textarea value={sourceText} onChange={e => setSourceText(e.target.value)} rows={3} placeholder="粘贴原始文案，系统将自动提取关键词..." className="w-full border border-[var(--border-color)] rounded-[var(--radius-lg)] px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-100 resize-none" />
+          </div>
+        </div>
+        <div className="flex gap-3 p-6 border-t border-[var(--border-color)]">
+          <button onClick={onClose} className="flex-1 border border-[var(--border-color)] text-gray-700 font-bold py-2.5 rounded-[var(--radius-lg)] text-sm hover:bg-gray-50">取消</button>
+          <button onClick={handleSubmit} disabled={!name.trim()} className="flex-1 bg-[var(--color-primary)] hover:bg-blue-700 text-white font-bold py-2.5 rounded-[var(--radius-lg)] text-sm disabled:opacity-50 disabled:cursor-not-allowed">{library ? '保存' : '创建'}</button>
+        </div>
       </div>
     </div>
   );

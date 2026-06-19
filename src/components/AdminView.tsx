@@ -1168,6 +1168,8 @@ const PERMISSION_LABELS: Record<WorkspacePermission, string> = {
   'assets.manage': 'Manage assets',
   'audit.view': 'View audit logs',
   'api_keys.manage': 'Manage API keys',
+  'members.manage': 'Manage members',
+  'resources.write': 'Write business resources',
 };
 
 interface WorkspaceMemberBulkHistoryEntry {

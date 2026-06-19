@@ -1,20 +1,70 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Users, Plus, Search, Shield, Settings2, MoreHorizontal, Power, PiggyBank, Briefcase, AlertCircle, Mail, Bell, Check, X } from 'lucide-react';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { loadWorkspaceSubAccounts, createWorkspaceSubAccount, updateWorkspaceSubAccount, deleteWorkspaceSubAccount, type WorkspaceSubAccount, type TeamRepositoryContext } from '../lib/data/teamRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { toast } from './Toast';
 
 export function SubAccountsView() {
-  const [accounts, setAccounts] = useState([
-    { id: 1, name: '电商一部 (A店)', email: 'sub1@company.com', status: '正常', type: '独立核算', balance: 1500, used: 8500, limit: 10000 },
-    { id: 2, name: '内容分发矩阵 (B站)', email: 'sub2@company.com', status: '正常', type: '共享额度', balance: '共享', used: 12050, limit: 20000 },
-    { id: 3, name: '外包设计组', email: 'vendor@company.com', status: '已冻结', type: '独立核算', balance: 0, used: 500, limit: 500 },
-  ]);
+  const session = useSaasSession();
+  const repoContext = useMemo<TeamRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [accounts, setAccounts] = useState<WorkspaceSubAccount[]>([]);
+
+  useEffect(() => {
+    setAccounts(loadWorkspaceSubAccounts(repoContext));
+  }, [repoContext]);
+
+  useEffect(() => {
+    const handler = () => setAccounts(loadWorkspaceSubAccounts(repoContext));
+    if (typeof window !== 'undefined') window.addEventListener('workspace_sub_accounts_updated', handler);
+    return () => { if (typeof window !== 'undefined') window.removeEventListener('workspace_sub_accounts_updated', handler); };
+  }, [repoContext]);
 
   const [showConfigModal, setShowConfigModal] = useState(false);
-  const [selectedAccount, setSelectedAccount] = useState<any>(null);
+  const [selectedAccount, setSelectedAccount] = useState<WorkspaceSubAccount | null>(null);
 
-  const openConfig = (acc: any) => {
+  const handleCreate = () => {
+    const account = createWorkspaceSubAccount({
+      platform: 'custom', accountName: '新子账户', status: 'active', credentialsMeta: {},
+    }, repoContext);
+    logAuditEvent({
+      action: 'member_create', moduleId: 'sub_accounts', targetType: 'workspace',
+      targetId: account.id, metadata: { name: account.accountName, platform: account.platform },
+    }, { session });
+    setAccounts(loadWorkspaceSubAccounts(repoContext));
+    toast('子账户已创建', 'success');
+  };
+
+  const handleToggleStatus = (id: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'active' ? 'disconnected' : 'active';
+    updateWorkspaceSubAccount(id, { status: newStatus }, repoContext);
+    logAuditEvent({
+      action: 'member_update', moduleId: 'sub_accounts', targetType: 'workspace',
+      targetId: id, metadata: { status: newStatus },
+    }, { session });
+    setAccounts(loadWorkspaceSubAccounts(repoContext));
+    toast(newStatus === 'active' ? '账户已激活' : '账户已冻结', 'success');
+  };
+
+  const handleDelete = (id: string) => {
+    deleteWorkspaceSubAccount(id, repoContext);
+    logAuditEvent({
+      action: 'member_delete', moduleId: 'sub_accounts', targetType: 'workspace',
+      targetId: id, metadata: {},
+    }, { session });
+    setAccounts(loadWorkspaceSubAccounts(repoContext));
+    toast('账户已删除', 'success');
+  };
+
+  const openConfig = (acc: WorkspaceSubAccount) => {
     setSelectedAccount(acc);
     setShowConfigModal(true);
   };
+
+  const activeCount = accounts.filter(a => a.status === 'active').length;
 
   return (
     <div className="p-4 sm:p-[var(--spacing-lg)] lg:p-[var(--spacing-xl)] max-w-[1600px] mx-auto space-y-[var(--spacing-lg)]">
@@ -35,7 +85,7 @@ export function SubAccountsView() {
             <button className="bg-[var(--bg-panel)] border border-[var(--border-color)] text-gray-700 px-5 py-2.5 rounded-[var(--radius-lg)] font-bold shadow-sm hover:bg-gray-50 transition-colors text-sm">
                额度划拨记录
             </button>
-            <button className="bg-[var(--color-primary)] text-white px-5 py-2.5 rounded-[var(--radius-lg)] font-bold hover:bg-blue-700 shadow-sm transition-colors text-sm flex items-center">
+            <button className="bg-[var(--color-primary)] text-white px-5 py-2.5 rounded-[var(--radius-lg)] font-bold hover:bg-blue-700 shadow-sm transition-colors text-sm flex items-center" onClick={handleCreate}>
                <Plus className="icon-sm mr-2" />
                开通子账户
             </button>
@@ -53,7 +103,7 @@ export function SubAccountsView() {
          </div>
          <div className="bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)] p-[var(--spacing-lg)] flex flex-col justify-center">
             <h3 className="text-sm font-bold text-[var(--text-muted)] mb-1">当前活跃子账户</h3>
-            <div className="text-[var(--text-main)]xl font-black text-[var(--text-main)] mt-2">2 <span className="text-sm font-bold text-gray-400">个</span></div>
+            <div className="text-[var(--text-main)]xl font-black text-[var(--text-main)] mt-2">{activeCount} <span className="text-sm font-bold text-gray-400">个</span></div>
          </div>
       </div>
 
@@ -70,13 +120,17 @@ export function SubAccountsView() {
             </div>
          </div>
          <div className="overflow-x-auto min-h-[400px]">
+            {accounts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <Briefcase className="icon-xl text-gray-300 mb-4" />
+                <p className="text-[var(--text-muted)] font-medium">还没有子账户。点击「开通子账户」开始管理多店铺矩阵。</p>
+              </div>
+            ) : (
             <table className="w-full text-left border-collapse min-w-[800px]">
                <thead>
                   <tr className="bg-[var(--bg-app)] border-b border-[var(--border-color)]">
                      <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">账户信息</th>
-                     <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">核算模式</th>
-                     <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap text-right">余额</th>
-                     <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap text-right">已用</th>
+                     <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">平台</th>
                      <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest whitespace-nowrap">状态</th>
                      <th className="py-3 px-6 text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest text-right whitespace-nowrap">操作</th>
                   </tr>
@@ -85,58 +139,41 @@ export function SubAccountsView() {
                   {accounts.map(acc => (
                      <tr key={acc.id} className="hover:bg-gray-50/80 transition-colors group">
                         <td className="py-4 px-6">
-                           <div className="font-bold text-sm text-[var(--text-main)]">{acc.name}</div>
-                           <div className="text-[11px] text-[var(--text-muted)] mt-0.5">{acc.email}</div>
+                           <div className="font-bold text-sm text-[var(--text-main)]">{acc.accountName}</div>
+                           <div className="text-[11px] text-[var(--text-muted)] mt-0.5">{acc.accountId ?? '—'}</div>
                         </td>
                         <td className="py-4 px-6">
-                           <span className={`inline-flex items-center text-[11px] font-bold px-2 py-0.5 rounded border ${acc.type === '独立核算' ? 'bg-purple-50 text-purple-600 border-purple-100' : 'bg-blue-50 text-[var(--color-primary)] border-blue-100'}`}>
-                              {acc.type}
+                           <span className="inline-flex items-center text-[11px] font-bold px-2 py-0.5 rounded border bg-blue-50 text-[var(--color-primary)] border-blue-100">
+                              {acc.platform}
                            </span>
                         </td>
-                        <td className="py-4 px-6 text-right font-bold text-gray-700">
-                           {acc.balance}
-                        </td>
-                        <td className="py-4 px-6 text-right font-bold text-[var(--text-muted)]">
-                           <div className="flex flex-col items-end">
-                              <span className="text-[var(--text-main)]">{acc.used}</span>
-                              {acc.limit !== '共享' && acc.type !== '共享额度' && (
-                                 <div className="w-24 h-1.5 mt-1 bg-gray-100 rounded-full overflow-hidden">
-                                    <div className={`h-full rounded-full ${(acc.used / acc.limit) > 0.8 ? 'bg-red-500 animate-pulse' : 'bg-blue-500'}`} style={{ width: `${Math.min((acc.used / acc.limit) * 100, 100)}%` }}></div>
-                                 </div>
-                              )}
-                              {acc.type !== '共享额度' && (acc.used / acc.limit) > 0.8 && (
-                                 <span className="text-[10px] text-red-500 mt-1 flex items-center font-bold">
-                                    <AlertCircle className="w-3 h-3 mr-0.5" /> 额度告警 (&gt;80%)
-                                 </span>
-                              )}
-                           </div>
-                        </td>
                         <td className="py-4 px-6">
-                           {acc.status === '正常' ? (
+                           {acc.status === 'active' ? (
                               <span className="inline-flex items-center text-[11px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-100">
                                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5 animate-pulse"></span>正常
                               </span>
                            ) : (
                               <span className="inline-flex items-center text-[11px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">
-                                 <span className="w-1.5 h-1.5 rounded-full bg-red-500 mr-1.5"></span>已冻结
+                                 <span className="w-1.5 h-1.5 rounded-full bg-red-500 mr-1.5"></span>{acc.status === 'disconnected' ? '已冻结' : acc.status}
                               </span>
                            )}
                         </td>
                         <td className="py-4 px-6 text-right space-x-2">
-                           <button className="text-[11px] font-bold text-[var(--color-primary)] hover:text-white hover:bg-[var(--color-primary)] border border-blue-200 bg-blue-50 px-2 py-1 rounded transition-colors tooltip" title="划拨或回收算力">
-                              划拨算力
-                           </button>
                            <button onClick={() => openConfig(acc)} className="text-[11px] font-bold text-gray-600 hover:text-white hover:bg-gray-800 border border-[var(--border-color)] bg-gray-50 px-2 py-1 rounded transition-colors tooltip" title="参数配置">
                               <Settings2 className="w-3.5 h-3.5" />
                            </button>
-                           <button className={`text-[11px] font-bold px-2 py-1 rounded transition-colors border ${acc.status === '正常' ? 'text-red-500 hover:text-white hover:bg-red-500 border-red-100 bg-red-50' : 'text-green-500 hover:text-white hover:bg-green-500 border-green-100 bg-green-50'}`} title={acc.status === '正常' ? '冻结账户' : '解冻账户'}>
+                           <button onClick={() => handleToggleStatus(acc.id, acc.status)} className={`text-[11px] font-bold px-2 py-1 rounded transition-colors border ${acc.status === 'active' ? 'text-red-500 hover:text-white hover:bg-red-500 border-red-100 bg-red-50' : 'text-green-500 hover:text-white hover:bg-green-500 border-green-100 bg-green-50'}`} title={acc.status === 'active' ? '冻结账户' : '解冻账户'}>
                               <Power className="w-3.5 h-3.5" />
+                           </button>
+                           <button onClick={() => handleDelete(acc.id)} className="text-[11px] font-bold text-red-500 hover:text-white hover:bg-red-500 border border-red-100 bg-red-50 px-2 py-1 rounded transition-colors" title="删除账户">
+                              <X className="w-3.5 h-3.5" />
                            </button>
                         </td>
                      </tr>
                   ))}
                </tbody>
             </table>
+            )}
          </div>
       </div>
 
@@ -151,7 +188,7 @@ export function SubAccountsView() {
                    </div>
                    <div>
                       <h3 className="font-bold text-[var(--text-main)] text-lg">配额与告警配置</h3>
-                      <p className="text-xs text-[var(--text-muted)]">{selectedAccount.name}</p>
+                      <p className="text-xs text-[var(--text-muted)]">{selectedAccount.accountName}</p>
                    </div>
                 </div>
                 <button onClick={() => setShowConfigModal(false)} className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors">

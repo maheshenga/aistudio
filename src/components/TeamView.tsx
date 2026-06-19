@@ -1,7 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { Mail, Search, Shield, UserPlus, Users, MessageSquare, PenTool, ListTodo, Folder, Layers, Share2, Plus, Clock, FileText, Settings2, Check, Network } from 'lucide-react';
 import { ModuleId } from '../types';
+import { useSaasSession } from '../saas/SaasAuthContext';
+import { loadWorkspaceTeamMembers, createWorkspaceTeamMember, updateWorkspaceTeamMember, deleteWorkspaceTeamMember, type WorkspaceTeamMember, type TeamRepositoryContext } from '../lib/data/teamRepository';
+import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { hasWorkspacePermission } from '../saas/permissions';
+import { toast } from './Toast';
 
 interface TeamViewProps {
   moduleId?: string;
@@ -385,10 +390,37 @@ export function TeamView({ moduleId = 'team' }: TeamViewProps) {
   }
 
   // Default: moduleId === 'team'
-  const [teamMembers, setTeamMembers] = useState(members);
+  const session = useSaasSession();
+  const repoContext = useMemo<TeamRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [teamMembers, setTeamMembers] = useState<WorkspaceTeamMember[]>([]);
+  const canManageMembers = hasWorkspacePermission(session.membership.role, 'members.manage');
 
-  const handleRoleChange = (id: number, newRole: string) => {
-    setTeamMembers(teamMembers.map(m => m.id === id ? { ...m, role: newRole } : m));
+  useEffect(() => {
+    setTeamMembers(loadWorkspaceTeamMembers(repoContext));
+  }, [repoContext]);
+
+  useEffect(() => {
+    const handler = () => setTeamMembers(loadWorkspaceTeamMembers(repoContext));
+    if (typeof window !== 'undefined') window.addEventListener('workspace_team_members_updated', handler);
+    return () => { if (typeof window !== 'undefined') window.removeEventListener('workspace_team_members_updated', handler); };
+  }, [repoContext]);
+
+  const handleAddMember = () => {
+    if (!canManageMembers) { toast('权限不足', 'error'); return; }
+    const member = createWorkspaceTeamMember({ name: '新成员', email: 'new@test.dev', role: 'viewer', status: 'active', permissions: [] }, repoContext);
+    logAuditEvent({ action: 'member_create', moduleId: 'team', targetType: 'workspace', targetId: member.id, metadata: { name: member.name, role: member.role } }, { session });
+    setTeamMembers(loadWorkspaceTeamMembers(repoContext));
+    toast('成员已添加', 'success');
+  };
+
+  const handleRoleChange = (id: string, newRole: string) => {
+    if (!canManageMembers) { toast('权限不足', 'error'); return; }
+    updateWorkspaceTeamMember(id, { role: newRole }, repoContext);
+    logAuditEvent({ action: 'member_update', moduleId: 'team', targetType: 'workspace', targetId: id, metadata: { role: newRole } }, { session });
+    setTeamMembers(loadWorkspaceTeamMembers(repoContext));
   };
 
   return (
@@ -450,7 +482,7 @@ export function TeamView({ moduleId = 'team' }: TeamViewProps) {
                   <tr key={member.id} className="hover:bg-gray-50/80 transition-colors group">
                     <td className="py-3 px-5">
                       <div className="flex items-center space-x-3">
-                        <img src={member.avatar} alt={member.name} className="w-9 h-9 rounded-full bg-gray-100 border border-[var(--border-color)] shrink-0" />
+                        <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${member.id}`} alt={member.name} className="w-9 h-9 rounded-full bg-gray-100 border border-[var(--border-color)] shrink-0" />
                         <div className="min-w-0">
                           <p className="text-sm font-bold text-[var(--text-main)] truncate">{member.name}</p>
                           <p className="text-[11px] text-[var(--text-muted)] mt-0.5 truncate">{member.email}</p>
@@ -459,22 +491,22 @@ export function TeamView({ moduleId = 'team' }: TeamViewProps) {
                     </td>
                     <td className="py-3 px-5">
                       <div className="flex justify-start">
-                        <select 
+                        <select
                           value={member.role}
                           onChange={(e) => handleRoleChange(member.id, e.target.value)}
-                          disabled={member.role === '超级管理员'}
-                          className={`text-xs font-bold py-1.5 px-2.5 rounded-lg border appearance-none focus:outline-none focus:ring-1 focus:ring-blue-500 ${member.role === '超级管理员' ? 'bg-amber-50 text-amber-700 border-amber-200 opacity-80 cursor-not-allowed' : 'bg-[var(--bg-panel)] text-gray-700 border-[var(--border-color)] hover:bg-gray-50 cursor-pointer'}`}
+                          disabled={member.role === 'owner' || !canManageMembers}
+                          className={`text-xs font-bold py-1.5 px-2.5 rounded-lg border appearance-none focus:outline-none focus:ring-1 focus:ring-blue-500 ${member.role === 'owner' ? 'bg-amber-50 text-amber-700 border-amber-200 opacity-80 cursor-not-allowed' : 'bg-[var(--bg-panel)] text-gray-700 border-[var(--border-color)] hover:bg-gray-50 cursor-pointer'}`}
                         >
-                          <option value="超级管理员" disabled>超级管理员</option>
-                          <option value="内容创作者">内容创作者</option>
-                          <option value="运营专员">运营专员</option>
-                          <option value="数据分析师">数据分析师</option>
-                          <option value="普通研发">普通研发</option>
+                          <option value="owner" disabled>超级管理员</option>
+                          <option value="admin">管理员</option>
+                          <option value="operator">运营专员</option>
+                          <option value="finance">财务</option>
+                          <option value="viewer">访客</option>
                         </select>
                       </div>
                     </td>
                     <td className="py-3 px-5">
-                      {member.active === '在线' ? (
+                      {member.status === 'active' ? (
                         <span className="inline-flex items-center text-[11px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-100">
                           <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5 animate-pulse"></span>
                           在线
@@ -486,12 +518,12 @@ export function TeamView({ moduleId = 'team' }: TeamViewProps) {
                       )}
                     </td>
                     <td className="py-3 px-5 text-right space-x-2 whitespace-nowrap">
-                      {member.active !== '在线' && (
+                      {member.status !== 'active' && (
                          <button className="text-[11px] font-bold text-[var(--color-primary)] hover:text-white hover:bg-[var(--color-primary)] border border-blue-200 bg-blue-50 px-2 py-1 rounded transition-colors tooltip" title="重发邮件与个人微信通知">
                            重新发送邀请
                          </button>
                       )}
-                      {member.role !== '超级管理员' && (
+                      {member.role !== 'owner' && (
                         <button className="text-[11px] font-bold text-red-500 hover:text-white hover:bg-red-500 border border-red-100 bg-red-50 px-2 py-1 rounded transition-colors">
                           禁用
                         </button>
