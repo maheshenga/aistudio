@@ -30,13 +30,17 @@ import { ApiKeyModule } from './api-key/api-key.module';
 import { WebhookModule } from './webhook/webhook.module';
 import { TenantGuard } from './common/tenant/tenant.guard';
 import { AuthGuard } from './common/auth/auth.guard';
+import { RolesGuard } from './common/rbac/roles.guard';
+import { RbacModule } from './common/rbac/rbac.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), PrismaModule, EncryptionModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule, BillingModule, CustomerModule, CampaignModule, AnnouncementModule, AgencyModule, RiskModule, MediaModule, KeywordModule, TicketModule, PaymentModule, TaxEventModule, TaskModule, FinancialModule, SettingsModule, ApiKeyModule, WebhookModule],
+  imports: [ScheduleModule.forRoot(), PrismaModule, EncryptionModule, RbacModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule, BillingModule, CustomerModule, CampaignModule, AnnouncementModule, AgencyModule, RiskModule, MediaModule, KeywordModule, TicketModule, PaymentModule, TaxEventModule, TaskModule, FinancialModule, SettingsModule, ApiKeyModule, WebhookModule],
   providers: [
+    // 执行顺序：AuthGuard(401 未登录) → TenantGuard(403 非成员, 注入 req.member) → RolesGuard(403 权限不足)
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: TenantGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],
 })

@@ -5,6 +5,7 @@ import { CreateAnnouncementDto, UpdateAnnouncementDto, ListAnnouncementQuery } f
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/announcements',
   createDto: CreateAnnouncementDto, updateDto: UpdateAnnouncementDto, listQuery: ListAnnouncementQuery,
+  writePermission: 'resources.write',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/announcements')

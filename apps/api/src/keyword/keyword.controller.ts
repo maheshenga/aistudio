@@ -5,6 +5,7 @@ import { CreateKeywordLibraryDto, UpdateKeywordLibraryDto, ListKeywordLibraryQue
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/keyword-libraries',
   createDto: CreateKeywordLibraryDto, updateDto: UpdateKeywordLibraryDto, listQuery: ListKeywordLibraryQuery,
+  writePermission: 'resources.write',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/keyword-libraries')

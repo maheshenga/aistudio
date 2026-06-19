@@ -11,7 +11,9 @@ export type WorkspacePermission =
   | 'settings.manage'
   | 'assets.manage'
   | 'audit.view'
-  | 'api_keys.manage';
+  | 'api_keys.manage'
+  | 'members.manage'
+  | 'resources.write';
 
 export type ProtectedWorkspaceAction =
   | 'admin.mutate'
@@ -35,6 +37,8 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, readonly WorkspacePermissio
     'assets.manage',
     'audit.view',
     'api_keys.manage',
+    'members.manage',
+    'resources.write',
   ],
   admin: [
     'workspace.view',
@@ -47,6 +51,8 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, readonly WorkspacePermissio
     'assets.manage',
     'audit.view',
     'api_keys.manage',
+    'members.manage',
+    'resources.write',
   ],
   operator: [
     'workspace.view',
@@ -54,6 +60,7 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, readonly WorkspacePermissio
     'generation.dispatch',
     'settings.manage',
     'assets.manage',
+    'resources.write',
   ],
   finance: [
     'workspace.view',

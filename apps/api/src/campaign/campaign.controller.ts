@@ -5,6 +5,7 @@ import { CreateCampaignDto, UpdateCampaignDto, ListCampaignQuery } from './dto';
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/campaigns',
   createDto: CreateCampaignDto, updateDto: UpdateCampaignDto, listQuery: ListCampaignQuery,
+  writePermission: 'resources.write',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/campaigns')

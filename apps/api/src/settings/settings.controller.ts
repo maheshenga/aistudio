@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Query } from '@nestjs/common';
 import { WorkspaceId } from '../common/tenant/workspace-id.decorator';
 import { CurrentUser } from '../common/auth/current-user.decorator';
+import { RequirePermission } from '../common/rbac/require-permission.decorator';
 import { SettingsService } from './settings.service';
 import { OwnerQuery, PutSettingsDto } from './dto';
 
@@ -18,7 +19,7 @@ export class SettingsController {
     return { value: await this.settings.getAll(ws, ownerId) };
   }
 
-  @Patch()
+  @Patch() @RequirePermission('settings.manage')
   async put(
     @WorkspaceId() ws: string,
     @Query() q: OwnerQuery,
@@ -29,7 +30,7 @@ export class SettingsController {
     return { value: await this.settings.putPatch(ws, ownerId, dto.patch) };
   }
 
-  @Delete(':key')
+  @Delete(':key') @RequirePermission('settings.manage')
   async remove(
     @WorkspaceId() ws: string,
     @Param('key') key: string,

@@ -5,6 +5,7 @@ import { CreateTicketDto, UpdateTicketDto, ListTicketQuery } from './dto';
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/tickets',
   createDto: CreateTicketDto, updateDto: UpdateTicketDto, listQuery: ListTicketQuery,
+  writePermission: 'resources.write',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/tickets')

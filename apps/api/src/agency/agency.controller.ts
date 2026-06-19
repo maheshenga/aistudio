@@ -5,6 +5,7 @@ import { CreateAgencyPartnerDto, UpdateAgencyPartnerDto, ListAgencyPartnerQuery 
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/agency-partners',
   createDto: CreateAgencyPartnerDto, updateDto: UpdateAgencyPartnerDto, listQuery: ListAgencyPartnerQuery,
+  writePermission: 'resources.write',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/agency-partners')

@@ -5,6 +5,7 @@ import { CreateMediaAccountDto, UpdateMediaAccountDto, ListMediaAccountQuery } f
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/media-accounts',
   createDto: CreateMediaAccountDto, updateDto: UpdateMediaAccountDto, listQuery: ListMediaAccountQuery,
+  writePermission: 'resources.write',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/media-accounts')

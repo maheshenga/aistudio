@@ -5,6 +5,7 @@ import { CreateTaxEventDto, UpdateTaxEventDto, ListTaxEventQuery } from './dto';
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/tax-events',
   createDto: CreateTaxEventDto, updateDto: UpdateTaxEventDto, listQuery: ListTaxEventQuery,
+  writePermission: 'billing.manage',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/tax-events')

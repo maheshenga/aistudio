@@ -5,6 +5,7 @@ import { CreateWebhookDto, UpdateWebhookDto, ListWebhookQuery } from './dto';
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/webhooks',
   createDto: CreateWebhookDto, updateDto: UpdateWebhookDto, listQuery: ListWebhookQuery,
+  writePermission: 'api_keys.manage',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/webhooks')

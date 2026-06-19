@@ -5,6 +5,7 @@ import { CreateRiskEventDto, UpdateRiskEventDto, ListRiskEventQuery } from './dt
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/risk-events',
   createDto: CreateRiskEventDto, updateDto: UpdateRiskEventDto, listQuery: ListRiskEventQuery,
+  writePermission: 'resources.write',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/risk-events')

@@ -5,6 +5,7 @@ import { CreateTaskDto, UpdateTaskDto, ListTaskQuery } from './dto';
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/tasks',
   createDto: CreateTaskDto, updateDto: UpdateTaskDto, listQuery: ListTaskQuery,
+  writePermission: 'resources.write',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/tasks')

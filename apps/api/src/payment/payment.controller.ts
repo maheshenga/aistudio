@@ -5,6 +5,7 @@ import { CreatePaymentMethodDto, UpdatePaymentMethodDto, ListPaymentMethodQuery 
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/payment-methods',
   createDto: CreatePaymentMethodDto, updateDto: UpdatePaymentMethodDto, listQuery: ListPaymentMethodQuery,
+  writePermission: 'billing.manage',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/payment-methods')

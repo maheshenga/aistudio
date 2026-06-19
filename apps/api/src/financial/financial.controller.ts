@@ -5,6 +5,7 @@ import { CreateFinancialRecordDto, UpdateFinancialRecordDto, ListFinancialRecord
 const Base = createResourceController({
   path: 'workspaces/:workspaceId/financial-records',
   createDto: CreateFinancialRecordDto, updateDto: UpdateFinancialRecordDto, listQuery: ListFinancialRecordQuery,
+  writePermission: 'billing.manage',
 }) as new (...args: any[]) => object;
 
 @Controller('workspaces/:workspaceId/financial-records')
