@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { notFound } from '../common/errors';
-import { CreateAssetDto, ListAssetQuery } from './dto';
+import { CreateAssetDto, UpdateAssetDto, ListAssetQuery } from './dto';
 
 @Injectable()
 export class AssetService {
@@ -24,6 +24,10 @@ export class AssetService {
       if (!job) throw notFound('Referenced generation job not found in workspace');
     }
     return this.prisma.asset.create({ data: { ...dto, workspaceId } as Prisma.AssetUncheckedCreateInput });
+  }
+  async update(workspaceId: string, id: string, dto: UpdateAssetDto) {
+    await this.get(workspaceId, id);
+    return this.prisma.asset.update({ where: { id }, data: dto as Prisma.AssetUncheckedUpdateInput });
   }
   async remove(workspaceId: string, id: string) {
     await this.get(workspaceId, id);

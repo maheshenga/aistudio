@@ -88,19 +88,26 @@ function sortAuditLogs(logs: AuditLog[]): AuditLog[] {
   return logs.slice().sort((a, b) => b.timestamp - a.timestamp);
 }
 
+function toTimestamp(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value);
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return fallback;
+}
+
 function normalizeAuditLog(
-  raw: Partial<AuditLog> & { actorName?: string; actorRole?: string; actorId?: string; actorEmail?: string; createdAt?: number },
+  raw: Partial<AuditLog> & { actorName?: string; actorRole?: string; actorId?: string; userId?: string; actorEmail?: string; createdAt?: number | string },
   workspaceId: string,
 ): AuditLog {
   const actor = raw.actor ?? {
-    id: String(raw.actorId ?? ''),
+    id: String(raw.actorId ?? raw.userId ?? ''),
     name: String(raw.actorName ?? ''),
     email: raw.actorEmail ? String(raw.actorEmail) : undefined,
     role: String(raw.actorRole ?? 'viewer'),
   };
-  const timestamp = Number.isFinite(raw.timestamp)
-    ? Number(raw.timestamp)
-    : (Number.isFinite(raw.createdAt) ? Number(raw.createdAt) : Date.now());
+  const timestamp = toTimestamp(raw.timestamp ?? raw.createdAt, Date.now());
   return {
     id: String(raw.id ?? `${timestamp}_${Math.random().toString(36).slice(2, 9)}`),
     workspaceId: raw.workspaceId ?? workspaceId,
@@ -156,7 +163,7 @@ export function logAuditEvent(input: AuditEventInput, context: AuditRepositoryCo
         moduleId: event.moduleId,
         targetType: event.targetType,
         targetId: event.targetId,
-        actorId: event.actor.id,
+        userId: event.actor.id,
         actorName: event.actor.name,
         actorEmail: event.actor.email,
         actorRole: event.actor.role,

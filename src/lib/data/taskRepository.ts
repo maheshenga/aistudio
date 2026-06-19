@@ -62,6 +62,15 @@ function storageKey(context: TaskRepositoryContext): string {
   return `${TASK_STORAGE_PREFIX}:${context.workspaceId}`;
 }
 
+function toTimestamp(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value);
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return fallback;
+}
+
 function normalizeTask(task: WorkspaceTask, context: TaskRepositoryContext): WorkspaceTask {
   const now = context.now ?? Date.now();
   const metadata = task.metadata && typeof task.metadata === 'object' ? task.metadata : undefined;
@@ -83,8 +92,8 @@ function normalizeTask(task: WorkspaceTask, context: TaskRepositoryContext): Wor
       : task.externalRef,
     lastRuntimeEventAt: task.lastRuntimeEventAt,
     metadata,
-    createdAt: task.createdAt ?? now,
-    updatedAt: task.updatedAt ?? now,
+    createdAt: toTimestamp(task.createdAt, now),
+    updatedAt: toTimestamp(task.updatedAt, now),
   };
 }
 

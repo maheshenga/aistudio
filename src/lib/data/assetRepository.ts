@@ -89,6 +89,19 @@ function normalizeSource(source: unknown): WorkspaceAssetSource {
   return 'uploaded';
 }
 
+function toOptionalTimestamp(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value);
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function toTimestamp(value: unknown, fallback: number): number {
+  return toOptionalTimestamp(value) ?? fallback;
+}
+
 function normalizeAsset(asset: Partial<WorkspaceAsset>, context: AssetRepositoryContext): WorkspaceAsset {
   const now = context.now ?? Date.now();
   const name = typeof asset.name === 'string' && asset.name.trim() ? asset.name.trim() : 'Untitled asset';
@@ -98,17 +111,17 @@ function normalizeAsset(asset: Partial<WorkspaceAsset>, context: AssetRepository
     workspaceId: context.workspaceId,
     userId: asset.userId ?? context.userId,
     name,
-    type: normalizeType(asset.type),
+    type: normalizeType(asset.type ?? (asset as { kind?: unknown }).kind),
     size: typeof asset.size === 'string' && asset.size.trim() ? asset.size.trim() : '0 KB',
     source: normalizeSource(asset.source),
     moduleId: asset.moduleId,
     tags: Array.isArray(asset.tags) ? asset.tags.map(String).filter(Boolean) : [],
     url: asset.url,
     previewUrl: asset.previewUrl,
-    generationJobId: asset.generationJobId,
-    createdAt: Number.isFinite(asset.createdAt) ? Number(asset.createdAt) : now,
-    updatedAt: Number.isFinite(asset.updatedAt) ? Number(asset.updatedAt) : now,
-    lastAccessedAt: Number.isFinite(asset.lastAccessedAt) ? Number(asset.lastAccessedAt) : undefined,
+    generationJobId: asset.generationJobId ?? (asset as { jobId?: string }).jobId,
+    createdAt: toTimestamp(asset.createdAt, now),
+    updatedAt: toTimestamp(asset.updatedAt, now),
+    lastAccessedAt: toOptionalTimestamp(asset.lastAccessedAt),
     metadata: asset.metadata && typeof asset.metadata === 'object' && !Array.isArray(asset.metadata)
       ? asset.metadata
       : {},
@@ -198,15 +211,15 @@ export function createWorkspaceAsset(input: WorkspaceAssetInput, context: AssetR
     dispatchAssetsUpdated(context.workspaceId);
     void assetApiClient
       .post(context.workspaceId, 'assets', {
+        kind: asset.type,
         name: asset.name,
-        type: asset.type,
         size: asset.size,
         source: asset.source,
         moduleId: asset.moduleId,
         tags: asset.tags,
         url: asset.url,
         previewUrl: asset.previewUrl,
-        generationJobId: asset.generationJobId,
+        jobId: asset.generationJobId,
         metadata: asset.metadata,
       })
       .then((res) => { if (!res.ok) console.error('createWorkspaceAsset write-through failed', res); })
@@ -236,8 +249,15 @@ export function updateWorkspaceAsset(
     assetCache.set(context.workspaceId, current.map(applyPatch));
     dispatchAssetsUpdated(context.workspaceId);
     if (updatedAsset) {
+      // 后端 UpdateAssetDto 不接受 type/generationJobId(kind/jobId 不可变);
+      // lastAccessedAt 需 ISO 字符串(后端 DateTime)。
+      const payload: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(patch)) {
+        if (key === 'type' || key === 'generationJobId') continue;
+        payload[key] = key === 'lastAccessedAt' && typeof value === 'number' ? new Date(value).toISOString() : value;
+      }
       void assetApiClient
-        .patch(context.workspaceId, `assets/${assetId}`, { ...patch })
+        .patch(context.workspaceId, `assets/${assetId}`, payload)
         .then((res) => { if (!res.ok) console.error('updateWorkspaceAsset write-through failed', res); })
         .catch((err) => console.error('updateWorkspaceAsset write-through failed', err));
     }

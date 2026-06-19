@@ -221,6 +221,15 @@ export function calculateCommercialUsageCredits(
   return normalizeCredits(pricing.unitCredits * normalizeUnitCount(options.unitCount));
 }
 
+function toTimestamp(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value);
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return fallback;
+}
+
 function normalizeUsageEvent(
   event: Partial<WorkspaceUsageEvent>,
   context: UsageRepositoryContext,
@@ -231,7 +240,7 @@ function normalizeUsageEvent(
     workspaceId: context.workspaceId,
     userId: event.userId ?? context.userId,
     moduleId: event.moduleId ?? 'dashboard',
-    kind: event.kind ?? 'automation',
+    kind: (event.kind ?? (event as { category?: WorkspaceUsageEventKind }).category) ?? 'automation',
     targetType: event.targetType ?? 'system',
     targetId: event.targetId,
     providerKind: event.providerKind,
@@ -240,7 +249,7 @@ function normalizeUsageEvent(
     metadata: event.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata)
       ? event.metadata
       : {},
-    createdAt: Number.isFinite(event.createdAt) ? Number(event.createdAt) : now,
+    createdAt: toTimestamp(event.createdAt, now),
   };
 }
 
@@ -358,7 +367,7 @@ export function createWorkspaceUsageEvent(
     void usageApiClient
       .post(context.workspaceId, 'usage-events', {
         moduleId: event.moduleId,
-        kind: event.kind,
+        category: event.kind,
         targetType: event.targetType,
         targetId: event.targetId,
         providerKind: event.providerKind,

@@ -53,8 +53,12 @@ function normalizeText(value: unknown, fallback: string): string {
 }
 
 function normalizeTimestamp(value: unknown, fallback: number): number {
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) && numericValue > 0 ? Math.floor(numericValue) : fallback;
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value);
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return fallback;
 }
 
 function normalizeLinkedAssetIds(value: unknown): string[] {

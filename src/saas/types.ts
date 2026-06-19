@@ -164,7 +164,10 @@ export interface AuditLog {
     | 'invoice'
     | 'settings'
     | 'runtime'
-    | 'system';
+    | 'system'
+    | 'store'
+    | 'store_staff'
+    | 'inventory';
   targetId?: string;
   metadata: Record<string, unknown>;
   timestamp: number;

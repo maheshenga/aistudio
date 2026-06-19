@@ -54,20 +54,41 @@ function isCompletedStatus(status: GenerationJobStatus): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'cancelled';
 }
 
-function normalizeJob(job: GenerationJob, context: GenerationJobRepositoryContext): GenerationJob {
+function toOptionalTimestamp(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value);
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+function toTimestamp(value: unknown, fallback: number): number {
+  return toOptionalTimestamp(value) ?? fallback;
+}
+
+function normalizeJob(raw: GenerationJob & { externalTaskId?: string; finishedAt?: number | string }, context: GenerationJobRepositoryContext): GenerationJob {
   const now = context.now ?? Date.now();
-  const status = job.status ?? 'pending';
+  const status = (raw.status ?? 'pending') as GenerationJobStatus;
+  const runtimeTaskId = raw.runtimeTaskId ?? raw.externalTaskId;
+  const completedAt = toOptionalTimestamp(raw.completedAt) ?? toOptionalTimestamp(raw.finishedAt) ?? (isCompletedStatus(status) ? now : undefined);
   return {
-    ...job,
-    id: String(job.id),
+    id: String(raw.id),
     workspaceId: context.workspaceId,
-    userId: job.userId ?? context.userId,
+    userId: raw.userId ?? context.userId,
+    title: raw.title ?? '',
+    prompt: raw.prompt ?? '',
     status,
-    progress: Math.max(0, Math.min(100, Number(job.progress ?? 0))),
-    metadata: job.metadata ?? {},
-    createdAt: job.createdAt ?? now,
-    updatedAt: job.updatedAt ?? now,
-    completedAt: job.completedAt ?? (isCompletedStatus(status) ? now : undefined),
+    providerKind: (raw.providerKind ?? 'gemini') as RuntimeProviderKind,
+    runtimeMode: (raw.runtimeMode ?? 'single') as RuntimeMode,
+    moduleId: raw.moduleId,
+    agentId: raw.agentId,
+    runtimeTaskId,
+    progress: Math.max(0, Math.min(100, Number(raw.progress ?? 0))),
+    metadata: (raw.metadata ?? {}) as Record<string, unknown>,
+    createdAt: toTimestamp(raw.createdAt, now),
+    updatedAt: toTimestamp(raw.updatedAt, now),
+    completedAt,
+    error: raw.error,
   };
 }
 

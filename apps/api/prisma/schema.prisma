@@ -80,9 +80,12 @@ model GenerationJob {
   id          String   @id @default(cuid())
   workspaceId String
   projectId   String?
-  type        String
+  type        String   @default("generation")
   status      String   @default("pending")
-  input       Json
+  input       Json?
+  title       String?
+  prompt      String?
+  moduleId    String?
   error       String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -107,14 +110,23 @@ model GenerationJob {
 }
 
 model Asset {
-  id          String   @id @default(cuid())
-  workspaceId String
-  projectId   String?
-  jobId       String?
-  kind        String
-  url         String?
-  metadata    Json?
-  createdAt   DateTime @default(now())
+  id              String   @id @default(cuid())
+  workspaceId     String
+  userId          String?
+  projectId       String?
+  jobId           String?
+  kind            String
+  name            String?
+  size            String?  @default("0 KB")
+  source          String?  @default("uploaded")
+  moduleId        String?
+  tags            String[] @default([])
+  url             String?
+  previewUrl      String?
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  lastAccessedAt  DateTime?
 
   workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   project   Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
@@ -124,14 +136,19 @@ model Asset {
 }
 
 model UsageEvent {
-  id          String   @id @default(cuid())
-  workspaceId String
-  jobId       String?
-  userId      String?
-  category    String
-  credits     Int      @default(0)
-  metadata    Json?
-  createdAt   DateTime @default(now())
+  id            String   @id @default(cuid())
+  workspaceId   String
+  jobId         String?
+  userId        String?
+  category      String
+  moduleId      String?
+  targetType    String?
+  targetId      String?
+  providerKind  String?
+  runtimeMode   String?
+  credits       Int      @default(0)
+  metadata      Json?
+  createdAt     DateTime @default(now())
 
   workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   job       GenerationJob? @relation(fields: [jobId], references: [id], onDelete: SetNull)
@@ -144,6 +161,7 @@ model AuditLog {
   workspaceId String
   userId      String?
   actorName   String?
+  actorEmail  String?
   actorRole   String?
   action      String
   moduleId    String?

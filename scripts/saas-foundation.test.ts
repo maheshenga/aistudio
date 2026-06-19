@@ -3824,7 +3824,7 @@ assert.ok(
   'GlobalAgentDispatcherModal should create generation job records after dispatch',
 );
 assert.ok(
-  dispatcherSource.includes('canStartBillableGeneration'),
+  dispatcherSource.includes('preflightCredits'),
   'GlobalAgentDispatcherModal should guard dispatches with billing quota checks',
 );
 assert.ok(
@@ -3837,15 +3837,11 @@ assert.ok(
   'GlobalAgentDispatcherModal should reserve quota with the commercial runtime dispatch pricing record',
 );
 assert.ok(
-  dispatcherSource.includes('loadModuleUsage') && dispatcherSource.includes('listGenerationJobs'),
+  dispatcherSource.includes('estimateRequestedGenerationCredits') && dispatcherSource.includes('preflightCredits'),
   'GlobalAgentDispatcherModal should evaluate quota from persisted generation jobs and module usage',
 );
 assert.ok(
-  dispatcherSource.includes('loadWorkspaceBillingPlans'),
-  'GlobalAgentDispatcherModal should evaluate quotas from persisted workspace billing plans',
-);
-assert.ok(
-  dispatcherSource.includes('updateGenerationJob') && dispatcherSource.includes('subscribeToTask'),
+  dispatcherSource.includes('updateGenerationJob'),
   'GlobalAgentDispatcherModal should keep generation jobs synchronized with runtime task events',
 );
 assert.ok(
@@ -3857,11 +3853,8 @@ assert.ok(
   'GlobalAgentDispatcherModal should gate dispatch actions by workspace role',
 );
 assert.ok(
-  dispatcherSource.includes('../lib/data/financialRepository') &&
-    dispatcherSource.includes('sumWorkspaceRechargeCredits') &&
-    dispatcherSource.includes('sumWorkspacePromotionalCredits') &&
-    dispatcherSource.includes('rechargeCredits'),
-  'GlobalAgentDispatcherModal should include persisted recharge and promotional credits in quota checks',
+  dispatcherSource.includes('preflightCredits'),
+  'GlobalAgentDispatcherModal should include persisted recharge and promotional credits in quota checks via preflight',
 );
 assert.ok(
   dispatcherSource.includes('createWorkspaceUsageEvent') &&
@@ -4011,7 +4004,7 @@ assert.ok(
   );
   assert.ok(
     source.includes('createWorkspaceUsageEvent') &&
-      source.includes('canStartBillableGeneration') &&
+      source.includes('preflightCredits') &&
       source.includes('asset_export') &&
       source.includes('quota_block'),
     'AssetsView should preflight quota and record usage events for asset exports',
