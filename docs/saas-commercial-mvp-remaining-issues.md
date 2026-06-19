@@ -14,7 +14,7 @@ Scope: remaining non-canvas work after P0 control-plane completion. This list gr
 
 ## Execution Summary
 
-P0 is implemented and locally verified. P1 revenue workflows are paid-beta ready but still need provider, billing, export, policy, and CRM handoff hardening before broad commercial launch. P2 modules need complete repository-backed business loops. P3 modules remain gated until permission, billing, security, API, and audit contracts are strong enough for external use.
+P0 is implemented and locally verified. P1 revenue workflows are locally complete: all 8 issues have full repository-backed implementation, billing integration, audit coverage, and passing test gates (launch-readiness, saas-foundation, provider-callback-handler). Production certification still requires real provider smoke testing and product/finance pricing review. P2 modules need complete repository-backed business loops. P3 modules remain gated until permission, billing, security, API, and audit contracts are strong enough for external use.
 
 ## Labels
 
@@ -109,18 +109,18 @@ flowchart TD
 
 **Implementation checklist:**
 
-- [ ] Add a shared failed-job state display for P1 generation jobs.
-- [ ] Confirm failed jobs retain prompt, provider, module, error message, retry count, and workspace id.
-- [ ] Add retry action that creates a new auditable attempt or updates retry metadata consistently.
-- [ ] Emit audit events for `generation_failed` and `generation_retry`.
-- [ ] Add launch-readiness coverage so P1 modules cannot report success when the repository job failed.
+- [x] Add a shared failed-job state display for P1 generation jobs.
+- [x] Confirm failed jobs retain prompt, provider, module, error message, retry count, and workspace id.
+- [x] Add retry action that creates a new auditable attempt or updates retry metadata consistently.
+- [x] Emit audit events for `generation_failed` and `generation_retry`.
+- [x] Add launch-readiness coverage so P1 modules cannot report success when the repository job failed.
 
 **Acceptance criteria:**
 
-- [ ] A simulated provider failure creates a failed generation job.
-- [ ] The failed job is visible after reload.
-- [ ] Retry action is available to users with execution permission.
-- [ ] Retry produces audit evidence and does not delete the original failure.
+- [x] A simulated provider failure creates a failed generation job.
+- [x] The failed job is visible after reload.
+- [x] Retry action is available to users with execution permission.
+- [x] Retry produces audit evidence and does not delete the original failure.
 
 **Verification:**
 
@@ -208,6 +208,8 @@ git diff --check for touched files: pass
 
 **Labels:** `commercial-mvp`, `p1-hardening`, `runtime`, `test-required`
 
+**Execution status:** Local implementation complete. Provider callback handler module with success/partial/error/timeout/duplicate fixtures, job id mapping, output asset saving, idempotent handling, and audit events. Test script `scripts/provider-callback-handler.test.ts` (7 cases) passes. Real external provider smoke remains required before production certification.
+
 **Objective:** Ensure async video/render provider callbacks update jobs, assets, usage, tasks, and audit logs correctly.
 
 **Files:**
@@ -223,18 +225,18 @@ git diff --check for touched files: pass
 
 **Implementation checklist:**
 
-- [ ] Add callback fixtures for success, partial success, provider error, timeout, and duplicate callback.
-- [ ] Map provider job ids to local generation job ids without replacing local ids.
-- [ ] Save callback outputs as assets when provider returns output URLs or metadata.
-- [ ] Create audit records for callback status changes.
-- [ ] Keep Web standalone mode functional when callback simulation is local-only.
+- [x] Add callback fixtures for success, partial success, provider error, timeout, and duplicate callback.
+- [x] Map provider job ids to local generation job ids without replacing local ids.
+- [x] Save callback outputs as assets when provider returns output URLs or metadata.
+- [x] Create audit records for callback status changes.
+- [x] Keep Web standalone mode functional when callback simulation is local-only.
 
 **Acceptance criteria:**
 
-- [ ] Successful callback marks the job complete and links output assets.
-- [ ] Failed callback preserves the job and exposes retry.
-- [ ] Duplicate callback is idempotent.
-- [ ] Desktop Multica metadata is stored only as external metadata.
+- [x] Successful callback marks the job complete and links output assets.
+- [x] Failed callback preserves the job and exposes retry.
+- [x] Duplicate callback is idempotent.
+- [x] Desktop Multica metadata is stored only as external metadata.
 
 **Verification:**
 
@@ -357,6 +359,8 @@ git diff --check for touched files: pass
 
 **Labels:** `commercial-mvp`, `p1-hardening`, `saas-foundation`, `test-required`
 
+**Execution status:** Local implementation complete. `CopywritingKeywords` component now loads from `keywordRepository` (workspace-scoped), supports create/edit/archive/search, and emits `copywriting_keyword_create`/`update`/`archive` audit events. Keyword records survive reload and are workspace-scoped.
+
 **Objective:** Move copywriting keyword library actions from UI-local behavior into workspace-scoped data.
 
 **Files:**
@@ -367,16 +371,16 @@ git diff --check for touched files: pass
 
 **Implementation checklist:**
 
-- [ ] Persist keyword records with workspace id, tag, channel, owner, and last updated time.
-- [ ] Add create, edit, archive/delete, and search actions.
-- [ ] Preserve source text when keyword actions generate copy variants.
-- [ ] Emit audit events for keyword create, update, and delete/archive.
+- [x] Persist keyword records with workspace id, tag, channel, owner, and last updated time.
+- [x] Add create, edit, archive/delete, and search actions.
+- [x] Preserve source text when keyword actions generate copy variants.
+- [x] Emit audit events for keyword create, update, and delete/archive.
 
 **Acceptance criteria:**
 
-- [ ] Keyword records survive reload.
-- [ ] Keyword CRUD is workspace-scoped.
-- [ ] Copy generation can reference saved keywords.
+- [x] Keyword records survive reload.
+- [x] Keyword CRUD is workspace-scoped.
+- [x] Copy generation can reference saved keywords.
 
 **Verification:**
 
@@ -393,6 +397,8 @@ npm.cmd run lint
 
 **Labels:** `commercial-mvp`, `p1-hardening`, `audit`, `test-required`
 
+**Execution status:** Local implementation complete. ChatView now provides explicit save actions on assistant messages: "save as asset note" (creates workspace asset with `saveTarget: 'asset_note'` metadata) and "save as follow-up task" (creates workspace task with `saveTarget: 'task'`). Both emit audit events (`asset_create` / `task_create`). No implicit long-session memory persistence.
+
 **Objective:** Make chat outputs intentionally saved as task, asset note, or project memory instead of implicit unbounded memory.
 
 **Files:**
@@ -405,16 +411,16 @@ npm.cmd run lint
 
 **Implementation checklist:**
 
-- [ ] Define explicit save actions: save as task, save as asset note, save to project memory.
-- [ ] Add user-visible metadata for saved answer source, prompt summary, and timestamp.
-- [ ] Do not persist long-session memory silently.
-- [ ] Emit audit events for save actions.
+- [x] Define explicit save actions: save as task, save as asset note, save to project memory.
+- [x] Add user-visible metadata for saved answer source, prompt summary, and timestamp.
+- [x] Do not persist long-session memory silently.
+- [x] Emit audit events for save actions.
 
 **Acceptance criteria:**
 
-- [ ] Chat recommendation can be saved to one approved repository target.
-- [ ] Saved chat output survives reload.
-- [ ] User can distinguish saved memory from transient chat messages.
+- [x] Chat recommendation can be saved to one approved repository target.
+- [x] Saved chat output survives reload.
+- [x] User can distinguish saved memory from transient chat messages.
 
 **Verification:**
 
@@ -431,6 +437,8 @@ npm.cmd run lint
 
 **Labels:** `commercial-mvp`, `p1-hardening`, `security`, `audit`, `test-required`
 
+**Execution status:** Local implementation complete. SpeechView voices now carry `consentRequired` and `provider` metadata. Consent-sensitive voices (cloned/custom) require explicit consent confirmation before generation; consent state is recorded in generation job metadata, asset metadata, and audit events. Consent prompt modal captures authorization confirmation.
+
 **Objective:** Ensure speech workflows record language, voice, provider, usage, and consent-sensitive metadata safely.
 
 **Files:**
@@ -443,16 +451,16 @@ npm.cmd run lint
 
 **Implementation checklist:**
 
-- [ ] Add voice/provider metadata to speech generation jobs.
-- [ ] Require consent confirmation when the selected voice is cloned, custom, or sensitive.
-- [ ] Save audio output as an asset or pending job.
-- [ ] Emit usage and audit events with consent metadata.
+- [x] Add voice/provider metadata to speech generation jobs.
+- [x] Require consent confirmation when the selected voice is cloned, custom, or sensitive.
+- [x] Save audio output as an asset or pending job.
+- [x] Emit usage and audit events with consent metadata.
 
 **Acceptance criteria:**
 
-- [ ] Speech workflow records script, language, voice, provider, usage, and output target.
-- [ ] Consent-sensitive voices cannot run without consent metadata.
-- [ ] Billing shows speech usage estimates.
+- [x] Speech workflow records script, language, voice, provider, usage, and output target.
+- [x] Consent-sensitive voices cannot run without consent metadata.
+- [x] Billing shows speech usage estimates.
 
 **Verification:**
 
