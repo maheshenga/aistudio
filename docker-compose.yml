@@ -1,0 +1,63 @@
+# Self-hosted production stack: PostgreSQL + NestJS API + Vite/nginx web.
+#
+# Quick start:
+#   cp .env.deploy.example .env.deploy
+#   # edit secrets in .env.deploy
+#   docker compose --env-file .env.deploy up -d --build
+#
+# NOTE: PUBLIC_API_URL is baked into the web bundle at build time because the
+# browser (not the web container) calls the API. Set it to the URL the browser
+# can reach the API on (e.g. https://api.example.com), not the internal service
+# name. The default suits a local single-host trial.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-aistudio}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-aistudio}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./apps/api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-aistudio}?schema=public
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL_DAYS: ${JWT_REFRESH_TTL_DAYS:-30}
+      PORT: 4000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      ORCHESTRATION_RECONCILE_ENABLED: ${ORCHESTRATION_RECONCILE_ENABLED:-false}
+      MULTICA_API_URL: ${MULTICA_API_URL:-}
+      MULTICA_API_TOKEN: ${MULTICA_API_TOKEN:-}
+    ports:
+      - "${API_PORT:-4000}:4000"
+
+  web:
+    build:
+      context: .
+      args:
+        VITE_DATA_BACKEND: http
+        VITE_DATA_API_URL: ${PUBLIC_API_URL:-http://localhost:4000}
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  db-data:
