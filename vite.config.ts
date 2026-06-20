@@ -58,6 +58,8 @@ export default defineConfig(() => {
                 normalizedId.includes('/src/components/TaskCenter') ||
                 normalizedId.includes('/src/components/Team') ||
                 normalizedId.includes('/src/components/SubAccounts') ||
+                normalizedId.includes('/src/components/Risk') ||
+                normalizedId.includes('/src/components/Plugin') ||
                 normalizedId.includes('/src/components/Employee')
               ) {
                 return 'app-ops';

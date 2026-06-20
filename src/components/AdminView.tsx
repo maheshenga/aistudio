@@ -83,14 +83,6 @@ import {
   type WorkspaceProviderStatus,
 } from '../lib/data/providerRepository';
 import {
-  ensureDefaultWorkspacePlugins,
-  loadWorkspacePlugins,
-  updateWorkspacePlugin,
-  type WorkspacePlugin,
-  type WorkspacePluginProviderKind,
-  type WorkspacePluginStatus,
-} from '../lib/data/pluginRepository';
-import {
   ensureDefaultWorkspaceTickets,
   loadWorkspaceTickets,
   summarizeWorkspaceTickets,
@@ -102,11 +94,7 @@ import {
 import {
   ensureDefaultWorkspaceRiskEvents,
   loadWorkspaceRiskEvents,
-  summarizeWorkspaceRiskEvents,
-  updateWorkspaceRiskEvent,
   type WorkspaceRiskDecision,
-  type WorkspaceRiskEvent,
-  type WorkspaceRiskSeverity,
 } from '../lib/data/riskRepository';
 import {
   ensureDefaultWorkspaceMediaAccounts,
@@ -128,11 +116,13 @@ import {
   type WorkspaceMemberStatus,
 } from '../lib/data/workspaceMemberRepository';
 import { useSaasSession } from '../saas/SaasAuthContext';
+import { RiskCenterView } from './RiskCenterView';
+import { PluginCenterView } from './PluginCenterView';
 import { ROLE_PERMISSIONS, buildPermissionDeniedMetadata, canManageBilling, hasWorkspacePermission, type WorkspacePermission } from '../saas/permissions';
 import type { AuditLog, WorkspaceRole } from '../saas/types';
 import type { ModuleId } from '../types';
 
-export function AdminView() {
+export function AdminView({ onNavigate }: { onNavigate?: (moduleId: ModuleId) => void } = {}) {
   const session = useSaasSession();
   const [activeTab, setActiveTab] = useState('dashboard');
   const shellProviderContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
@@ -241,11 +231,21 @@ export function AdminView() {
           {activeTab === 'sales' && <AdminSales />}
           {activeTab === 'database' && <AdminDatabase />}
           {activeTab === 'announcements' && <AdminAnnouncements />}
-          {activeTab === 'plugins' && <AdminPlugins />}
+          {activeTab === 'plugins' && <PluginCenterView />}
           {activeTab === 'logs' && <AdminLogs />}
           {activeTab === 'tickets' && <AdminTickets />}
           {activeTab === 'agency' && <AdminAgency />}
-          {activeTab === 'risk' && <AdminRisk />}
+          {activeTab === 'risk' && (
+            <RiskCenterView
+              onNavigateSource={(signal) => {
+                if (signal.source.adminTab) {
+                  setActiveTab(signal.source.adminTab);
+                } else if (signal.source.moduleId && signal.source.moduleId !== 'admin') {
+                  onNavigate?.(signal.source.moduleId);
+                }
+              }}
+            />
+          )}
           {activeTab === 'assets' && <AdminAssets />}
           {activeTab === 'projects' && <AdminProjects />}
           {activeTab === 'tasks' && <AdminTasks />}
@@ -1169,6 +1169,7 @@ const PERMISSION_LABELS: Record<WorkspacePermission, string> = {
   'audit.view': 'View audit logs',
   'api_keys.manage': 'Manage API keys',
   'members.manage': 'Manage members',
+  'plugins.manage': 'Manage plugins',
   'resources.write': 'Write business resources',
 };
 
@@ -3319,209 +3320,6 @@ function AdminAnnouncements() {
   );
 }
 
-function AdminPlugins() {
-  const session = useSaasSession();
-  const pluginContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
-  const canManagePluginConfig = hasWorkspacePermission(session.membership.role, 'settings.manage');
-  const [plugins, setPlugins] = useState<WorkspacePlugin[]>(() =>
-    ensureDefaultWorkspacePlugins(pluginContext),
-  );
-
-  useEffect(() => {
-    ensureDefaultWorkspacePlugins(pluginContext);
-    const refreshPlugins = () => setPlugins(loadWorkspacePlugins(pluginContext));
-    const handlePluginsUpdated = (event: Event) => {
-      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail;
-      if (detail?.workspaceId && detail.workspaceId !== session.workspace.id) return;
-      refreshPlugins();
-    };
-
-    refreshPlugins();
-    window.addEventListener('workspace_plugins_updated', handlePluginsUpdated);
-    return () => window.removeEventListener('workspace_plugins_updated', handlePluginsUpdated);
-  }, [pluginContext, session.workspace.id]);
-
-  const providerKindLabels: Record<WorkspacePluginProviderKind, string> = {
-    official: 'Official',
-    community: 'Community',
-    workspace: 'Workspace',
-  };
-  const providerDescriptions: Record<WorkspacePluginProviderKind, string> = {
-    official: '官方维护的插件功能合集',
-    community: '由社区开发者提供的扩展应用',
-    workspace: '当前工作区安装的自定义扩展',
-  };
-  const providerKindClassNames: Record<WorkspacePluginProviderKind, string> = {
-    official: 'bg-blue-50 text-blue-700',
-    community: 'bg-gray-100 text-gray-700',
-    workspace: 'bg-emerald-50 text-emerald-700',
-  };
-  const statusLabels: Record<WorkspacePluginStatus, string> = {
-    active: '运行中',
-    disabled: '已停用',
-    needs_config: '待配置',
-    deprecated: '已弃用',
-  };
-  const statusClassNames: Record<WorkspacePluginStatus, string> = {
-    active: 'text-green-600',
-    disabled: 'text-gray-400',
-    needs_config: 'text-amber-600',
-    deprecated: 'text-red-500',
-  };
-  const pluginIconByName = {
-    folder: Folder,
-    share: Share2,
-    briefcase: Briefcase,
-    box: Box,
-  } as const;
-  const enabledCount = plugins.filter((plugin) => plugin.enabled).length;
-
-  const auditPluginChange = (
-    plugin: WorkspacePlugin,
-    metadata: Record<string, unknown>,
-  ) => {
-    logAuditEvent(
-      {
-        action: 'plugin_config_update',
-        moduleId: 'admin' as ModuleId,
-        targetType: 'plugin_config',
-        targetId: plugin.id,
-        metadata: {
-          pluginName: plugin.name,
-          provider: plugin.provider,
-          providerKind: plugin.providerKind,
-          enabled: plugin.enabled,
-          status: plugin.status,
-          ...metadata,
-        },
-      },
-      { session },
-    );
-    window.dispatchEvent(new Event('activity_logged'));
-  };
-
-  const handleTogglePlugin = (plugin: WorkspacePlugin) => {
-    if (!canManagePluginConfig) {
-      toast('当前角色无权修改插件配置', 'warning');
-      return;
-    }
-    const nextEnabled = !plugin.enabled;
-    const updatedPlugin = updateWorkspacePlugin(
-      plugin.id,
-      {
-        enabled: nextEnabled,
-        status: nextEnabled ? 'active' : 'disabled',
-      },
-      pluginContext,
-    );
-    if (!updatedPlugin) return;
-    setPlugins(loadWorkspacePlugins(pluginContext));
-    auditPluginChange(updatedPlugin, {
-      operation: nextEnabled ? 'enable' : 'disable',
-      previousEnabled: plugin.enabled,
-    });
-    toast(nextEnabled ? '插件已启用' : '插件已停用', 'success');
-  };
-
-  const handleConfigurePlugin = (plugin: WorkspacePlugin) => {
-    if (!canManagePluginConfig) {
-      toast('当前角色无权修改插件配置', 'warning');
-      return;
-    }
-    const updatedPlugin = updateWorkspacePlugin(
-      plugin.id,
-      {
-        metadata: {
-          ...plugin.metadata,
-          lastConfiguredAt: Date.now(),
-          requiredConfigKeys: plugin.configSchema.filter((field) => field.required).map((field) => field.key),
-        },
-      },
-      pluginContext,
-    );
-    if (!updatedPlugin) return;
-    setPlugins(loadWorkspacePlugins(pluginContext));
-    auditPluginChange(updatedPlugin, { operation: 'configure' });
-    toast('插件配置检查已记录', 'success');
-  };
-
-  const handleSyncPluginCatalog = () => {
-    const latestPlugins = ensureDefaultWorkspacePlugins(pluginContext);
-    setPlugins(latestPlugins);
-    toast('插件市场配置已同步', 'success');
-  };
-
-  return (
-    <div className="space-y-[var(--spacing-lg)] animate-in fade-in slide-in-from-bottom-2 duration-300">
-       <div className="flex justify-between items-center">
-         <div>
-           <h2 className="text-xl font-bold text-[var(--text-main)]">插件与扩展能力中心</h2>
-           <p className="text-sm text-[var(--text-muted)] mt-1">
-             已启用 {enabledCount}/{plugins.length} 个扩展，配置随当前工作区持久保存
-           </p>
-         </div>
-         <button
-           onClick={handleSyncPluginCatalog}
-           className="flex items-center space-x-2 bg-[var(--bg-panel)] border border-[var(--border-color)] hover:bg-gray-50 text-gray-700 px-4 py-2.5 rounded-[var(--radius-lg)] font-bold transition-colors shadow-sm"
-         >
-           <RefreshCw className="icon-sm" />
-           <span>同步插件市场</span>
-         </button>
-       </div>
-
-       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[var(--spacing-md)]">
-          {plugins.map((plugin) => {
-            const iconKey = typeof plugin.metadata.icon === 'string' ? plugin.metadata.icon : 'box';
-            const PluginIcon = pluginIconByName[iconKey as keyof typeof pluginIconByName] ?? Box;
-
-            return (
-            <div key={plugin.id} className="bg-[var(--bg-panel)] border text-left border-[var(--border-color)] rounded-[24px] p-[var(--spacing-lg)] shadow-sm flex flex-col hover:border-blue-300 transition-all">
-               <div className="flex justify-between items-start mb-4">
-                 <div className="bg-gray-50 p-3 rounded-[var(--radius-xl)]">
-                    <PluginIcon className="icon-lg text-gray-700" />
-                 </div>
-                 <button
-                   onClick={() => handleTogglePlugin(plugin)}
-                   disabled={!canManagePluginConfig}
-                   className="disabled:cursor-not-allowed"
-                   title={plugin.enabled ? '停用插件' : '启用插件'}
-                 >
-                   {plugin.enabled ? (
-                     <ToggleRight className="icon-xl text-green-500" />
-                   ) : (
-                     <ToggleLeft className="icon-xl text-gray-300" />
-                   )}
-                 </button>
-               </div>
-               <h3 className="font-bold text-[var(--text-main)] text-[16px] mb-2">{plugin.name}</h3>
-               <p className="text-xs text-[var(--text-muted)] mb-[var(--spacing-md)] flex-1">
-                 {providerDescriptions[plugin.providerKind]} · {plugin.category}
-               </p>
-               <div className="flex items-center justify-between border-t border-[var(--border-color)] pt-4">
-                 <div className="flex items-center gap-2">
-                   <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${providerKindClassNames[plugin.providerKind]}`}>
-                     {providerKindLabels[plugin.providerKind]}
-                   </span>
-                   <span className={`text-[11px] font-bold ${statusClassNames[plugin.status]}`}>
-                     {statusLabels[plugin.status]}
-                   </span>
-                 </div>
-                 <button
-                   onClick={() => handleConfigurePlugin(plugin)}
-                   disabled={!canManagePluginConfig}
-                   className="text-sm font-bold text-[var(--color-primary)] hover:text-blue-800 disabled:text-gray-300 disabled:cursor-not-allowed"
-                 >
-                   配置参数
-                 </button>
-               </div>
-            </div>
-            );
-          })}
-       </div>
-    </div>
-  );
-}
-
 function AdminLogs() {
   const session = useSaasSession();
   const [isGenerating, setIsGenerating] = useState(false);
@@ -4137,207 +3935,6 @@ function AdminAgency() {
                        className="text-green-600 font-bold hover:text-green-800 disabled:text-gray-300 disabled:cursor-not-allowed text-[14px]"
                      >
                        打款
-                     </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-       </div>
-    </div>
-  );
-}
-
-function AdminRisk() {
-  const session = useSaasSession();
-  const riskContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
-  const canManageRisk = hasWorkspacePermission(session.membership.role, 'settings.manage');
-  const [riskEvents, setRiskEvents] = useState<WorkspaceRiskEvent[]>(() =>
-    ensureDefaultWorkspaceRiskEvents(riskContext),
-  );
-
-  useEffect(() => {
-    ensureDefaultWorkspaceRiskEvents(riskContext);
-    const refreshEvents = () => setRiskEvents(loadWorkspaceRiskEvents(riskContext));
-    const handleRiskEventsUpdated = (event: Event) => {
-      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail;
-      if (detail?.workspaceId && detail.workspaceId !== session.workspace.id) return;
-      refreshEvents();
-    };
-
-    refreshEvents();
-    window.addEventListener('workspace_risk_events_updated', handleRiskEventsUpdated);
-    return () => window.removeEventListener('workspace_risk_events_updated', handleRiskEventsUpdated);
-  }, [riskContext, session.workspace.id]);
-
-  const summary = useMemo(() => summarizeWorkspaceRiskEvents(riskEvents), [riskEvents]);
-  const decisionLabels: Record<WorkspaceRiskDecision, string> = {
-    blocked: '系统自动拦截',
-    pending_review: '待人工确认',
-    allowed: '人工放行',
-    rate_limited: '已限流',
-    account_frozen: '已冻结账号',
-  };
-  const decisionClassNames: Record<WorkspaceRiskDecision, string> = {
-    blocked: 'bg-green-50 text-green-600 border-green-100',
-    pending_review: 'bg-orange-50 text-orange-600 border-orange-100',
-    allowed: 'bg-blue-50 text-blue-600 border-blue-100',
-    rate_limited: 'bg-red-50 text-red-600 border-red-100',
-    account_frozen: 'bg-red-50 text-red-600 border-red-100',
-  };
-  const severityLabels: Record<WorkspaceRiskSeverity, string> = {
-    low: 'Low',
-    medium: 'Medium',
-    high: 'High',
-    critical: 'Critical',
-  };
-
-  const auditRisk = (
-    action: 'risk_event_review' | 'risk_policy_export',
-    event: WorkspaceRiskEvent | null,
-    metadata: Record<string, unknown>,
-  ) => {
-    logAuditEvent(
-      {
-        action,
-        moduleId: 'admin' as ModuleId,
-        targetType: event ? 'risk_event' : 'workspace',
-        targetId: event?.id ?? session.workspace.id,
-        metadata: {
-          actionName: event?.action,
-          rule: event?.rule,
-          decision: event?.decision,
-          severity: event?.severity,
-          ...metadata,
-        },
-      },
-      { session },
-    );
-    window.dispatchEvent(new Event('activity_logged'));
-  };
-
-  const handleExportPolicy = (operation: string) => {
-    auditRisk('risk_policy_export', null, {
-      operation,
-      eventCount: riskEvents.length,
-      blockedTodayCount: summary.blockedTodayCount,
-      pendingReviewCount: summary.pendingReviewCount,
-      modelVersion: summary.modelVersion,
-    });
-    toast('风控策略查询已记录到审计日志', 'success');
-  };
-
-  const handleReviewRiskEvent = (event: WorkspaceRiskEvent, decision: WorkspaceRiskDecision) => {
-    if (!canManageRisk) {
-      toast('当前角色无权处理风控事件', 'warning');
-      return;
-    }
-    const updatedEvent = updateWorkspaceRiskEvent(
-      event.id,
-      {
-        decision,
-        reviewedAt: Date.now(),
-      },
-      riskContext,
-    );
-    if (!updatedEvent) return;
-    setRiskEvents(loadWorkspaceRiskEvents(riskContext));
-    auditRisk('risk_event_review', updatedEvent, {
-      operation: decision === 'allowed' ? 'allow' : 'enforce',
-      previousDecision: event.decision,
-    });
-    toast(decision === 'allowed' ? '风控事件已放行' : '风控事件已封禁处理', 'success');
-  };
-
-  return (
-    <div className="space-y-[var(--spacing-lg)] animate-in fade-in slide-in-from-bottom-2 duration-300">
-       <div className="flex justify-between items-center">
-         <div>
-           <h2 className="text-xl font-bold text-[var(--text-main)]">系统内容风控与审计审核</h2>
-           <p className="text-sm text-[var(--text-muted)] mt-1">处理违规敏感词汇拦截记录，审核用户被举报生成内容</p>
-         </div>
-         <div className="flex space-x-2">
-           <button
-             onClick={() => handleExportPolicy('sensitive_word_library')}
-             className="bg-[var(--bg-panel)] border border-[var(--border-color)] hover:bg-gray-50 text-gray-700 px-4 py-2.5 rounded-[var(--radius-lg)] font-bold transition-colors shadow-sm"
-           >
-             敏感词库管理
-           </button>
-           <button
-             onClick={() => handleExportPolicy('account_freeze_lookup')}
-             className="bg-red-50 text-red-600 border border-red-100 hover:bg-red-100 px-4 py-2.5 rounded-[var(--radius-lg)] font-bold transition-colors shadow-sm"
-           >
-             封停记录查询
-           </button>
-         </div>
-       </div>
-
-       <div className="grid grid-cols-1 md:grid-cols-3 gap-[var(--spacing-md)] mb-[var(--spacing-md)]">
-         {[
-           { label: '今日拦截违规', value: `${summary.blockedTodayCount.toLocaleString()} 次`, color: 'text-red-500' },
-           { label: '人工审核积压', value: `${summary.pendingReviewCount.toLocaleString()} 单`, color: 'text-orange-500' },
-           { label: '风险模型版本', value: `${summary.modelVersion} (实时)`, color: 'text-green-500' },
-         ].map((s) => (
-           <div key={s.label} className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-5 shadow-sm text-center">
-              <p className="text-xs text-[var(--text-muted)] font-bold mb-2">{s.label}</p>
-              <p className={`text-[var(--text-main)] text-2xl font-extrabold ${s.color}`}>{s.value}</p>
-           </div>
-         ))}
-       </div>
-
-       <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[24px] shadow-sm overflow-hidden">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="bg-[var(--bg-app)] border-b border-[var(--border-color)] text-[12px] font-extrabold text-gray-400 uppercase tracking-widest">
-              <th className="py-4 px-6">事件追踪 ID</th>
-              <th className="py-4 px-6">触发动作</th>
-              <th className="py-4 px-6">涉及内容/命中规则</th>
-              <th className="py-4 px-6">处理决策</th>
-              <th className="py-4 px-6 text-right">人工介入</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {riskEvents.map((event) => (
-              <tr key={event.id} className="hover:bg-gray-50/50">
-                <td className="py-4 px-6 text-[13px] text-[var(--text-muted)] font-mono">{event.id}</td>
-                <td className="py-4 px-6">
-                   <p className="font-bold text-[14px] text-[var(--text-main)]">{event.action}</p>
-                   <p className="text-[11px] font-bold text-[var(--text-muted)] mt-1">{severityLabels[event.severity]}</p>
-                </td>
-                <td className="py-4 px-6 text-[13px] text-gray-700 max-w-sm">
-                  <p className="truncate">{event.contentSummary}</p>
-                  <p className="text-[11px] text-[var(--text-muted)] font-mono mt-1">{event.rule}</p>
-                </td>
-                <td className="py-4 px-6">
-                   <span className={`px-2.5 py-1 text-[11px] font-bold rounded border ${decisionClassNames[event.decision]}`}>
-                     {decisionLabels[event.decision]}
-                   </span>
-                </td>
-                <td className="py-4 px-6 text-right space-x-3">
-                  {event.decision === 'pending_review' ? (
-                     <>
-                        <button
-                          onClick={() => handleReviewRiskEvent(event, 'allowed')}
-                          disabled={!canManageRisk}
-                          className="text-green-600 font-bold hover:text-green-800 disabled:text-gray-300 disabled:cursor-not-allowed text-[14px]"
-                        >
-                          放行
-                        </button>
-                        <button
-                          onClick={() => handleReviewRiskEvent(event, 'account_frozen')}
-                          disabled={!canManageRisk}
-                          className="text-red-500 font-bold hover:text-red-700 disabled:text-gray-300 disabled:cursor-not-allowed text-[14px]"
-                        >
-                          封禁
-                        </button>
-                     </>
-                  ) : (
-                     <button
-                       onClick={() => auditRisk('risk_event_review', event, { operation: 'view_detail' })}
-                       className="text-[var(--color-primary)] font-bold hover:text-blue-800 text-[14px]"
-                     >
-                       查看详情
                      </button>
                   )}
                 </td>

@@ -1,6 +1,7 @@
 import type { StorageLike } from '../../saas/localAuthSession';
 import { getRepositoryStorage } from './dataBackend';
 import { apiClient as defaultApiClient, type ApiClient } from './apiClient';
+import { normalizeApiScopes, normalizeApiRateLimit, DEFAULT_API_SCOPES, type ApiRateLimit } from '../../saas/apiAccess';
 
 export type WorkspaceApiKeyStatus = 'active' | 'rotating' | 'revoked' | 'expired';
 
@@ -13,6 +14,8 @@ export interface WorkspaceApiKey {
   keyPreview: string;
   credentialRef: string;
   status: WorkspaceApiKeyStatus;
+  scopes: string[];
+  rateLimit: ApiRateLimit;
   createdAt: number;
   updatedAt: number;
   lastUsedAt: number | null;
@@ -23,6 +26,8 @@ export interface WorkspaceApiKey {
 export interface WorkspaceApiKeyInput {
   name: string;
   secret?: string;
+  scopes?: string[];
+  rateLimit?: Partial<ApiRateLimit>;
   expiresAt?: number | null;
   metadata?: Record<string, unknown>;
 }
@@ -49,6 +54,8 @@ export interface WorkspaceApiKeyExportRow {
   name: string;
   keyPreview: string;
   status: WorkspaceApiKeyStatus;
+  scopes: string[];
+  rateLimitPerWindow: string;
   lastUsedAt: number | null;
   expiresAt: number | null;
 }
@@ -140,6 +147,8 @@ function normalizeApiKey(record: Partial<WorkspaceApiKey>, context: ApiKeyReposi
     keyPreview: normalizeText(record.keyPreview, keyPreview(prefix, last4)),
     credentialRef: normalizeText(record.credentialRef, credentialRef(name, last4, now)),
     status: normalizeStatus(record.status),
+    scopes: normalizeApiScopes(record.scopes),
+    rateLimit: normalizeApiRateLimit(record.rateLimit),
     createdAt: normalizeTimestamp(record.createdAt, now),
     updatedAt: normalizeTimestamp(record.updatedAt, now),
     lastUsedAt: normalizeNullableTimestamp(record.lastUsedAt),
@@ -192,6 +201,8 @@ function buildApiKeyRecord(input: WorkspaceApiKeyInput, secret: string, context:
       keyPreview: keyPreview(prefix, last4),
       credentialRef: credentialRef(name, last4, now),
       status: 'active',
+      scopes: input.scopes && input.scopes.length > 0 ? input.scopes : [...DEFAULT_API_SCOPES],
+      rateLimit: normalizeApiRateLimit(input.rateLimit),
       createdAt: now,
       updatedAt: now,
       lastUsedAt: null,
@@ -222,7 +233,8 @@ export function createWorkspaceApiKey(
     apiKeyCache.set(context.workspaceId, sortApiKeys([record, ...(apiKeyCache.get(context.workspaceId) ?? [])]));
     void apiKeyApiClient.post(context.workspaceId, 'api-keys', {
       id: record.id, name: record.name, secret,
-      status: record.status, expiresAt: record.expiresAt ?? undefined, metadata: record.metadata,
+      status: record.status, scopes: record.scopes, rateLimit: record.rateLimit,
+      expiresAt: record.expiresAt ?? undefined, metadata: record.metadata,
     }).then((r) => { if (!r.ok) console.error('createWorkspaceApiKey write-through failed', r); })
       .catch((e) => console.error('createWorkspaceApiKey write-through failed', e));
   }
@@ -254,6 +266,8 @@ export function rotateWorkspaceApiKey(
     {
       name: current.name,
       secret,
+      scopes: current.scopes,
+      rateLimit: current.rateLimit,
       expiresAt: current.expiresAt,
       metadata: { ...current.metadata, rotatedFrom: current.id },
     },
@@ -269,7 +283,8 @@ export function rotateWorkspaceApiKey(
     apiKeyCache.set(context.workspaceId, sortApiKeys([replacement, previous, ...(apiKeyCache.get(context.workspaceId) ?? []).filter((k) => k.id !== keyId)]));
     void apiKeyApiClient.post(context.workspaceId, 'api-keys', {
       id: replacement.id, name: replacement.name, secret,
-      status: replacement.status, expiresAt: replacement.expiresAt ?? undefined, metadata: replacement.metadata,
+      status: replacement.status, scopes: replacement.scopes, rateLimit: replacement.rateLimit,
+      expiresAt: replacement.expiresAt ?? undefined, metadata: replacement.metadata,
     }).then((r) => { if (!r.ok) console.error('rotateWorkspaceApiKey create write-through failed', r); }).catch((e) => console.error(e));
     void apiKeyApiClient.patch(context.workspaceId, `api-keys/${previous.id}`, { status: previous.status, expiresAt: previous.expiresAt ?? undefined })
       .then((r) => { if (!r.ok) console.error('rotateWorkspaceApiKey patch write-through failed', r); }).catch((e) => console.error(e));
@@ -314,6 +329,8 @@ export function exportWorkspaceApiKeyRows(records: WorkspaceApiKey[]): Workspace
     name: record.name,
     keyPreview: record.keyPreview,
     status: record.status,
+    scopes: record.scopes,
+    rateLimitPerWindow: `${record.rateLimit.maxRequests}/${Math.floor(record.rateLimit.windowMs / 1000)}s`,
     lastUsedAt: record.lastUsedAt,
     expiresAt: record.expiresAt,
   }));

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Activity, Network, MemoryStick, Cpu, Clock, CheckCircle2, AlertTriangle, ArrowRight, Settings, Download, RotateCw, X, ShieldAlert, Edit3, Library, ListTodo, History, AlertCircle, Waypoints, Target, MonitorCog, Server, WifiOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from './Toast';
@@ -11,6 +11,8 @@ import { LatencyProjectionChart } from './LatencyProjectionChart';
 import { AutoScaleConfigModal } from './AutoScaleConfigModal';
 import { AgentWeeklyHeatmap } from './AgentWeeklyHeatmap';
 import { useAgentRuntimeStatus } from '../runtime/useAgentRuntimeStatus.ts';
+import { useAgentRuntime } from '../runtime/AgentRuntimeContext.tsx';
+import type { AgentSummary, AgentTask } from '../runtime/agentRuntimeTypes.ts';
 
 interface AgentStatus {
    id: string;
@@ -26,7 +28,51 @@ interface AgentStatus {
    isLimitOverridden?: boolean;
 }
 
+// 将真实 runtime agent 状态映射为监测面板展示状态
+function mapRuntimeAgentStatus(status: AgentSummary['status']): AgentStatus['status'] {
+   if (status === 'working') return 'busy';
+   if (status === 'idle') return 'healthy';
+   return 'degraded'; // blocked / error / offline
+}
+
+// 基于 agent id 生成稳定的展示性遥测种子（cpu/mem 仅用于可视化，contract 未提供真实指标）
+function seedTelemetry(id: string): { cpu: number; memory: number; tokenUsage: number } {
+   let hash = 0;
+   for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+   return {
+      cpu: 8 + (hash % 60),
+      memory: 15 + ((hash >> 3) % 70),
+      tokenUsage: 5000 + ((hash >> 5) % 95) * 10000,
+   };
+}
+
+// 真实 roster + 状态来自 provider.listAgents()；遥测为展示性模拟
+function mapRuntimeAgentToStatus(
+   agent: AgentSummary,
+   tasks: AgentTask[],
+   prev?: AgentStatus,
+): AgentStatus {
+   const telemetry = prev ?? seedTelemetry(agent.id);
+   const activeTasks = tasks.filter(
+      (t) => t.agentId === agent.id && (t.status === 'pending' || t.status === 'running'),
+   ).length;
+   return {
+      id: agent.id,
+      name: agent.name,
+      status: mapRuntimeAgentStatus(agent.status),
+      uptime: prev?.uptime ?? '—',
+      cpu: telemetry.cpu,
+      memory: telemetry.memory,
+      activeTasks,
+      successRate: prev?.successRate ?? 99.5,
+      tokenUsage: prev?.tokenUsage ?? telemetry.tokenUsage,
+      monthlyLimit: prev?.monthlyLimit ?? 1_000_000,
+      isLimitOverridden: prev?.isLimitOverridden,
+   };
+}
+
 export function AgentStatusDashboardView() {
+   const runtimeProvider = useAgentRuntime();
    const { status: runtimeStatus, isLoading: isRuntimeLoading } = useAgentRuntimeStatus();
    const [isConfigOpen, setIsConfigOpen] = useState(false);
    const [isSkillsOpen, setIsSkillsOpen] = useState(false);
@@ -39,13 +85,24 @@ export function AgentStatusDashboardView() {
    const [latencyThreshold, setLatencyThreshold] = useState('2000');
    const [globalNotify, setGlobalNotify] = useState(true);
 
-   const [agents, setAgents] = useState<AgentStatus[]>([
-     { id: '1', name: '全能助手 (Global)', status: 'healthy', uptime: '48h 12m', cpu: 12, memory: 45, activeTasks: 1, successRate: 99.8, tokenUsage: 850000, monthlyLimit: 1000000 },
-     { id: '2', name: 'UI Copilot', status: 'busy', uptime: '48h 12m', cpu: 67, memory: 82, activeTasks: 14, successRate: 98.5, tokenUsage: 450000, monthlyLimit: 500000 },
-     { id: '3', name: 'Data Analyst', status: 'degraded', uptime: '12h 05m', cpu: 94, memory: 96, activeTasks: 23, successRate: 92.1, tokenUsage: 1250000, monthlyLimit: 1000000 },
-     { id: '4', name: 'CodeAssist', status: 'healthy', uptime: '48h 12m', cpu: 5, memory: 20, activeTasks: 0, successRate: 100, tokenUsage: 15000, monthlyLimit: 1000000 },
-     { id: '5', name: 'Video Gen', status: 'busy', uptime: '2h 30m', cpu: 88, memory: 70, activeTasks: 3, successRate: 96.4, tokenUsage: 950000, monthlyLimit: 1000000 }
-   ]);
+   const [agents, setAgents] = useState<AgentStatus[]>([]);
+
+   const reloadAgents = useCallback(async () => {
+      const [roster, tasks] = await Promise.all([
+         runtimeProvider.listAgents(),
+         runtimeProvider.listTasks().catch(() => [] as AgentTask[]),
+      ]);
+      setAgents((prev) => {
+         const prevById = new Map<string, AgentStatus>(prev.map((a) => [a.id, a]));
+         return roster.map((agent) => mapRuntimeAgentToStatus(agent, tasks, prevById.get(agent.id)));
+      });
+   }, [runtimeProvider]);
+
+   useEffect(() => {
+      void reloadAgents();
+      const unsubscribe = runtimeProvider.subscribeToRuntime(() => { void reloadAgents(); });
+      return () => unsubscribe();
+   }, [reloadAgents, runtimeProvider]);
 
    useEffect(() => {
      const interval = setInterval(() => {
@@ -58,8 +115,14 @@ export function AgentStatusDashboardView() {
      return () => clearInterval(interval);
    }, []);
 
+   const statusCounts = useMemo(() => ({
+      healthy: agents.filter((a) => a.status === 'healthy').length,
+      busy: agents.filter((a) => a.status === 'busy').length,
+      degraded: agents.filter((a) => a.status === 'degraded').length,
+   }), [agents]);
+
    const restartAgent = (id: string, name: string) => {
-      setAgents(prev => prev.map(a => 
+      setAgents(prev => prev.map(a =>
          a.id === id ? { ...a, status: 'healthy', cpu: 10, memory: 15, uptime: '0h 0m' } : a
       ));
       toast(`${name} 实例已重置并重新初始化上线`, 'success');
@@ -117,15 +180,15 @@ export function AgentStatusDashboardView() {
               <div className="flex space-x-6 mr-4 bg-[var(--bg-panel)] px-4 py-2.5 rounded-[var(--radius-lg)] border border-[var(--border-color)] shadow-sm hidden xl:flex">
                  <div className="flex items-center">
                     <span className="w-3 h-3 rounded-full bg-green-500 mr-2 shadow-[0_0_8px_rgba(34,197,94,0.4)]"></span>
-                    <span className="text-sm font-bold text-gray-700">Healthy (3)</span>
+                    <span className="text-sm font-bold text-gray-700">Healthy ({statusCounts.healthy})</span>
                  </div>
                  <div className="flex items-center">
                     <span className="w-3 h-3 rounded-full bg-amber-500 mr-2 shadow-[0_0_8px_rgba(245,158,11,0.4)]"></span>
-                    <span className="text-sm font-bold text-gray-700">Busy (2)</span>
+                    <span className="text-sm font-bold text-gray-700">Busy ({statusCounts.busy})</span>
                  </div>
                  <div className="flex items-center">
                     <span className="w-3 h-3 rounded-full bg-red-500 mr-2 shadow-[0_0_8px_rgba(239,68,68,0.4)]"></span>
-                    <span className="text-sm font-bold text-gray-700">Degraded (1)</span>
+                    <span className="text-sm font-bold text-gray-700">Degraded ({statusCounts.degraded})</span>
                  </div>
               </div>
               <button 
@@ -183,6 +246,14 @@ export function AgentStatusDashboardView() {
 
         <AgentNodeDiagram canaryEnabled={canaryEnabled} />
 
+        {agents.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center bg-[var(--bg-panel)] rounded-[var(--radius-xl)] border border-[var(--border-color)]">
+            <Server className="icon-xl text-gray-300 mb-4" />
+            <p className="text-[var(--text-muted)] font-medium">
+              {isRuntimeLoading ? '正在从运行时加载 Agent 列表…' : '当前运行时未返回任何 Agent 实例。'}
+            </p>
+          </div>
+        ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[var(--spacing-md)]">
            {agents.map((agent) => (
              <motion.div 
@@ -303,6 +374,7 @@ export function AgentStatusDashboardView() {
              </motion.div>
            ))}
         </div>
+        )}
 
         <LatencyProjectionChart />
         <AgentWeeklyHeatmap />

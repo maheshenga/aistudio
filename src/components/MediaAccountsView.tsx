@@ -1,17 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, CheckCircle2, AlertCircle, RefreshCw, Smartphone, TrendingUp, Users } from 'lucide-react';
+import { Plus, CheckCircle2, AlertCircle, Smartphone, TrendingUp, Users } from 'lucide-react';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { loadWorkspaceMediaAccounts, createWorkspaceMediaAccount, updateWorkspaceMediaAccount, saveWorkspaceMediaAccounts, type MediaRepositoryContext, type WorkspaceMediaAccount } from '../lib/data/mediaRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { hasWorkspacePermission } from '../saas/permissions';
 import { toast } from './Toast';
-
-const accounts = [
-  { id: 1, platform: '抖音', name: 'AI 探索者', avatar: 'bg-black', status: 'active', followers: '124.5w', likes: '890w', lastSync: '10分钟前' },
-  { id: 2, platform: '小红书', name: '设计美学', avatar: 'bg-red-500', status: 'active', followers: '85.2w', likes: '320w', lastSync: '1小时前' },
-  { id: 3, platform: '快手', name: '数字生活', avatar: 'bg-orange-500', status: 'expired', followers: '45.1w', likes: '112w', lastSync: '3天前' },
-  { id: 4, platform: 'Bilibili', name: '科技前沿', avatar: 'bg-blue-400', status: 'active', followers: '230w', likes: '1500w', lastSync: '刚刚' },
-];
 
 export function MediaAccountsView() {
   const session = useSaasSession();
@@ -39,14 +32,27 @@ export function MediaAccountsView() {
       platformName: '新平台账号',
       status: 'needs_config',
       connectedAccounts: 0,
+      ownerId: session.user.id,
+      scopes: ['content.publish'],
       metadata: {},
     }, repoContext);
     logAuditEvent({
       action: 'media_account_update', targetType: 'media_account',
-      targetId: account.id, metadata: { platform: account.platformName, action: 'connect' },
+      targetId: account.id, metadata: { platform: account.platformName, action: 'connect', ownerId: account.ownerId, scopes: account.scopes },
     }, { session });
     setAccounts(loadWorkspaceMediaAccounts(repoContext));
     toast('账号已添加（需配置授权）', 'success');
+  };
+
+  const handleReconnect = (id: string) => {
+    if (!canWrite) { toast('权限不足', 'error'); return; }
+    updateWorkspaceMediaAccount(id, { status: 'active', ownerId: session.user.id }, repoContext);
+    logAuditEvent({
+      action: 'media_account_update', targetType: 'media_account',
+      targetId: id, metadata: { action: 'reauthorize', ownerId: session.user.id },
+    }, { session });
+    setAccounts(loadWorkspaceMediaAccounts(repoContext));
+    toast('账号已重新授权', 'success');
   };
 
   const handleDisconnect = (id: string) => {
@@ -82,10 +88,12 @@ export function MediaAccountsView() {
           </h2>
           <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2">集中管理全网社媒矩阵状态，保障 Agent 集群内容自动分发顺畅无阻。</p>
         </div>
-        <button onClick={handleCreate} className="flex items-center space-x-2 bg-[var(--color-primary)] hover:bg-blue-700 text-white px-5 py-2.5 rounded-[var(--radius-lg)] font-bold transition-colors shadow-sm mt-4 sm:mt-0">
-          <Plus className="icon-md" />
-          <span>挂载新节点</span>
-        </button>
+        {canWrite && (
+          <button onClick={handleCreate} className="flex items-center space-x-2 bg-[var(--color-primary)] hover:bg-blue-700 text-white px-5 py-2.5 rounded-[var(--radius-lg)] font-bold transition-colors shadow-sm mt-4 sm:mt-0">
+            <Plus className="icon-md" />
+            <span>挂载新节点</span>
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-[var(--spacing-md)]">
@@ -132,6 +140,7 @@ export function MediaAccountsView() {
                 <th className="py-4 px-6 text-[12px] font-extrabold text-gray-400 uppercase tracking-widest">账号信息</th>
                 <th className="py-4 px-6 text-[12px] font-extrabold text-gray-400 uppercase tracking-widest">平台</th>
                 <th className="py-4 px-6 text-[12px] font-extrabold text-gray-400 uppercase tracking-widest">连接数</th>
+                <th className="py-4 px-6 text-[12px] font-extrabold text-gray-400 uppercase tracking-widest">授权范围</th>
                 <th className="py-4 px-6 text-[12px] font-extrabold text-gray-400 uppercase tracking-widest">状态</th>
                 <th className="py-4 px-6 text-[12px] font-extrabold text-gray-400 uppercase tracking-widest text-right">操作</th>
               </tr>
@@ -157,6 +166,17 @@ export function MediaAccountsView() {
                     <span className="text-[15px] font-bold text-[var(--text-main)]">{account.connectedAccounts}</span>
                   </td>
                   <td className="py-4 px-6">
+                    {account.scopes.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {account.scopes.map((scope) => (
+                          <span key={scope} className="text-[11px] font-bold text-purple-700 bg-purple-50 border border-purple-100 px-1.5 py-0.5 rounded">{scope}</span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-[13px] text-gray-400 font-medium">未配置</span>
+                    )}
+                  </td>
+                  <td className="py-4 px-6">
                     {account.status === 'active' ? (
                       <span className="inline-flex items-center px-2.5 py-1 text-[13px] font-bold text-green-700 bg-green-50 rounded-md">
                         <CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-green-500" />
@@ -170,12 +190,18 @@ export function MediaAccountsView() {
                     )}
                   </td>
                   <td className="py-4 px-6 text-right space-x-4">
-                    {account.status === 'active' ? (
-                      <button onClick={() => handleDisconnect(account.id)} className="text-amber-600 hover:text-amber-800 text-[14px] font-bold transition-colors">断开</button>
+                    {!canWrite ? (
+                      <span className="text-[13px] font-medium text-gray-400">只读</span>
                     ) : (
-                      <button className="text-green-600 hover:text-green-800 text-[14px] font-bold transition-colors">授权</button>
+                      <>
+                        {account.status === 'active' ? (
+                          <button onClick={() => handleDisconnect(account.id)} className="text-amber-600 hover:text-amber-800 text-[14px] font-bold transition-colors">断开</button>
+                        ) : (
+                          <button onClick={() => handleReconnect(account.id)} className="text-green-600 hover:text-green-800 text-[14px] font-bold transition-colors">授权</button>
+                        )}
+                        <button onClick={() => handleDelete(account.id)} className="text-red-500 hover:text-red-800 text-[14px] font-bold transition-colors">删除</button>
+                      </>
                     )}
-                    <button onClick={() => handleDelete(account.id)} className="text-red-500 hover:text-red-800 text-[14px] font-bold transition-colors">删除</button>
                   </td>
                 </tr>
               ))}

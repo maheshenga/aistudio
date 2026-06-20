@@ -10,6 +10,8 @@ export interface WorkspaceMediaAccount {
   platformName: string;
   status: WorkspaceMediaAccountStatus;
   connectedAccounts: number;
+  ownerId: string | null;
+  scopes: string[];
   credentialRef: string | null;
   clientIdLast4: string | null;
   createdAt: number;
@@ -21,6 +23,8 @@ export interface WorkspaceMediaAccountInput {
   platformName: string;
   status?: string;
   connectedAccounts?: number;
+  ownerId?: string;
+  scopes?: string[];
   clientId?: string;
   metadata?: Record<string, unknown>;
 }
@@ -52,6 +56,8 @@ const DEFAULT_MEDIA_ACCOUNTS: Array<Omit<WorkspaceMediaAccount, 'workspaceId' | 
     platformName: 'YouTube API v3',
     status: 'active',
     connectedAccounts: 423,
+    ownerId: null,
+    scopes: ['content.read', 'content.publish'],
     credentialRef: 'env:YOUTUBE_OAUTH_CLIENT',
     clientIdLast4: null,
     metadata: { seeded: true },
@@ -61,6 +67,8 @@ const DEFAULT_MEDIA_ACCOUNTS: Array<Omit<WorkspaceMediaAccount, 'workspaceId' | 
     platformName: 'X API v2',
     status: 'rate_limited',
     connectedAccounts: 102,
+    ownerId: null,
+    scopes: ['content.read', 'content.publish'],
     credentialRef: 'env:X_OAUTH_CLIENT',
     clientIdLast4: null,
     metadata: { seeded: true },
@@ -70,6 +78,8 @@ const DEFAULT_MEDIA_ACCOUNTS: Array<Omit<WorkspaceMediaAccount, 'workspaceId' | 
     platformName: 'TikTok Creator',
     status: 'active',
     connectedAccounts: 340,
+    ownerId: null,
+    scopes: ['content.publish'],
     credentialRef: 'env:TIKTOK_OAUTH_CLIENT',
     clientIdLast4: null,
     metadata: { seeded: true },
@@ -79,6 +89,8 @@ const DEFAULT_MEDIA_ACCOUNTS: Array<Omit<WorkspaceMediaAccount, 'workspaceId' | 
     platformName: '微信公众号',
     status: 'active',
     connectedAccounts: 89,
+    ownerId: null,
+    scopes: ['content.publish'],
     credentialRef: 'env:WECHAT_MP_APP_ID',
     clientIdLast4: null,
     metadata: { seeded: true },
@@ -102,6 +114,15 @@ function normalizeStatus(value: unknown): WorkspaceMediaAccountStatus {
 function normalizeCount(value: unknown): number {
   const numericValue = Number(value);
   return Number.isFinite(numericValue) && numericValue >= 0 ? Math.floor(numericValue) : 0;
+}
+
+function normalizeScopes(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(
+    value
+      .filter((scope): scope is string => typeof scope === 'string' && scope.trim().length > 0)
+      .map((scope) => scope.trim()),
+  ));
 }
 
 function normalizeTimestamp(value: unknown, fallback: number): number {
@@ -135,6 +156,10 @@ function normalizeMediaAccount(
     platformName: normalizeText(account.platformName, 'Untitled platform'),
     status: normalizeStatus(account.status),
     connectedAccounts: normalizeCount(account.connectedAccounts),
+    ownerId: typeof account.ownerId === 'string' && account.ownerId.trim()
+      ? account.ownerId.trim()
+      : null,
+    scopes: normalizeScopes(account.scopes),
     credentialRef: typeof account.credentialRef === 'string' && account.credentialRef.trim()
       ? account.credentialRef.trim()
       : null,
@@ -227,6 +252,8 @@ export function createWorkspaceMediaAccount(
       platformName: input.platformName,
       status: normalizeStatus(input.status),
       connectedAccounts: input.connectedAccounts,
+      ownerId: input.ownerId,
+      scopes: input.scopes,
       credentialRef: credentialRef(input.platformName, input.clientId, now),
       clientIdLast4: clientIdLast4(input.clientId),
       createdAt: now,
@@ -241,7 +268,8 @@ export function createWorkspaceMediaAccount(
     mediaCache.set(context.workspaceId, sortMediaAccounts([account, ...(mediaCache.get(context.workspaceId) ?? [])]));
     void mediaApiClient.post(context.workspaceId, 'media-accounts', {
       id: account.id, platformName: account.platformName, status: account.status,
-      connectedAccounts: account.connectedAccounts, credentialRef: account.credentialRef ?? undefined,
+      connectedAccounts: account.connectedAccounts, ownerId: account.ownerId ?? undefined, scopes: account.scopes,
+      credentialRef: account.credentialRef ?? undefined,
       clientIdLast4: account.clientIdLast4 ?? undefined, metadata: account.metadata,
     }).then((r) => { if (!r.ok) console.error('createWorkspaceMediaAccount write-through failed', r); })
       .catch((e) => console.error('createWorkspaceMediaAccount write-through failed', e));
@@ -283,6 +311,7 @@ export function updateWorkspaceMediaAccount(
     mediaCache.set(context.workspaceId, sortMediaAccounts((mediaCache.get(context.workspaceId) ?? []).map((m) => (m.id === u.id ? u : m))));
     void mediaApiClient.patch(context.workspaceId, `media-accounts/${u.id}`, {
       platformName: u.platformName, status: u.status, connectedAccounts: u.connectedAccounts,
+      ownerId: u.ownerId ?? undefined, scopes: u.scopes,
       credentialRef: u.credentialRef ?? undefined, clientIdLast4: u.clientIdLast4 ?? undefined, metadata: u.metadata,
     }).then((r) => { if (!r.ok) console.error('updateWorkspaceMediaAccount write-through failed', r); })
       .catch((e) => console.error('updateWorkspaceMediaAccount write-through failed', e));

@@ -526,7 +526,7 @@ export default function App() {
       case 'speech':
         return <SpeechView />;
       case 'admin':
-        return <AdminView />;
+        return <AdminView onNavigate={setActiveModule} />;
       case 'e_main_image':
       case 'e_video':
       case 'e_detail_page':

@@ -13,6 +13,7 @@ export type WorkspacePermission =
   | 'audit.view'
   | 'api_keys.manage'
   | 'members.manage'
+  | 'plugins.manage'
   | 'resources.write';
 
 export type ProtectedWorkspaceAction =
@@ -22,6 +23,7 @@ export type ProtectedWorkspaceAction =
   | 'asset.delete'
   | 'asset.export'
   | 'billing.mutate'
+  | 'plugin.mutate'
   | 'runtime_settings.mutate'
   | 'task.mutate';
 
@@ -38,6 +40,7 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, readonly WorkspacePermissio
     'audit.view',
     'api_keys.manage',
     'members.manage',
+    'plugins.manage',
     'resources.write',
   ],
   admin: [
@@ -52,6 +55,7 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, readonly WorkspacePermissio
     'audit.view',
     'api_keys.manage',
     'members.manage',
+    'plugins.manage',
     'resources.write',
   ],
   operator: [
@@ -81,6 +85,7 @@ export const PROTECTED_ACTION_PERMISSIONS: Record<ProtectedWorkspaceAction, Work
   'asset.delete': 'assets.manage',
   'asset.export': 'assets.manage',
   'billing.mutate': 'billing.manage',
+  'plugin.mutate': 'plugins.manage',
   'runtime_settings.mutate': 'settings.manage',
   'task.mutate': 'tasks.manage',
 };

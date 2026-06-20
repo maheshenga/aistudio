@@ -34,8 +34,10 @@ import {
   type WorkspaceWebhookEndpoint,
 } from '../lib/data/webhookRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { listWorkspaceUsageEvents, type WorkspaceUsageEvent } from '../lib/data/usageRepository';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { buildPermissionDeniedMetadata, canManageApiKeys } from '../saas/permissions';
+import { API_SCOPES, DEFAULT_API_SCOPES, DEFAULT_API_RATE_LIMIT } from '../saas/apiAccess';
 import { toast } from './Toast';
 
 type ApiKeysTab = 'keys' | 'webhooks' | 'analytics';
@@ -120,6 +122,7 @@ export function ApiKeysView() {
   const [webhooks, setWebhooks] = useState<WorkspaceWebhookEndpoint[]>(() => loadWorkspaceWebhookEndpoints(webhookContext));
   const [showGenModal, setShowGenModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
+  const [newKeyScopes, setNewKeyScopes] = useState<string[]>([...DEFAULT_API_SCOPES]);
   const [newlyGeneratedKey, setNewlyGeneratedKey] = useState('');
   const [generatedKeyName, setGeneratedKeyName] = useState('');
   const [showRotateConfirmModal, setShowRotateConfirmModal] = useState(false);
@@ -132,6 +135,7 @@ export function ApiKeysView() {
   const [newWebhookSecret, setNewWebhookSecret] = useState('');
   const [generatedWebhookName, setGeneratedWebhookName] = useState('');
   const [showWebhookExportModal, setShowWebhookExportModal] = useState(false);
+  const [usageEvents, setUsageEvents] = useState<WorkspaceUsageEvent[]>([]);
 
   useEffect(() => {
     const refreshKeys = () => setKeys(loadWorkspaceApiKeys(apiKeyContext));
@@ -159,12 +163,27 @@ export function ApiKeysView() {
     return () => window.removeEventListener('workspace_webhooks_updated', handleWebhooksUpdated);
   }, [session.workspace.id, webhookContext]);
 
+  useEffect(() => {
+    const refreshUsage = () => setUsageEvents(listWorkspaceUsageEvents({ workspaceId: session.workspace.id }));
+    const handleUsageUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== session.workspace.id) return;
+      refreshUsage();
+    };
+
+    refreshUsage();
+    window.addEventListener('usage_events_updated', handleUsageUpdated);
+    return () => window.removeEventListener('usage_events_updated', handleUsageUpdated);
+  }, [session.workspace.id]);
+
   const usageSeries = useMemo(() => buildUsageSeries(keys, webhooks), [keys, webhooks]);
+  const usageTotals = useMemo(() => {
+    const totalCredits = usageEvents.reduce((sum, event) => sum + event.credits, 0);
+    return { eventCount: usageEvents.length, totalCredits };
+  }, [usageEvents]);
   const activeKeyCount = keys.filter((key) => key.status === 'active').length;
   const rotatingKeyCount = keys.filter((key) => key.status === 'rotating').length;
   const revokedKeyCount = keys.filter((key) => key.status === 'revoked').length;
-  const activeWebhookCount = webhooks.filter((endpoint) => endpoint.status === 'active').length;
-  const failingWebhookCount = webhooks.filter((endpoint) => endpoint.status === 'failing').length;
 
   const auditDeveloperAction = (
     action:
@@ -224,8 +243,15 @@ export function ApiKeysView() {
   const closeGenModal = () => {
     setShowGenModal(false);
     setNewKeyName('');
+    setNewKeyScopes([...DEFAULT_API_SCOPES]);
     setNewlyGeneratedKey('');
     setGeneratedKeyName('');
+  };
+
+  const toggleNewKeyScope = (scope: string) => {
+    setNewKeyScopes((prev) =>
+      prev.includes(scope) ? prev.filter((item) => item !== scope) : [...prev, scope],
+    );
   };
 
   const copyToClipboard = (text: string) => {
@@ -242,9 +268,13 @@ export function ApiKeysView() {
       toast('Current role cannot manage API keys.', 'warning');
       return;
     }
+    if (newKeyScopes.length === 0) {
+      toast('Select at least one scope for this key.', 'warning');
+      return;
+    }
 
     const result = createWorkspaceApiKey(
-      { name: newKeyName.trim(), metadata: { source: 'api_keys_view' } },
+      { name: newKeyName.trim(), scopes: newKeyScopes, metadata: { source: 'api_keys_view' } },
       apiKeyContext,
     );
     setKeys(loadWorkspaceApiKeys(apiKeyContext));
@@ -254,6 +284,8 @@ export function ApiKeysView() {
       name: result.record.name,
       keyPreview: result.record.keyPreview,
       credentialRef: result.record.credentialRef,
+      scopes: result.record.scopes,
+      rateLimit: result.record.rateLimit,
     });
   };
 
@@ -316,8 +348,8 @@ export function ApiKeysView() {
     auditDeveloperAction('api_key_export', 'workspace', session.workspace.id, { rowCount: rows.length });
     downloadCsv(
       `api-keys-${session.workspace.slug}.csv`,
-      ['id', 'name', 'keyPreview', 'status', 'lastUsedAt', 'expiresAt'],
-      rows.map((row) => [row.id, row.name, row.keyPreview, row.status, row.lastUsedAt, row.expiresAt]),
+      ['id', 'name', 'keyPreview', 'status', 'scopes', 'rateLimitPerWindow', 'lastUsedAt', 'expiresAt'],
+      rows.map((row) => [row.id, row.name, row.keyPreview, row.status, row.scopes.join('|'), row.rateLimitPerWindow, row.lastUsedAt, row.expiresAt]),
     );
     setShowKeyExportModal(false);
     toast('API key metadata export generated.', 'success');
@@ -541,6 +573,8 @@ export function ApiKeysView() {
                 <tr className="bg-[var(--bg-app)] border-b border-[var(--border-color)] text-[12px] font-extrabold text-gray-400 uppercase tracking-widest">
                   <th className="py-4 px-6">Name</th>
                   <th className="py-4 px-6">Key</th>
+                  <th className="py-4 px-6">Scopes</th>
+                  <th className="py-4 px-6">Rate Limit</th>
                   <th className="py-4 px-6">Created</th>
                   <th className="py-4 px-6">Last Used</th>
                   <th className="py-4 px-6">Status</th>
@@ -550,7 +584,7 @@ export function ApiKeysView() {
               <tbody className="divide-y divide-gray-100">
                 {keys.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-10 text-center text-sm font-bold text-[var(--text-muted)]">
+                    <td colSpan={8} className="py-10 text-center text-sm font-bold text-[var(--text-muted)]">
                       No API keys yet.
                     </td>
                   </tr>
@@ -564,6 +598,20 @@ export function ApiKeysView() {
                       <code className="text-[13px] font-mono text-gray-600 bg-gray-50 px-2.5 py-1 rounded-md border border-[var(--border-color)]">
                         {key.keyPreview}
                       </code>
+                    </td>
+                    <td className="py-4 px-6">
+                      {key.scopes.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 max-w-[220px]">
+                          {key.scopes.map((scope) => (
+                            <span key={scope} className="text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 px-1.5 py-0.5 rounded">{scope}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-[12px] text-gray-400 font-medium">No scopes</span>
+                      )}
+                    </td>
+                    <td className="py-4 px-6 text-[13px] text-[var(--text-muted)] font-medium whitespace-nowrap">
+                      {key.rateLimit.maxRequests}/{Math.floor(key.rateLimit.windowMs / 1000)}s
                     </td>
                     <td className="py-4 px-6 text-[14px] text-[var(--text-muted)] font-medium">{formatDateTime(key.createdAt)}</td>
                     <td className="py-4 px-6 text-[14px] text-[var(--text-muted)] font-medium">{formatDateTime(key.lastUsedAt)}</td>
@@ -723,12 +771,12 @@ export function ApiKeysView() {
               <p className="text-3xl font-black text-[var(--text-main)]">{revokedKeyCount}</p>
             </div>
             <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-[var(--spacing-lg)] shadow-sm">
-              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Webhooks</p>
-              <p className="text-3xl font-black text-[var(--text-main)]">{activeWebhookCount}</p>
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Tracked usage events</p>
+              <p className="text-3xl font-black text-[var(--text-main)]">{usageTotals.eventCount}</p>
             </div>
             <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-[var(--radius-xl)] p-[var(--spacing-lg)] shadow-sm">
-              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Failing hooks</p>
-              <p className="text-3xl font-black text-[var(--text-main)]">{failingWebhookCount}</p>
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Billing credits (est.)</p>
+              <p className="text-3xl font-black text-[var(--text-main)]">{usageTotals.totalCredits.toLocaleString()}</p>
             </div>
           </div>
 
@@ -829,7 +877,7 @@ export function ApiKeysView() {
                     </div>
                   </div>
 
-                  <div className="mb-[var(--spacing-xl)]">
+                  <div className="mb-[var(--spacing-md)]">
                     <label className="block text-sm font-bold text-gray-700 mb-2">Key Name</label>
                     <input
                       type="text"
@@ -841,6 +889,31 @@ export function ApiKeysView() {
                     />
                   </div>
 
+                  <div className="mb-[var(--spacing-md)]">
+                    <label className="block text-sm font-bold text-gray-700 mb-2">Scopes</label>
+                    <p className="text-[12px] text-[var(--text-muted)] mb-2">Grant least privilege. Write scopes are billable per call.</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto">
+                      {API_SCOPES.map((definition) => (
+                        <label key={definition.scope} className="flex items-start text-[13px] font-bold text-gray-700 bg-gray-50 border border-[var(--border-color)] rounded-[var(--radius-lg)] p-2.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={newKeyScopes.includes(definition.scope)}
+                            onChange={() => toggleNewKeyScope(definition.scope)}
+                            className="mr-2 mt-0.5"
+                          />
+                          <span>
+                            <span className="font-mono text-[12px] text-indigo-700">{definition.scope}</span>
+                            <span className="block text-[11px] text-[var(--text-muted)] font-medium mt-0.5">{definition.description}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mb-[var(--spacing-xl)] bg-blue-50/60 border border-blue-100 rounded-[var(--radius-lg)] p-3 text-[12px] text-blue-800 font-medium">
+                    Default rate limit: {DEFAULT_API_RATE_LIMIT.maxRequests} requests / {Math.floor(DEFAULT_API_RATE_LIMIT.windowMs / 1000)}s sliding window.
+                  </div>
+
                   <div className="flex space-x-3 justify-end">
                     <button
                       onClick={closeGenModal}
@@ -849,7 +922,7 @@ export function ApiKeysView() {
                       Cancel
                     </button>
                     <button
-                      disabled={!newKeyName.trim() || !canManage}
+                      disabled={!newKeyName.trim() || newKeyScopes.length === 0 || !canManage}
                       onClick={handleGenerateKey}
                       className="bg-[var(--color-primary)] hover:bg-blue-700 text-white disabled:opacity-50 disabled:hover:bg-[var(--color-primary)] px-6 py-2.5 rounded-[var(--radius-lg)] font-bold transition-all shadow-sm"
                     >
