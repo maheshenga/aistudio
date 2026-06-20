@@ -41,6 +41,19 @@ async function run() {
   const local = loadWorkspaceMediaAccounts({ workspaceId: 'wsB', storage });
   assert.equal(local.some((m) => m.platformName === 'Local One'), true);
 
+  // P3-E01: owner + scopes persist; raw client secret never stored (only last4 ref)
+  createWorkspaceMediaAccount(
+    { platformName: 'Scoped Channel', ownerId: 'user_owner_1', scopes: ['content.read', 'content.publish', 'content.read'], clientId: 'abcd1234secret9876' },
+    { workspaceId: 'wsB', storage },
+  );
+  const scoped = loadWorkspaceMediaAccounts({ workspaceId: 'wsB', storage }).find((m) => m.platformName === 'Scoped Channel');
+  assert.ok(scoped, 'scoped account should persist');
+  assert.equal(scoped!.ownerId, 'user_owner_1');
+  assert.deepEqual(scoped!.scopes, ['content.read', 'content.publish'], 'scopes deduped + persisted');
+  assert.equal(scoped!.clientIdLast4, '9876', 'only last4 of client id retained');
+  const raw = mem.get('aistudio_workspace_media_accounts:wsB') ?? '';
+  assert.equal(raw.includes('abcd1234secret9876'), false, 'raw credential must not be persisted');
+
   console.log('media repository passed');
 }
 run().catch((e) => { console.error(e); process.exit(1); });

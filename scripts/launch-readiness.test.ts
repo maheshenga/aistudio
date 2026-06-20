@@ -1467,11 +1467,9 @@ const adminAgencyEnd = adminSource.indexOf('function AdminRisk');
 const adminAgencySource = adminAgencyStart >= 0 && adminAgencyEnd > adminAgencyStart
   ? adminSource.slice(adminAgencyStart, adminAgencyEnd)
   : adminSource;
-const adminRiskStart = adminSource.indexOf('function AdminRisk');
-const adminRiskEnd = adminSource.indexOf('function AdminAssets');
-const adminRiskSource = adminRiskStart >= 0 && adminRiskEnd > adminRiskStart
-  ? adminSource.slice(adminRiskStart, adminRiskEnd)
-  : adminSource;
+const riskCenterSource = readFileSync('src/components/RiskCenterView.tsx', 'utf8');
+const pluginCenterSource = readFileSync('src/components/PluginCenterView.tsx', 'utf8');
+const permissionsSource = readFileSync('src/saas/permissions.ts', 'utf8');
 const adminMediaStart = adminSource.indexOf('function AdminMedia');
 const adminMediaEnd = adminSource.indexOf('function AdminSaasPlans');
 const adminMediaSource = adminMediaStart >= 0 && adminMediaEnd > adminMediaStart
@@ -1605,18 +1603,63 @@ assert.ok(
   'AdminView announcement changes should be auditable',
 );
 assert.ok(
-  adminSource.includes('../lib/data/pluginRepository'),
-  'AdminView plugins should manage extensions through pluginRepository',
+  pluginCenterSource.includes('../lib/data/pluginRepository'),
+  'PluginCenterView should manage extensions through pluginRepository',
 );
 assert.ok(
-  adminSource.includes('ensureDefaultWorkspacePlugins') &&
-    adminSource.includes('loadWorkspacePlugins') &&
-    adminSource.includes('updateWorkspacePlugin'),
-  'AdminView plugins should persist plugin enablement and configuration',
+  pluginCenterSource.includes('ensureDefaultWorkspacePlugins') &&
+    pluginCenterSource.includes('loadWorkspacePlugins') &&
+    pluginCenterSource.includes('updateWorkspacePlugin'),
+  'PluginCenterView should persist plugin enablement and configuration',
 );
 assert.ok(
-  adminSource.includes('plugin_config_update'),
-  'AdminView plugin changes should be auditable',
+  pluginCenterSource.includes('plugin_config_update'),
+  'PluginCenterView plugin changes should be auditable',
+);
+
+// P3-E05: Plugin Center is gated by a pure policy with review states, permission, billing, and audit.
+const pluginPolicySource = readFileSync('src/saas/pluginPolicy.ts', 'utf8');
+for (const state of ["'hidden'", "'internal'", "'reviewed'", "'enabled'", "'disabled'"]) {
+  assert.ok(
+    pluginPolicySource.includes(state),
+    `pluginPolicy should define the ${state} review state`,
+  );
+}
+assert.ok(
+  pluginPolicySource.includes('export function canExecutePlugin') &&
+    pluginPolicySource.includes('export function resolvePluginReviewState') &&
+    pluginPolicySource.includes('export function isPluginReviewed'),
+  'pluginPolicy should expose review-state and execution gating',
+);
+assert.ok(
+  pluginPolicySource.includes("'plugins.manage'"),
+  'pluginPolicy should require the plugins.manage permission for lifecycle actions',
+);
+assert.ok(
+  pluginPolicySource.includes('PluginBillingMetadata') && pluginPolicySource.includes('estimatedCreditsPerRun'),
+  'pluginPolicy should attach billing metadata for plugin execution',
+);
+assert.ok(
+  adminSource.includes('PluginCenterView'),
+  'AdminView plugin tab should render the extracted PluginCenterView',
+);
+assert.ok(
+  pluginCenterSource.includes('canExecutePlugin') &&
+    pluginCenterSource.includes('isPluginReviewed') &&
+    pluginCenterSource.includes('resolvePluginReviewState'),
+  'PluginCenterView should gate execution through pluginPolicy',
+);
+assert.ok(
+  pluginCenterSource.includes('plugin_execute') && pluginCenterSource.includes('plugin_execute_blocked'),
+  'PluginCenterView should audit both successful and blocked plugin execution',
+);
+assert.ok(
+  pluginCenterSource.includes("hasWorkspacePermission(role, 'plugins.manage')"),
+  'PluginCenterView should gate management actions on plugins.manage',
+);
+assert.ok(
+  permissionsSource.includes("'plugins.manage'") && permissionsSource.includes("'plugin.mutate'"),
+  'permissions should define plugins.manage and the plugin.mutate protected action',
 );
 assert.ok(
   adminSource.includes('../lib/data/ticketRepository'),
@@ -1649,19 +1692,58 @@ assert.ok(
   'AdminView agency operations should be auditable',
 );
 assert.ok(
-  adminSource.includes('../lib/data/riskRepository'),
-  'AdminView risk should manage moderation events through riskRepository',
+  riskCenterSource.includes('../lib/data/riskRepository'),
+  'RiskCenterView should manage moderation events through riskRepository',
 );
 assert.ok(
-  adminSource.includes('ensureDefaultWorkspaceRiskEvents') &&
-    adminSource.includes('loadWorkspaceRiskEvents') &&
-    adminSource.includes('updateWorkspaceRiskEvent') &&
-    adminSource.includes('summarizeWorkspaceRiskEvents'),
-  'AdminView risk should persist moderation events and derive queue metrics',
+  riskCenterSource.includes('ensureDefaultWorkspaceRiskEvents') &&
+    riskCenterSource.includes('loadWorkspaceRiskEvents') &&
+    riskCenterSource.includes('updateWorkspaceRiskEvent') &&
+    riskCenterSource.includes('summarizeWorkspaceRiskEvents'),
+  'RiskCenterView should persist moderation events and derive queue metrics',
 );
 assert.ok(
-  adminSource.includes('risk_event_review') && adminSource.includes('risk_policy_export'),
-  'AdminView risk operations should be auditable',
+  riskCenterSource.includes('risk_event_review') && riskCenterSource.includes('risk_policy_export'),
+  'RiskCenterView operations should be auditable',
+);
+
+// P3-E04: Risk Center aggregates real operational signals through a pure policy module.
+const riskPolicySource = readFileSync('src/saas/riskPolicy.ts', 'utf8');
+assert.ok(
+  riskPolicySource.includes('export function assessWorkspaceRisk'),
+  'riskPolicy should expose an assessWorkspaceRisk aggregator',
+);
+for (const category of ["'quota'", "'provider'", "'permission'", "'api_key'", "'runtime'", "'audit'"]) {
+  assert.ok(
+    riskPolicySource.includes(category),
+    `riskPolicy should classify the ${category} signal category`,
+  );
+}
+assert.ok(
+  riskCenterSource.includes('assessWorkspaceRisk'),
+  'RiskCenterView should derive risk from the riskPolicy aggregator',
+);
+assert.ok(
+  riskCenterSource.includes('calculateBillingUsage') &&
+    riskCenterSource.includes('loadWorkspaceProviders') &&
+    riskCenterSource.includes('loadWorkspaceApiKeys') &&
+    riskCenterSource.includes('loadWorkspaceMembers') &&
+    riskCenterSource.includes('useAgentRuntimeStatus') &&
+    riskCenterSource.includes('listAuditLogs'),
+  'RiskCenterView should read real quota, provider, API key, permission, runtime, and audit signals',
+);
+assert.ok(
+  riskCenterSource.includes('onNavigateSource') && riskCenterSource.includes('signal.source'),
+  'RiskCenterView should deep-link each risk signal to its source record',
+);
+assert.equal(
+  /createWorkspaceProvider|updateWorkspaceProvider|revokeWorkspaceApiKey|rotateWorkspaceApiKey|updateWorkspaceMember/.test(riskCenterSource),
+  false,
+  'RiskCenterView must stay read-only over operational sources (no unaudited remediation side effects)',
+);
+assert.ok(
+  adminSource.includes('RiskCenterView'),
+  'AdminView risk tab should render the extracted RiskCenterView',
 );
 assert.ok(
   adminSource.includes('../lib/data/mediaRepository'),
@@ -1781,14 +1863,14 @@ assert.equal(
   'AdminView agency should not render static affiliate partner rows or commission metrics',
 );
 assert.equal(
-  adminRiskSource.includes('RSK-084-219') ||
-    adminRiskSource.includes('HTR-112-992') ||
-    adminRiskSource.includes('Prompt 生成请求') ||
-    adminRiskSource.includes("value: '142 次'") ||
-    adminRiskSource.includes("value: '28 单'") ||
-    adminRiskSource.includes("value: 'v2.4 (实时)'"),
+  riskCenterSource.includes('RSK-084-219') ||
+    riskCenterSource.includes('HTR-112-992') ||
+    riskCenterSource.includes('Prompt 生成请求') ||
+    riskCenterSource.includes("value: '142 次'") ||
+    riskCenterSource.includes("value: '28 单'") ||
+    riskCenterSource.includes("value: 'v2.4 (实时)'"),
   false,
-  'AdminView risk should not render static moderation event rows or metrics',
+  'RiskCenterView should not render static moderation event rows or metrics',
 );
 assert.equal(
   adminMediaSource.includes('YouTube API v3') ||
@@ -1863,4 +1945,121 @@ for (const filePath of listFiles('src/components').filter((path) => path.endsWit
   }
 }
 
+// ---------------------------------------------------------------------------
+// P3-E07: Release gate — P3 modules cannot publish, call external APIs, install
+// plugins, or mutate external accounts without permission, billing, and audit
+// contracts. Each entry maps a P3 external-side-effect surface to its component
+// source; a failure names the exact offending module.
+// ---------------------------------------------------------------------------
+interface P3GateTarget {
+  moduleId: string;
+  componentPath: string;
+  /** Audit action strings that must appear (proof of audit coverage). */
+  requiredAudits: string[];
+  /** A permission gate symbol that must appear in the source. */
+  permissionGate: string;
+  /** Registry feature id used to assert readiness/route status. */
+  registryId: Parameters<typeof getProductFeature>[0];
+}
+
+const p3GateTargets: P3GateTarget[] = [
+  {
+    moduleId: 'media (社媒账号挂载)',
+    componentPath: 'src/components/MediaAccountsView.tsx',
+    requiredAudits: ['media_account_update'],
+    permissionGate: 'hasWorkspacePermission',
+    registryId: 'media',
+  },
+  {
+    moduleId: 'employee_accounts (员工账号池)',
+    componentPath: 'src/components/EmployeeAccountsView.tsx',
+    requiredAudits: ['member_update'],
+    permissionGate: 'hasWorkspacePermission',
+    registryId: 'employee_accounts',
+  },
+  {
+    moduleId: 'saas_api_keys (公共 API 密钥)',
+    componentPath: 'src/components/ApiKeysView.tsx',
+    requiredAudits: ['api_key_create', 'api_key_rotate', 'api_key_revoke'],
+    permissionGate: 'canManageApiKeys',
+    registryId: 'saas_api_keys',
+  },
+  {
+    moduleId: 'plugins (插件中心)',
+    componentPath: 'src/components/PluginCenterView.tsx',
+    requiredAudits: ['plugin_execute', 'plugin_execute_blocked', 'plugin_enable', 'plugin_disable'],
+    permissionGate: 'hasWorkspacePermission',
+    registryId: 'admin',
+  },
+];
+
+const RAW_CREDENTIAL_PERSIST_PATTERNS = [
+  /setItem\([^)]*\b(apiKey|secret|rawKey|fullKey|accessToken|clientSecret)\b/i,
+  /metadata:\s*\{[^}]*\b(secret|rawKey|fullKey)\s*:/i,
+];
+
+for (const target of p3GateTargets) {
+  assert.ok(
+    existsSync(target.componentPath),
+    `P3 release gate: ${target.moduleId} component ${target.componentPath} must exist`,
+  );
+  const source = readFileSync(target.componentPath, 'utf8');
+
+  // 1. External side effects must be audited.
+  for (const auditAction of target.requiredAudits) {
+    assert.ok(
+      source.includes(auditAction),
+      `P3 release gate failed for ${target.moduleId}: missing audit coverage for "${auditAction}"`,
+    );
+  }
+  assert.ok(
+    source.includes('logAuditEvent'),
+    `P3 release gate failed for ${target.moduleId}: must log audit events for external side effects`,
+  );
+
+  // 2. Mutation actions must be permission-gated.
+  assert.ok(
+    source.includes(target.permissionGate),
+    `P3 release gate failed for ${target.moduleId}: missing permission gate "${target.permissionGate}"`,
+  );
+
+  // 3. No raw credential material may be persisted.
+  for (const pattern of RAW_CREDENTIAL_PERSIST_PATTERNS) {
+    assert.equal(
+      pattern.test(source),
+      false,
+      `P3 release gate failed for ${target.moduleId}: raw credential material must not be persisted (matched ${pattern})`,
+    );
+  }
+
+  // 4. Registry route status must be rendered/internal (not an un-gated placeholder) and not a hidden stub.
+  const feature = getProductFeature(target.registryId);
+  assert.ok(feature, `P3 release gate failed for ${target.moduleId}: registry record missing`);
+  assert.ok(
+    feature!.routeStatus === 'rendered' || feature!.routeStatus === 'internal',
+    `P3 release gate failed for ${target.moduleId}: route status must be rendered or internal, got "${feature!.routeStatus}"`,
+  );
+  assert.notEqual(
+    feature!.readiness,
+    'placeholder',
+    `P3 release gate failed for ${target.moduleId}: a placeholder module must not expose external side effects`,
+  );
+  assert.ok(
+    feature!.dataDependencies.includes('audit'),
+    `P3 release gate failed for ${target.moduleId}: registry must declare an audit data dependency`,
+  );
+}
+
+// 5. P3 mutation actions must each map to a required permission in the protected-action registry.
+for (const mutationAction of ['api_key.mutate', 'plugin.mutate']) {
+  assert.ok(
+    permissionsSource.includes(`'${mutationAction}'`),
+    `P3 release gate: protected action "${mutationAction}" must declare permission metadata`,
+  );
+}
+
+console.log('✓ P3-E07: release gate (audit coverage + permission gating + no raw credentials for P3 external side effects)');
+
 console.log('launch readiness contract passed');
+
+

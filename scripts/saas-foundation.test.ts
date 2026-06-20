@@ -178,6 +178,8 @@ type ApiKeyRecord = {
   keyPreview: string;
   credentialRef: string;
   status: string;
+  scopes: string[];
+  rateLimit: { windowMs: number; maxRequests: number };
   createdAt: number;
   updatedAt: number;
   lastUsedAt: number | null;
@@ -424,7 +426,7 @@ const apiKeyRepositoryModule = await import('../src/lib/data/apiKeyRepository.ts
       context: { workspaceId: string; storage?: StorageLike | null; now?: number },
     ) => ApiKeyRecord[];
     createWorkspaceApiKey?: (
-      input: { name: string; secret?: string; expiresAt?: number | null; metadata?: Record<string, unknown> },
+      input: { name: string; secret?: string; scopes?: string[]; rateLimit?: { windowMs?: number; maxRequests?: number }; expiresAt?: number | null; metadata?: Record<string, unknown> },
       context: { workspaceId: string; storage?: StorageLike | null; now?: number },
     ) => { record: ApiKeyRecord; secret: string };
     rotateWorkspaceApiKey?: (
@@ -984,10 +986,11 @@ assert.deepEqual(
     'asset.delete',
     'asset.export',
     'billing.mutate',
+    'plugin.mutate',
     'runtime_settings.mutate',
     'task.mutate',
   ].sort(),
-  'protected action registry should cover P0 destructive, billing, API key, runtime, admin, and dispatch actions',
+  'protected action registry should cover P0 destructive, billing, API key, runtime, admin, dispatch, and plugin actions',
 );
 assert.equal(canManageBilling!('owner'), true);
 assert.equal(canManageBilling!('admin'), true);
@@ -2132,6 +2135,7 @@ const createdApiKey = createWorkspaceApiKey!(
   {
     name: 'Production Backend',
     secret: 'sk-prod-secret-1234567890',
+    scopes: ['generation.write', 'assets.read', 'generation.write', 'not.a.real.scope'],
     expiresAt: 1_783_000_000_000,
   },
   { storage, workspaceId: session.workspace.id, now: 1_780_000_000_390 },
@@ -2140,6 +2144,13 @@ assert.equal(createdApiKey.record.workspaceId, session.workspace.id);
 assert.equal(createdApiKey.record.last4, '7890');
 assert.equal(createdApiKey.record.keyPreview.includes('1234567890'), false);
 assert.equal(createdApiKey.record.status, 'active');
+assert.deepEqual(
+  createdApiKey.record.scopes,
+  ['generation.write', 'assets.read'],
+  'API key scopes should be normalized, de-duplicated, and drop unknown scopes',
+);
+assert.equal(createdApiKey.record.rateLimit.maxRequests, 600, 'API key should carry a default rate limit');
+assert.equal(createdApiKey.record.rateLimit.windowMs, 60_000, 'API key default rate-limit window should be one minute');
 assert.equal(createdApiKey.secret, 'sk-prod-secret-1234567890', 'created API key should return the one-time secret to the caller');
 const apiKeyStorageValue = storage.getItem(`${API_KEY_STORAGE_PREFIX}:${session.workspace.id}`);
 assert.ok(apiKeyStorageValue, 'workspace API keys should be persisted by workspace');
@@ -2161,6 +2172,11 @@ const rotatedApiKey = rotateWorkspaceApiKey!(
 assert.equal(rotatedApiKey?.previous.status, 'rotating');
 assert.equal(rotatedApiKey?.previous.expiresAt, 1_780_086_400_410);
 assert.equal(rotatedApiKey?.replacement.last4, 'cdef');
+assert.deepEqual(
+  rotatedApiKey?.replacement.scopes,
+  ['generation.write', 'assets.read'],
+  'rotated API key should preserve scopes from the previous key',
+);
 assert.equal(
   storage.getItem(`${API_KEY_STORAGE_PREFIX}:${session.workspace.id}`)?.includes('sk-rotated-secret-abcdef'),
   false,
@@ -2180,6 +2196,41 @@ assert.deepEqual(
   ],
   'API key exports should include only metadata and masked key previews',
 );
+
+// === P3-E03: apiAccess policy (scopes + rate-limit + billing estimate) ===
+const apiAccessModule = await import('../src/saas/apiAccess.ts')
+  .catch((error) => ({ __importError: error })) as {
+    __importError?: unknown;
+    API_SCOPES?: ReadonlyArray<{ scope: string; estimatedCreditsPerCall: number }>;
+    normalizeApiScopes?: (scopes: unknown) => string[];
+    normalizeApiRateLimit?: (value: unknown) => { windowMs: number; maxRequests: number };
+    hasApiScope?: (granted: readonly string[], required: string) => boolean;
+    evaluateRateLimit?: (timestamps: readonly number[], limit: { windowMs: number; maxRequests: number }, now: number) => { allowed: boolean; remaining: number; retryAfterMs: number };
+    estimateApiCallCredits?: (scope: string, callCount?: number) => number;
+  };
+assert.equal(apiAccessModule.__importError, undefined, 'apiAccess policy module should exist for public API hardening');
+assert.ok(Array.isArray(apiAccessModule.API_SCOPES) && apiAccessModule.API_SCOPES.length > 0, 'apiAccess should expose a scope catalog');
+assert.deepEqual(
+  apiAccessModule.normalizeApiScopes!(['generation.write', 'generation.write', 'bogus.scope', 'assets.read']),
+  ['generation.write', 'assets.read'],
+  'normalizeApiScopes should de-duplicate, drop unknown scopes, and preserve catalog order',
+);
+const normalizedLimit = apiAccessModule.normalizeApiRateLimit!({ windowMs: 30, maxRequests: -5 });
+assert.equal(normalizedLimit.windowMs, 60_000, 'rate-limit window below 1s should fall back to default');
+assert.equal(normalizedLimit.maxRequests, 600, 'invalid maxRequests should fall back to default');
+assert.equal(apiAccessModule.hasApiScope!(['generation.read'], 'generation.write'), false, 'hasApiScope should deny missing scopes');
+assert.equal(apiAccessModule.hasApiScope!(['generation.write'], 'generation.write'), true, 'hasApiScope should allow granted scopes');
+const limitFor = { windowMs: 1_000, maxRequests: 2 };
+assert.equal(apiAccessModule.evaluateRateLimit!([], limitFor, 1_000).allowed, true, 'first call within limit should be allowed');
+const blocked = apiAccessModule.evaluateRateLimit!([900, 950], limitFor, 1_000);
+assert.equal(blocked.allowed, false, 'a third call inside the window should be blocked');
+assert.ok(blocked.retryAfterMs > 0, 'blocked call should report a retry-after delay');
+const afterWindow = apiAccessModule.evaluateRateLimit!([100, 150], limitFor, 2_000);
+assert.equal(afterWindow.allowed, true, 'calls outside the window should not count toward the limit');
+assert.equal(apiAccessModule.estimateApiCallCredits!('generation.write', 3) > 0, true, 'write scope should estimate billable credits');
+assert.equal(apiAccessModule.estimateApiCallCredits!('generation.read', 5), 0, 'read scope should estimate zero billable credits');
+console.log('✓ P3-E03: apiAccess policy (scopes + rate-limit + billing estimate)');
+
 assert.equal(webhookRepositoryModule.__importError, undefined, 'webhookRepository should exist for SaaS webhooks');
 assert.equal(typeof WEBHOOK_ENDPOINT_STORAGE_PREFIX, 'string', 'webhookRepository should expose webhook storage scope');
 assert.equal(typeof loadWorkspaceWebhookEndpoints, 'function', 'webhookRepository should load persisted webhook endpoints');
