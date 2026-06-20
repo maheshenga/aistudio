@@ -1,7 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { loadWorkspaceStores, createWorkspaceStore, updateWorkspaceStore, deleteWorkspaceStore, loadWorkspaceStoreOrders, loadWorkspaceStoreInventory, adjustWorkspaceStoreInventory, loadWorkspaceStoreStaff, createWorkspaceStoreStaff, type StoreRepositoryContext, type WorkspaceStore, type WorkspaceStoreOrder, type WorkspaceStoreInventory, type WorkspaceStoreStaff } from '../lib/data/storeRepository';
+import { createWorkspaceTask } from '../lib/data/taskRepository';
+import { listWorkspaceCampaigns, createWorkspaceCampaign, updateWorkspaceCampaign, type CampaignRepositoryContext, type WorkspaceCampaign, type WorkspaceCampaignStatus } from '../lib/data/campaignRepository';
+import { createWorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { toast } from './Toast';
 import { 
   Store, 
   MapPin, 
@@ -18,12 +22,108 @@ import {
   MonitorSmartphone,
   QrCode,
   LineChart,
-  Edit
+  Edit,
+  History,
+  X
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 
+const REVENUE_ORDER_STATUSES: WorkspaceStoreOrder['status'][] = ['paid', 'shipped', 'completed'];
+
 export function StoreDashboardView({ onNavigate }: { onNavigate?: (id: string) => void }) {
-  const [selectedStore, setSelectedStore] = useState('北京朝阳大悦城旗舰店');
+  const session = useSaasSession();
+  const repoContext = useMemo<StoreRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [stores, setStores] = useState<WorkspaceStore[]>([]);
+  const [orders, setOrders] = useState<WorkspaceStoreOrder[]>([]);
+  const [inventory, setInventory] = useState<WorkspaceStoreInventory[]>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState<string>('');
+
+  useEffect(() => {
+    setStores(loadWorkspaceStores(repoContext));
+    setOrders(loadWorkspaceStoreOrders(repoContext));
+    setInventory(loadWorkspaceStoreInventory(repoContext));
+  }, [repoContext]);
+
+  useEffect(() => {
+    const handler = () => {
+      setStores(loadWorkspaceStores(repoContext));
+      setOrders(loadWorkspaceStoreOrders(repoContext));
+      setInventory(loadWorkspaceStoreInventory(repoContext));
+    };
+    if (typeof window !== 'undefined') window.addEventListener('workspace_stores_updated', handler);
+    return () => {
+      if (typeof window !== 'undefined') window.removeEventListener('workspace_stores_updated', handler);
+    };
+  }, [repoContext]);
+
+  useEffect(() => {
+    if (stores.length > 0 && !stores.some((s) => s.id === selectedStoreId)) {
+      setSelectedStoreId(stores[0].id);
+    }
+  }, [stores, selectedStoreId]);
+
+  const storeOrders = useMemo(
+    () => (selectedStoreId ? orders.filter((o) => o.storeId === selectedStoreId) : orders),
+    [orders, selectedStoreId],
+  );
+  const storeInventory = useMemo(
+    () => (selectedStoreId ? inventory.filter((i) => i.storeId === selectedStoreId) : inventory),
+    [inventory, selectedStoreId],
+  );
+
+  const metrics = useMemo(() => {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const todayMs = startOfToday.getTime();
+    const todayOrders = storeOrders.filter((o) => o.placedAt >= todayMs);
+    const todayRevenueOrders = todayOrders.filter((o) => REVENUE_ORDER_STATUSES.includes(o.status));
+    const todayRevenueCents = todayRevenueOrders.reduce((sum, o) => sum + o.amountCents, 0);
+    const weekRevenueCents = storeOrders
+      .filter((o) => o.placedAt >= todayMs - 6 * 24 * 60 * 60 * 1000 && REVENUE_ORDER_STATUSES.includes(o.status))
+      .reduce((sum, o) => sum + o.amountCents, 0);
+    const atrCents = todayRevenueOrders.length > 0 ? Math.round(todayRevenueCents / todayRevenueOrders.length) : 0;
+    const refundCount = storeOrders.filter((o) => o.status === 'refunded' || o.status === 'cancelled').length;
+    const refundRate = storeOrders.length > 0 ? (refundCount / storeOrders.length) * 100 : 0;
+    return {
+      todayRevenue: formatAmount(todayRevenueCents, 'CNY'),
+      weekRevenue: formatAmount(weekRevenueCents, 'CNY'),
+      todayOrderCount: todayOrders.length,
+      todayRevenueOrderCount: todayRevenueOrders.length,
+      atr: formatAmount(atrCents, 'CNY'),
+      refundRate: `${refundRate.toFixed(1)}%`,
+      refundCount,
+    };
+  }, [storeOrders]);
+
+  const trendData = useMemo(() => {
+    const days: { time: string; revenue: number }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const start = d.getTime();
+      const end = start + 24 * 60 * 60 * 1000;
+      const revCents = storeOrders
+        .filter((o) => o.placedAt >= start && o.placedAt < end && REVENUE_ORDER_STATUSES.includes(o.status))
+        .reduce((sum, o) => sum + o.amountCents, 0);
+      days.push({ time: `${d.getMonth() + 1}/${d.getDate()}`, revenue: Math.round(revCents / 100) });
+    }
+    return days;
+  }, [storeOrders]);
+
+  const recentOrders = useMemo(() => storeOrders.slice(0, 3), [storeOrders]);
+  const lowStock = useMemo(() => storeInventory.filter((i) => i.stock < i.threshold).slice(0, 5), [storeInventory]);
+  const pendingOrders = useMemo(() => storeOrders.filter((o) => o.status === 'pending' || o.status === 'paid'), [storeOrders]);
+
+  const statCards = [
+    { label: '今日销售额', value: metrics.todayRevenue, sub: `近 7 日合计 ${metrics.weekRevenue}`, color: 'text-[var(--color-primary)]' },
+    { label: '今日订单数', value: String(metrics.todayOrderCount), sub: `待处理 ${pendingOrders.length} 笔`, color: 'text-orange-500' },
+    { label: '客单价 (ATR)', value: metrics.atr, sub: `今日成交 ${metrics.todayRevenueOrderCount} 笔`, color: 'text-green-600' },
+    { label: '退货率', value: metrics.refundRate, sub: `退款/取消 ${metrics.refundCount} 笔`, color: 'text-purple-600' },
+  ];
 
   return (
     <div className="w-full max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 pt-20 lg:pt-24 pb-12">
@@ -33,14 +133,17 @@ export function StoreDashboardView({ onNavigate }: { onNavigate?: (id: string) =
           <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2 tracking-wide">查看单个门店的实时营业数据与运转指标</p>
         </div>
         <div className="flex items-center space-x-3">
-          <select 
-            value={selectedStore}
-            onChange={(e) => setSelectedStore(e.target.value)}
-            className="border-[1.5px] border-[var(--border-color)] bg-[var(--bg-panel)] shadow-sm text-sm font-bold text-gray-700 px-4 py-3 rounded-[var(--radius-xl)] hover:border-gray-300 transition-colors outline-none focus:ring-2 focus:ring-blue-500"
+          <select
+            value={selectedStoreId}
+            onChange={(e) => setSelectedStoreId(e.target.value)}
+            disabled={stores.length === 0}
+            className="border-[1.5px] border-[var(--border-color)] bg-[var(--bg-panel)] shadow-sm text-sm font-bold text-gray-700 px-4 py-3 rounded-[var(--radius-xl)] hover:border-gray-300 transition-colors outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
           >
-            <option>北京朝阳大悦城旗舰店</option>
-            <option>上海静安寺体验店</option>
-            <option>杭州西湖银泰加盟店</option>
+            {stores.length === 0 ? (
+              <option value="">暂无门店</option>
+            ) : (
+              stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)
+            )}
           </select>
           <button className="flex items-center space-x-2 bg-[var(--bg-panel)] border-[1.5px] border-[var(--border-color)] hover:border-gray-300 hover:bg-gray-50 text-gray-700 px-5 py-3 rounded-[var(--radius-xl)] font-bold transition-all shadow-sm">
             <LineChart className="icon-sm" />
@@ -49,13 +152,24 @@ export function StoreDashboardView({ onNavigate }: { onNavigate?: (id: string) =
         </div>
       </div>
 
+      {stores.length === 0 ? (
+        <div className="bg-[var(--bg-panel)] border border-dashed border-[var(--border-color)] rounded-[28px] p-12 text-center">
+          <div className="bg-blue-50 p-4 rounded-full w-fit mx-auto mb-4">
+            <Store className="icon-lg text-[var(--color-primary)]" />
+          </div>
+          <h3 className="font-bold text-[var(--text-main)] text-[16px] mb-2">还没有门店数据</h3>
+          <p className="text-[13px] text-[var(--text-muted)] mb-6">先在「门店官网」创建门店并录入订单/库存，驾驶舱将自动汇总实时指标</p>
+          <button
+            onClick={() => onNavigate && onNavigate('store_list')}
+            className="inline-flex items-center space-x-2 bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-[var(--radius-xl)] font-bold transition-all">
+            <Plus className="icon-sm" />
+            <span>前往创建门店</span>
+          </button>
+        </div>
+      ) : (
+      <>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-[var(--spacing-md)] mb-[var(--spacing-md)]">
-        {[
-          { label: '今日实时销售额', value: '¥12,450', sub: '较昨日 +5.2%', color: 'text-[var(--color-primary)]' },
-          { label: '今日进店客流', value: '342', sub: '较昨日 -1.5%', color: 'text-orange-500' },
-          { label: '客单价 (ATR)', value: '¥245.00', sub: '行业均值 ¥210', color: 'text-green-600' },
-          { label: '退货率', value: '2.1%', sub: '控制在安全线内', color: 'text-purple-600' },
-        ].map((s, i) => (
+        {statCards.map((s, i) => (
           <div key={i} className="bg-[var(--bg-panel)] border border-[var(--border-color)]/80 rounded-[28px] p-[var(--spacing-lg)] shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
              <p className="text-[12px] font-bold text-gray-400 uppercase tracking-wider mb-2">{s.label}</p>
              <p className={`text-[32px] font-black tracking-tight ${s.color} mb-2 leading-none`}>{s.value}</p>
@@ -64,7 +178,7 @@ export function StoreDashboardView({ onNavigate }: { onNavigate?: (id: string) =
         ))}
       </div>
 
-      
+
       {/* 快捷操作区 */}
       <div className="bg-[var(--bg-panel)] rounded-[28px] border border-[var(--border-color)] p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] shadow-sm flex flex-col md:flex-row items-center justify-between gap-[var(--spacing-md)] mb-[var(--spacing-md)]">
          <div className="flex-1">
@@ -90,20 +204,12 @@ export function StoreDashboardView({ onNavigate }: { onNavigate?: (id: string) =
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_350px] gap-[var(--spacing-md)]">
         <div className="bg-[var(--bg-panel)] rounded-[28px] border border-[var(--border-color)]/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all">
           <div className="flex justify-between items-center mb-[var(--spacing-md)]">
-             <h3 className="text-[17px] font-black text-[var(--text-main)] tracking-tight">今日访问与转化趋势</h3>
-             <span className="text-[11px] font-bold text-[var(--color-primary)] bg-blue-50 px-2 py-1 rounded-md uppercase tracking-wide">Live Trend</span>
+             <h3 className="text-[17px] font-black text-[var(--text-main)] tracking-tight">近 7 日成交营收趋势</h3>
+             <span className="text-[11px] font-bold text-[var(--color-primary)] bg-blue-50 px-2 py-1 rounded-md uppercase tracking-wide">Revenue</span>
           </div>
           <div className="w-full h-[260px] ">
              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
-               <AreaChart data={[
-                 { time: '08:00', uv: 120, conversion: 2.1 },
-                 { time: '10:00', uv: 280, conversion: 3.4 },
-                 { time: '12:00', uv: 450, conversion: 4.8 },
-                 { time: '14:00', uv: 850, conversion: 5.2 },
-                 { time: '16:00', uv: 1020, conversion: 4.9 },
-                 { time: '18:00', uv: 780, conversion: 3.2 },
-                 { time: '20:00', uv: 1350, conversion: 6.8 },
-               ]} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
+               <AreaChart data={trendData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
                  <defs>
                    <linearGradient id="colorUv" x1="0" y1="0" x2="0" y2="1">
                      <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3}/>
@@ -114,7 +220,7 @@ export function StoreDashboardView({ onNavigate }: { onNavigate?: (id: string) =
                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} />
                  <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }} />
                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
-                 <Area type="monotone" dataKey="uv" stroke="#3B82F6" strokeWidth={3} fillOpacity={1} fill="url(#colorUv)" />
+                 <Area type="monotone" dataKey="revenue" stroke="#3B82F6" strokeWidth={3} fillOpacity={1} fill="url(#colorUv)" />
                </AreaChart>
              </ResponsiveContainer>
           </div>
@@ -122,27 +228,30 @@ export function StoreDashboardView({ onNavigate }: { onNavigate?: (id: string) =
 
         <div className="flex flex-col gap-[var(--spacing-md)]">
           <div className="bg-[var(--bg-panel)] rounded-[28px] border border-[var(--border-color)]/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] flex-1">
-          <h3 className="text-[17px] font-black text-[var(--text-main)] tracking-tight mb-[var(--spacing-xl)]">今日爆款商品 Top 3</h3>
+          <h3 className="text-[17px] font-black text-[var(--text-main)] tracking-tight mb-[var(--spacing-xl)]">最新订单</h3>
+          {recentOrders.length === 0 ? (
+            <p className="text-[13px] text-[var(--text-muted)] py-6 text-center">本店暂无订单记录</p>
+          ) : (
           <div className="space-y-[var(--spacing-md)]">
-            {[
-              { name: '明星同款春季风衣 (米白)', sales: '42 件', rev: '¥12,558' },
-              { name: '抗皱冰丝休闲长裤', sales: '28 件', rev: '¥5,572' },
-              { name: '极简百搭针织打底衫', sales: '21 件', rev: '¥2,079' },
-            ].map((p, i) => (
-              <div key={i} className="flex justify-between items-center p-4 hover:bg-gray-50/80 rounded-[var(--radius-xl)] transition-colors">
+            {recentOrders.map((o, i) => (
+              <div key={o.id} className="flex justify-between items-center p-4 hover:bg-gray-50/80 rounded-[var(--radius-xl)] transition-colors">
                 <div className="flex items-center">
                   <div className="icon-xl rounded-full bg-blue-50 text-[var(--color-primary)] font-bold flex items-center justify-center mr-3 text-sm">
                     {i + 1}
                   </div>
-                  <span className="font-bold text-sm text-[var(--text-main)]">{p.name}</span>
+                  <div>
+                    <span className="font-bold text-sm text-[var(--text-main)] font-mono">{o.orderNumber}</span>
+                    <p className="text-xs text-[var(--text-muted)]">{ORDER_STATUS_LABEL[o.status]}</p>
+                  </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm font-bold text-[var(--text-main)]">{p.sales}</div>
-                  <div className="text-xs text-[var(--text-muted)]">{p.rev}</div>
+                  <div className="text-sm font-bold text-[var(--text-main)]">{formatAmount(o.amountCents, o.currency)}</div>
+                  <div className="text-xs text-[var(--text-muted)]">{new Date(o.placedAt).toLocaleDateString('zh-CN')}</div>
                 </div>
               </div>
             ))}
           </div>
+          )}
         </div>
         <div className="bg-[var(--bg-panel)] border text-left border-[var(--border-color)]/80 rounded-[28px] p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-shadow duration-300">
            <h3 className="font-black text-[var(--text-main)] text-[17px] tracking-tight mb-[var(--spacing-md)]">待处理事项</h3>
@@ -150,28 +259,30 @@ export function StoreDashboardView({ onNavigate }: { onNavigate?: (id: string) =
              <div className="flex items-center justify-between p-4 bg-red-50/50 hover:bg-red-50 transition-colors border border-red-100 rounded-[var(--radius-xl)]">
                <div className="flex items-center text-red-600">
                  <div className="w-2 h-2 rounded-full bg-red-500 mr-2"></div>
-                 <span className="text-sm font-bold">2 笔退款工单待审核</span>
+                 <span className="text-sm font-bold">{metrics.refundCount} 笔退款/取消订单</span>
                </div>
-               <button className="text-xs font-bold bg-[var(--bg-panel)] text-red-600 px-3 py-1 rounded shadow-sm">立即处理</button>
+               <button onClick={() => onNavigate && onNavigate('store_orders')} className="text-xs font-bold bg-[var(--bg-panel)] text-red-600 px-3 py-1 rounded shadow-sm">查看</button>
              </div>
              <div className="flex items-center justify-between p-4 bg-orange-50/50 hover:bg-orange-50 transition-colors border border-orange-100 rounded-[var(--radius-xl)]">
                <div className="flex items-center text-orange-600">
                  <div className="w-2 h-2 rounded-full bg-orange-500 mr-2"></div>
-                 <span className="text-sm font-bold">5 款核心商品库存预警 (&lt;10件)</span>
+                 <span className="text-sm font-bold">{lowStock.length} 款商品库存预警</span>
                </div>
-               <button className="text-xs font-bold bg-[var(--bg-panel)] text-orange-600 px-3 py-1 rounded shadow-sm">申请调拨</button>
+               <button onClick={() => onNavigate && onNavigate('store_inventory')} className="text-xs font-bold bg-[var(--bg-panel)] text-orange-600 px-3 py-1 rounded shadow-sm">申请调拨</button>
              </div>
              <div className="flex items-center justify-between p-4 bg-blue-50/50 hover:bg-blue-50 transition-colors border border-blue-100 rounded-[var(--radius-xl)]">
                <div className="flex items-center text-[var(--color-primary)]">
                  <div className="w-2 h-2 rounded-full bg-blue-500 mr-2"></div>
-                 <span className="text-sm font-bold">新门店官网主题已准备就绪</span>
+                 <span className="text-sm font-bold">{pendingOrders.length} 笔订单待处理</span>
                </div>
-               <button className="text-xs font-bold bg-[var(--bg-panel)] text-[var(--color-primary)] px-3 py-1 rounded shadow-sm">预览并发布</button>
+               <button onClick={() => onNavigate && onNavigate('store_orders')} className="text-xs font-bold bg-[var(--bg-panel)] text-[var(--color-primary)] px-3 py-1 rounded shadow-sm">去处理</button>
              </div>
            </div>
         </div>
        </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -284,6 +395,7 @@ export function StoreInventoryView() {
     [session.workspace.id, session.user.id],
   );
   const [inventory, setInventory] = useState<WorkspaceStoreInventory[]>([]);
+  const [historyItem, setHistoryItem] = useState<WorkspaceStoreInventory | null>(null);
 
   useEffect(() => {
     setInventory(loadWorkspaceStoreInventory(repoContext));
@@ -302,29 +414,51 @@ export function StoreInventoryView() {
     if (!raw) return;
     const qty = Number(raw);
     if (!Number.isFinite(qty) || qty <= 0) return;
+    const afterCount = item.stock + qty;
     adjustWorkspaceStoreInventory(
       item.id,
       {
         sku: item.sku,
         storeId: item.storeId,
         beforeCount: item.stock,
-        afterCount: item.stock + qty,
+        afterCount,
         reason: '向总仓要货',
         actorId: session.user.id,
       },
       repoContext,
     );
+    // 调整后若仍低于阈值，自动创建补货跟进任务
+    let followUpTaskId: string | undefined;
+    if (afterCount < item.threshold) {
+      const followUpTask = createWorkspaceTask(
+        {
+          title: `[库存跟进] ${item.name} (${item.sku}) 补货后仍低于预警线`,
+          column: 'todo',
+          priority: 'High',
+          type: '门店库存',
+          date: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+          isAuto: false,
+          metadata: { sku: item.sku, storeId: item.storeId, inventoryId: item.id, afterCount, threshold: item.threshold, source: 'store_inventory_replenish' },
+        },
+        { workspaceId: repoContext.workspaceId },
+      );
+      followUpTaskId = followUpTask.id;
+    }
     logAuditEvent(
       {
         action: 'asset_create',
         moduleId: 'store_inventory',
         targetType: 'inventory',
         targetId: item.id,
-        metadata: { sku: item.sku, delta: qty },
+        metadata: { sku: item.sku, delta: qty, afterCount, ...(followUpTaskId ? { followUpTaskId } : {}) },
       },
       { session },
     );
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('activity_logged'));
     setInventory(loadWorkspaceStoreInventory(repoContext));
+    if (followUpTaskId) {
+      toast('库存已补货，但仍低于预警线，已创建跟进任务', 'success');
+    }
   };
 
   return (
@@ -371,7 +505,7 @@ export function StoreInventoryView() {
               <th className="py-5 px-6">可用库存</th>
               <th className="py-5 px-6">预警阈值</th>
               <th className="py-5 px-6">状态</th>
-              <th className="py-5 px-6 text-right">补货建议</th>
+              <th className="py-5 px-6 text-right">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -391,7 +525,11 @@ export function StoreInventoryView() {
                      stat === '临界' ? 'bg-orange-50 text-orange-600 border-orange-100' : 'bg-green-50 text-green-600 border-green-100'
                    }`}>{stat}</span>
                 </td>
-                <td className="py-5 px-6 text-right">
+                <td className="py-5 px-6 text-right whitespace-nowrap">
+                  <button onClick={() => setHistoryItem(o)} className="inline-flex items-center text-[var(--text-muted)] font-bold hover:text-[var(--text-main)] text-[13px] mr-4">
+                    <History className="w-3.5 h-3.5 mr-1" />
+                    调整记录{o.adjustments.length > 0 ? ` (${o.adjustments.length})` : ''}
+                  </button>
                   <button onClick={() => handleReplenish(o)} className="text-[var(--color-primary)] font-bold hover:text-blue-800 text-[13px]">向总仓要货</button>
                 </td>
               </tr>
@@ -401,6 +539,50 @@ export function StoreInventoryView() {
         </table>
          )}
       </div>
+
+      {historyItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setHistoryItem(null)}>
+          <div className="bg-[var(--bg-panel)] rounded-[28px] shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-6 border-b border-[var(--border-color)]">
+              <div>
+                <h3 className="text-[18px] font-black text-[var(--text-main)]">库存调整记录</h3>
+                <p className="text-[12px] text-[var(--text-muted)] mt-1 font-mono">{historyItem.sku} · {historyItem.name}</p>
+              </div>
+              <button onClick={() => setHistoryItem(null)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto">
+              {historyItem.adjustments.length === 0 ? (
+                <div className="text-center py-8">
+                  <div className="bg-gray-50 p-4 rounded-full w-fit mx-auto mb-3">
+                    <History className="icon-lg text-gray-400" />
+                  </div>
+                  <p className="text-[13px] text-[var(--text-muted)]">暂无调整记录</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {historyItem.adjustments.map((adj) => {
+                    const delta = adj.afterCount - adj.beforeCount;
+                    return (
+                    <div key={adj.id} className="flex items-center justify-between p-4 bg-gray-50/60 border border-[var(--border-color)] rounded-[var(--radius-xl)]">
+                      <div>
+                        <p className="text-[13px] font-bold text-[var(--text-main)]">{adj.reason}</p>
+                        <p className="text-[11px] text-[var(--text-muted)] mt-0.5">{new Date(adj.timestamp).toLocaleString('zh-CN')}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-[14px] font-black ${delta >= 0 ? 'text-green-600' : 'text-red-600'}`}>{delta >= 0 ? '+' : ''}{delta}</p>
+                        <p className="text-[11px] text-[var(--text-muted)]">{adj.beforeCount} → {adj.afterCount}</p>
+                      </div>
+                    </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -765,15 +947,118 @@ export function StoreStaffView() {
   );
 }
 
+const CAMPAIGN_STATUS_LABEL: Record<WorkspaceCampaignStatus, string> = {
+  draft: '草稿',
+  active: '进行中',
+  paused: '已暂停',
+  archived: '已归档',
+};
+
 export function StoreMarketingView() {
-  const data = [
-    { name: 'Mon', revenue: 4000 },
-    { name: 'Tue', revenue: 3000 },
-    { name: 'Wed', revenue: 5000 },
-    { name: 'Thu', revenue: 2780 },
-    { name: 'Fri', revenue: 8890 },
-    { name: 'Sat', revenue: 12390 },
-    { name: 'Sun', revenue: 13490 },
+  const session = useSaasSession();
+  const repoContext = useMemo<CampaignRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
+  const [campaigns, setCampaigns] = useState<WorkspaceCampaign[]>([]);
+
+  const reload = useCallback(() => {
+    setCampaigns(listWorkspaceCampaigns(repoContext).filter((c) => c.channel === 'store_event'));
+  }, [repoContext]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.addEventListener('workspace_campaigns_updated', reload);
+    return () => {
+      if (typeof window !== 'undefined') window.removeEventListener('workspace_campaigns_updated', reload);
+    };
+  }, [reload]);
+
+  const stats = useMemo(() => {
+    const totals = campaigns.reduce(
+      (acc, c) => {
+        acc.exposures += c.metrics.exposures;
+        acc.scans += c.metrics.scans;
+        acc.shares += c.metrics.shares;
+        acc.conversions += c.metrics.conversions;
+        return acc;
+      },
+      { exposures: 0, scans: 0, shares: 0, conversions: 0 },
+    );
+    const activeCount = campaigns.filter((c) => c.status === 'active').length;
+    const conversionRate = totals.exposures > 0 ? (totals.conversions / totals.exposures) * 100 : 0;
+    return { ...totals, activeCount, conversionRate };
+  }, [campaigns]);
+
+  const trendData = campaigns.slice(0, 7).reverse().map((c) => ({ name: c.name.slice(0, 6), revenue: c.metrics.conversions }));
+
+  const handleCreateCampaign = () => {
+    const name = typeof window !== 'undefined' ? window.prompt('请输入门店活动名称')?.trim() : '';
+    if (!name) return;
+    // 为活动生成关联的海报素材占位
+    const asset = createWorkspaceAsset(
+      {
+        name: `${name} - 活动海报`,
+        type: 'image',
+        source: 'generated',
+        moduleId: 'store_marketing',
+        tags: ['store', 'campaign', 'store_event'],
+        metadata: { campaignName: name, generatedFor: 'store_marketing' },
+      },
+      { workspaceId: repoContext.workspaceId, userId: repoContext.userId },
+    );
+    const campaign = createWorkspaceCampaign(
+      {
+        name,
+        channel: 'store_event',
+        status: 'active',
+        moduleId: 'store_marketing',
+        linkedAssetIds: [asset.id],
+        metadata: { createdFrom: 'store_marketing' },
+      },
+      repoContext,
+    );
+    logAuditEvent(
+      {
+        action: 'asset_create',
+        moduleId: 'store_marketing',
+        targetType: 'asset',
+        targetId: asset.id,
+        metadata: { campaignId: campaign.id, campaignName: name, channel: 'store_event' },
+      },
+      { session },
+    );
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('activity_logged'));
+    reload();
+    toast('门店活动已创建，关联海报素材已保存至素材库', 'success');
+  };
+
+  const handleCycleStatus = (campaign: WorkspaceCampaign) => {
+    const next: WorkspaceCampaignStatus =
+      campaign.status === 'draft' ? 'active' :
+      campaign.status === 'active' ? 'paused' :
+      campaign.status === 'paused' ? 'archived' : 'draft';
+    updateWorkspaceCampaign(campaign.id, { status: next }, repoContext);
+    logAuditEvent(
+      {
+        action: 'asset_create',
+        moduleId: 'store_marketing',
+        targetType: 'asset',
+        targetId: campaign.id,
+        metadata: { campaignId: campaign.id, status: next },
+      },
+      { session },
+    );
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('activity_logged'));
+    reload();
+  };
+
+  const statCards = [
+    { label: '活动总曝光', value: stats.exposures.toLocaleString('zh-CN'), color: 'text-[var(--color-primary)]' },
+    { label: '扫码核销', value: stats.scans.toLocaleString('zh-CN'), color: 'text-green-600' },
+    { label: '转化数', value: stats.conversions.toLocaleString('zh-CN'), color: 'text-purple-600' },
+    { label: '转化率', value: `${stats.conversionRate.toFixed(1)}%`, color: 'text-orange-500' },
   ];
 
   return (
@@ -781,17 +1066,16 @@ export function StoreMarketingView() {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-[28px] font-black text-[var(--text-main)] tracking-tighter leading-tight">门店营销管理</h2>
-          <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2 tracking-wide">发券、促单及客户关系维护</p>
+          <p className="text-[14px] font-medium text-[var(--text-muted)] mt-2 tracking-wide">发券、促单及客户关系维护{campaigns.length > 0 ? `（共 ${campaigns.length} 个活动 · ${stats.activeCount} 个进行中）` : ''}</p>
         </div>
+        <button onClick={handleCreateCampaign} className="flex items-center space-x-2 bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-[var(--radius-xl)] font-bold transition-all shadow-[0_4px_12px_rgba(0,0,0,0.1)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.2)] hover:-translate-y-0.5">
+          <Plus className="icon-sm" />
+          <span>新建门店活动</span>
+        </button>
       </div>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-[var(--spacing-md)] mb-[var(--spacing-md)]">
-        {[
-          { label: '活动核销总额', value: '¥24,500', color: 'text-[var(--color-primary)]' },
-          { label: '发券转化率', value: '18.4%', color: 'text-green-600' },
-          { label: '拉新客数', value: '1,204', color: 'text-purple-600' },
-          { label: '会员复购率', value: '45.2%', color: 'text-orange-500' },
-        ].map((s, i) => (
+        {statCards.map((s, i) => (
            <div key={i} className="bg-[var(--bg-panel)] border border-[var(--border-color)]/80 rounded-[28px] p-[var(--spacing-lg)] shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-300">
               <p className="text-[12px] font-bold text-gray-400 uppercase tracking-wider mb-2">{s.label}</p>
               <p className={`text-[32px] font-black tracking-tight ${s.color} mb-2 leading-none`}>{s.value}</p>
@@ -799,11 +1083,25 @@ export function StoreMarketingView() {
         ))}
       </div>
 
+      {campaigns.length === 0 ? (
+        <div className="bg-[var(--bg-panel)] border border-dashed border-[var(--border-color)] rounded-[28px] p-12 text-center">
+          <div className="bg-purple-50 p-4 rounded-full w-fit mx-auto mb-4">
+            <Megaphone className="icon-lg text-purple-600" />
+          </div>
+          <h3 className="font-bold text-[var(--text-main)] text-[16px] mb-2">还没有门店活动</h3>
+          <p className="text-[13px] text-[var(--text-muted)] mb-6">点击「新建门店活动」创建活动，系统会自动生成关联的海报素材</p>
+          <button onClick={handleCreateCampaign} className="inline-flex items-center space-x-2 bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-[var(--radius-xl)] font-bold transition-all">
+            <Plus className="icon-sm" />
+            <span>新建门店活动</span>
+          </button>
+        </div>
+      ) : (
+      <>
        <div className="bg-[var(--bg-panel)] rounded-[28px] border border-[var(--border-color)]/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] p-[var(--spacing-lg)] md:p-[var(--spacing-xl)] mb-[var(--spacing-md)]">
-          <h3 className="text-[17px] font-black text-[var(--text-main)] tracking-tight mb-[var(--spacing-xl)]">营销活动带来的营收趋势</h3>
+          <h3 className="text-[17px] font-black text-[var(--text-main)] tracking-tight mb-[var(--spacing-xl)]">各活动转化对比</h3>
           <div className="h-72 w-full">
              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 1, height: 1 }}>
-               <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+               <AreaChart data={trendData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                  <defs>
                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
                      <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.3}/>
@@ -819,6 +1117,46 @@ export function StoreMarketingView() {
              </ResponsiveContainer>
           </div>
        </div>
+
+       <div className="bg-[var(--bg-panel)] border text-left border-[var(--border-color)]/80 rounded-[28px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden">
+         <table className="w-full text-left">
+          <thead>
+            <tr className="bg-[var(--bg-app)] border-b border-[var(--border-color)] text-[11px] font-black text-gray-400 uppercase tracking-[0.15em] bg-gray-50/50">
+              <th className="py-5 px-6">活动名称</th>
+              <th className="py-5 px-6">关联素材</th>
+              <th className="py-5 px-6">曝光 / 转化</th>
+              <th className="py-5 px-6">状态</th>
+              <th className="py-5 px-6 text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {campaigns.map((c) => (
+              <tr key={c.id} className="hover:bg-gray-50/50">
+                <td className="py-5 px-6">
+                  <p className="font-bold text-[14px] text-[var(--text-main)]">{c.name}</p>
+                  <p className="text-[11px] text-[var(--text-muted)]">{new Date(c.createdAt).toLocaleDateString('zh-CN')}</p>
+                </td>
+                <td className="py-5 px-6 text-[13px] text-[var(--text-muted)]">
+                  {c.linkedAssetIds.length > 0 ? `${c.linkedAssetIds.length} 个素材` : '—'}
+                </td>
+                <td className="py-5 px-6 text-[13px] text-[var(--text-main)] font-bold">{c.metrics.exposures.toLocaleString('zh-CN')} / {c.metrics.conversions.toLocaleString('zh-CN')}</td>
+                <td className="py-5 px-6">
+                  <span className={`px-2.5 py-1 text-[11px] font-bold rounded-lg ${
+                    c.status === 'active' ? 'bg-green-50 text-green-600' :
+                    c.status === 'paused' ? 'bg-orange-50 text-orange-600' :
+                    c.status === 'archived' ? 'bg-gray-100 text-gray-500' : 'bg-blue-50 text-blue-600'
+                  }`}>{CAMPAIGN_STATUS_LABEL[c.status]}</span>
+                </td>
+                <td className="py-5 px-6 text-right">
+                  <button onClick={() => handleCycleStatus(c)} className="text-[var(--color-primary)] font-bold hover:text-blue-800 text-[13px]">切换状态</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+       </div>
+      </>
+      )}
     </div>
   );
 }

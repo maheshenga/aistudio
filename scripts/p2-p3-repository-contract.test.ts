@@ -43,6 +43,10 @@ import {
   loadWorkspaceAgentLibrary, createWorkspaceAgentLibraryEntry, updateWorkspaceAgentLibraryEntry,
   type AgentLibraryRepositoryContext,
 } from '../src/lib/data/agentLibraryRepository';
+import {
+  listWorkspaceCampaigns, createWorkspaceCampaign, updateWorkspaceCampaign, deleteWorkspaceCampaigns,
+  type CampaignRepositoryContext,
+} from '../src/lib/data/campaignRepository';
 
 function createMemoryStorage(): StorageLike {
   const records = new Map<string, string>();
@@ -227,6 +231,32 @@ const otherStorage = createMemoryStorage();
   const updated = updateWorkspaceAgentLibraryEntry(entry.id, { status: 'archived' }, ctx);
   assert.equal(updated?.status, 'archived');
   console.log('✓ P2-B08: agentLibraryRepository (entries CRUD)');
+}
+
+// === Campaign Repository (门店营销 B10) ===
+{
+  const ctx: CampaignRepositoryContext = { workspaceId: wsId, userId, storage };
+  const campaign = createWorkspaceCampaign(
+    { name: '门店周年庆', channel: 'store_event', status: 'active', moduleId: 'store_marketing', linkedAssetIds: ['asset_poster_1'], metadata: {} },
+    ctx,
+  );
+  assert.equal(campaign.channel, 'store_event');
+  assert.equal(campaign.status, 'active');
+  assert.equal(campaign.linkedAssetIds.length, 1);
+
+  const list = listWorkspaceCampaigns(ctx).filter((c) => c.channel === 'store_event');
+  assert.equal(list.length, 1);
+
+  const paused = updateWorkspaceCampaign(campaign.id, { status: 'paused' }, ctx);
+  assert.equal(paused?.status, 'paused');
+
+  // workspace 隔离：另一 workspace 看不到本活动
+  const otherCtx: CampaignRepositoryContext = { workspaceId: `${wsId}_other`, userId, storage };
+  assert.equal(listWorkspaceCampaigns(otherCtx).length, 0);
+
+  deleteWorkspaceCampaigns([campaign.id], ctx);
+  assert.equal(listWorkspaceCampaigns(ctx).length, 0);
+  console.log('✓ P2-B10: campaignRepository (store_event lifecycle + isolation)');
 }
 
 console.log('\nAll P2/P3 repository contract tests passed.');

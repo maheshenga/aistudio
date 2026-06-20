@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'motion/react';
-import { Mail, Search, Shield, UserPlus, Users, MessageSquare, PenTool, ListTodo, Folder, Layers, Share2, Plus, Clock, FileText, Settings2, Check, Network } from 'lucide-react';
+import { Mail, Search, Shield, UserPlus, Users, MessageSquare, PenTool, ListTodo, Folder, Layers, Share2, Plus, Clock, FileText, Settings2, Check, Network, Bot, Archive, Trash2 } from 'lucide-react';
 import { ModuleId } from '../types';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { loadWorkspaceTeamMembers, createWorkspaceTeamMember, updateWorkspaceTeamMember, deleteWorkspaceTeamMember, type WorkspaceTeamMember, type TeamRepositoryContext } from '../lib/data/teamRepository';
 import { createWorkspaceTask } from '../lib/data/taskRepository';
+import { loadWorkspaceAgentLibrary, createWorkspaceAgentLibraryEntry, updateWorkspaceAgentLibraryEntry, deleteWorkspaceAgentLibraryEntry, type WorkspaceAgentLibraryEntry, type AgentLibraryRepositoryContext } from '../lib/data/agentLibraryRepository';
+import { createWorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { hasWorkspacePermission } from '../saas/permissions';
 import { toast } from './Toast';
@@ -397,7 +399,14 @@ export function TeamView({ moduleId = 'team' }: TeamViewProps) {
     [session.workspace.id, session.user.id],
   );
   const [teamMembers, setTeamMembers] = useState<WorkspaceTeamMember[]>([]);
+  const [agentLibrary, setAgentLibrary] = useState<WorkspaceAgentLibraryEntry[]>([]);
   const canManageMembers = hasWorkspacePermission(session.membership.role, 'members.manage');
+  const currentRole = session.membership.role;
+
+  const agentLibContext = useMemo<AgentLibraryRepositoryContext>(
+    () => ({ workspaceId: session.workspace.id, userId: session.user.id }),
+    [session.workspace.id, session.user.id],
+  );
 
   useEffect(() => {
     setTeamMembers(loadWorkspaceTeamMembers(repoContext));
@@ -408,6 +417,27 @@ export function TeamView({ moduleId = 'team' }: TeamViewProps) {
     if (typeof window !== 'undefined') window.addEventListener('workspace_team_members_updated', handler);
     return () => { if (typeof window !== 'undefined') window.removeEventListener('workspace_team_members_updated', handler); };
   }, [repoContext]);
+
+  const reloadAgentLibrary = useCallback(() => {
+    setAgentLibrary(loadWorkspaceAgentLibrary(agentLibContext));
+  }, [agentLibContext]);
+
+  useEffect(() => { reloadAgentLibrary(); }, [reloadAgentLibrary]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.addEventListener('workspace_agent_library_updated', reloadAgentLibrary);
+    return () => { if (typeof window !== 'undefined') window.removeEventListener('workspace_agent_library_updated', reloadAgentLibrary); };
+  }, [reloadAgentLibrary]);
+
+  // roleVisibility 为空数组表示全员可见；否则仅当前角色在列表中才可见。已归档对非管理者隐藏。
+  const visibleAgentLibrary = useMemo(
+    () => agentLibrary.filter((entry) => {
+      if (entry.status === 'archived' && !canManageMembers) return false;
+      if (!entry.roleVisibility || entry.roleVisibility.length === 0) return true;
+      return entry.roleVisibility.includes(currentRole);
+    }),
+    [agentLibrary, currentRole, canManageMembers],
+  );
 
   const handleAddMember = () => {
     if (!canManageMembers) { toast('权限不足', 'error'); return; }
@@ -441,6 +471,60 @@ export function TeamView({ moduleId = 'team' }: TeamViewProps) {
     logAuditEvent({ action: 'task_assign', moduleId: 'team', targetType: 'task', targetId: task.id, metadata: { assigneeMemberId: member.id, assigneeName: member.name } }, { session });
     window.dispatchEvent(new Event('activity_logged'));
     toast(`已为 ${member.name} 派发协作任务`, 'success');
+  };
+
+  const handleShareAgent = () => {
+    if (!canManageMembers) { toast('权限不足', 'error'); return; }
+    const name = typeof window !== 'undefined' ? window.prompt('请输入共享 Agent 名称')?.trim() : '';
+    if (!name) return;
+    const description = (typeof window !== 'undefined' ? window.prompt('请输入简介（可留空）')?.trim() : '') || '';
+    const roleRaw = typeof window !== 'undefined'
+      ? window.prompt('可见角色（逗号分隔，如 admin,operator；留空=全员可见）', '')?.trim()
+      : '';
+    const roleVisibility = roleRaw ? roleRaw.split(',').map((r) => r.trim()).filter(Boolean) : [];
+    // 关联一份 Agent 配置卡片资产，便于在素材库追溯
+    const asset = createWorkspaceAsset(
+      {
+        name: `${name} - Agent 配置`,
+        type: 'document',
+        source: 'generated',
+        moduleId: 'team',
+        tags: ['agent', 'shared', 'team'],
+        metadata: { agentName: name, sharedTo: roleVisibility },
+      },
+      { workspaceId: agentLibContext.workspaceId, userId: agentLibContext.userId },
+    );
+    const entry = createWorkspaceAgentLibraryEntry(
+      {
+        name,
+        description,
+        assetId: asset.id,
+        ownerId: session.user.id,
+        roleVisibility,
+        tags: ['shared'],
+        status: 'active',
+        metadata: { createdFrom: 'team' },
+      },
+      agentLibContext,
+    );
+    logAuditEvent({ action: 'asset_create', moduleId: 'team', targetType: 'asset', targetId: asset.id, metadata: { agentLibraryId: entry.id, agentName: name, roleVisibility } }, { session });
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('activity_logged'));
+    reloadAgentLibrary();
+    toast('Agent 已共享至团队库', 'success');
+  };
+
+  const handleToggleArchive = (entry: WorkspaceAgentLibraryEntry) => {
+    if (!canManageMembers) { toast('权限不足', 'error'); return; }
+    const next: WorkspaceAgentLibraryEntry['status'] = entry.status === 'active' ? 'archived' : 'active';
+    updateWorkspaceAgentLibraryEntry(entry.id, { status: next }, agentLibContext);
+    reloadAgentLibrary();
+  };
+
+  const handleDeleteAgent = (entry: WorkspaceAgentLibraryEntry) => {
+    if (!canManageMembers) { toast('权限不足', 'error'); return; }
+    if (typeof window !== 'undefined' && !window.confirm(`确定从团队库移除「${entry.name}」吗？`)) return;
+    deleteWorkspaceAgentLibraryEntry(entry.id, agentLibContext);
+    reloadAgentLibrary();
   };
 
   return (
@@ -559,6 +643,73 @@ export function TeamView({ moduleId = 'team' }: TeamViewProps) {
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* 共享 Agent 库 */}
+        <div className="bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm overflow-hidden flex flex-col">
+          <div className="p-5 border-b border-[var(--border-color)] flex flex-col sm:flex-row sm:items-center justify-between gap-[var(--spacing-md)] shrink-0">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-violet-100/60 text-violet-600 rounded-[var(--radius-lg)] border border-violet-200">
+                <Bot className="icon-md" />
+              </div>
+              <div>
+                <h3 className="font-bold text-[var(--text-main)] text-lg">共享 Agent 库</h3>
+                <p className="text-[11px] text-[var(--text-muted)] mt-0.5">按角色可见的团队共享 Agent 资产（{visibleAgentLibrary.length} 个对你可见）</p>
+              </div>
+            </div>
+            {canManageMembers && (
+              <button onClick={handleShareAgent} className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-[var(--radius-lg)] font-bold text-sm transition-colors shadow-sm flex items-center justify-center shrink-0">
+                <Share2 className="icon-sm mr-2" /> 共享新 Agent
+              </button>
+            )}
+          </div>
+
+          {visibleAgentLibrary.length === 0 ? (
+            <div className="p-10 text-center">
+              <div className="bg-violet-50 p-4 rounded-full w-fit mx-auto mb-3">
+                <Bot className="icon-lg text-violet-400" />
+              </div>
+              <h4 className="font-bold text-[var(--text-main)] text-[15px] mb-1.5">还没有共享 Agent</h4>
+              <p className="text-[12px] text-[var(--text-muted)]">{canManageMembers ? '点击「共享新 Agent」将常用 Agent 配置发布给团队，并按角色控制可见范围' : '管理员共享 Agent 后将在此显示'}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[var(--spacing-md)] p-5">
+              {visibleAgentLibrary.map((entry) => (
+                <div key={entry.id} className={`border rounded-[var(--radius-xl)] p-4 flex flex-col transition-all ${entry.status === 'archived' ? 'border-dashed border-[var(--border-color)] bg-gray-50/60 opacity-75' : 'border-[var(--border-color)] bg-[var(--bg-panel)] hover:border-violet-300 hover:shadow-sm'}`}>
+                  <div className="flex justify-between items-start mb-2">
+                    <div className="w-9 h-9 bg-violet-50 text-violet-600 rounded-[var(--radius-lg)] flex items-center justify-center shrink-0">
+                      <Bot className="icon-sm" />
+                    </div>
+                    {entry.status === 'archived' && (
+                      <span className="text-[9px] font-black uppercase tracking-wider bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">已归档</span>
+                    )}
+                  </div>
+                  <h4 className="font-bold text-[var(--text-main)] text-[14px] mb-1 truncate">{entry.name}</h4>
+                  <p className="text-[11px] text-[var(--text-muted)] leading-relaxed line-clamp-2 mb-3 min-h-[2.5em]">{entry.description || '暂无简介'}</p>
+                  <div className="flex flex-wrap gap-1 mb-3">
+                    {entry.roleVisibility.length === 0 ? (
+                      <span className="text-[9px] font-bold bg-green-50 text-green-600 px-1.5 py-0.5 rounded border border-green-100">全员可见</span>
+                    ) : (
+                      entry.roleVisibility.map((r) => (
+                        <span key={r} className="text-[9px] font-bold bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-100">{r}</span>
+                      ))
+                    )}
+                    {entry.assetId && <span className="text-[9px] font-bold bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded border border-violet-100">关联资产</span>}
+                  </div>
+                  {canManageMembers && (
+                    <div className="flex items-center justify-end space-x-2 mt-auto pt-2 border-t border-gray-50">
+                      <button onClick={() => handleToggleArchive(entry)} className="text-[11px] font-bold text-gray-500 hover:text-gray-700 inline-flex items-center" title={entry.status === 'active' ? '归档' : '恢复'}>
+                        <Archive className="w-3 h-3 mr-1" />{entry.status === 'active' ? '归档' : '恢复'}
+                      </button>
+                      <button onClick={() => handleDeleteAgent(entry)} className="text-[11px] font-bold text-red-500 hover:text-red-700 inline-flex items-center" title="移除">
+                        <Trash2 className="w-3 h-3 mr-1" />移除
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
