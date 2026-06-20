@@ -2,7 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useUndoRedo } from '../context/UndoRedoContext';
 import { Sparkles, Palette, MonitorPlay, Save, Download, Settings, Layers, Box, Wand2, Lightbulb, Hexagon, Network, Type, Image as ImageIcon, Camera, LayoutTemplate, Briefcase, Ruler, Sunset } from 'lucide-react';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import { loadWorkspaceDesignBriefs, createWorkspaceDesignBrief, type DesignRepositoryContext, type WorkspaceDesignBrief } from '../lib/data/designRepository';
+import { loadWorkspaceDesignBriefs, createWorkspaceDesignBrief, updateWorkspaceDesignBrief, deleteWorkspaceDesignBrief, type DesignRepositoryContext, type WorkspaceDesignBrief } from '../lib/data/designRepository';
+import { createWorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { toast } from './Toast';
 
@@ -93,8 +94,37 @@ export function DesignWorkflowView({ moduleType }: Props) {
       targetId: brief.id,
       metadata: { module: moduleType, businessGoal: trimmed },
     }, { session });
+    const asset = createWorkspaceAsset({
+      name: `${titles[moduleType]} - ${trimmed.slice(0, 24)}`,
+      type: 'image',
+      source: 'generated',
+      moduleId: `design_${moduleType}` as never,
+      tags: ['design', moduleType],
+      metadata: { briefId: brief.id, businessGoal: trimmed },
+    }, repoContext);
+    updateWorkspaceDesignBrief(brief.id, { metadata: { ...brief.metadata, generatedAssetId: asset.id } }, repoContext);
+    logAuditEvent({
+      action: 'asset_create',
+      moduleId: `design_${moduleType}` as never,
+      targetType: 'asset',
+      targetId: asset.id,
+      metadata: { briefId: brief.id, module: moduleType },
+    }, { session });
     setBriefs(loadWorkspaceDesignBriefs(repoContext).filter(b => b.module === moduleType));
-    toast('已提交至云端算力群组，需求已记录', 'success');
+    toast('已提交至云端算力群组，需求与生成资产已记录', 'success');
+  };
+
+  const handleCycleStatus = (brief: WorkspaceDesignBrief) => {
+    const order: WorkspaceDesignBrief['status'][] = ['draft', 'in_progress', 'completed', 'archived'];
+    const next = order[(order.indexOf(brief.status) + 1) % order.length];
+    updateWorkspaceDesignBrief(brief.id, { status: next }, repoContext);
+    setBriefs(loadWorkspaceDesignBriefs(repoContext).filter(b => b.module === moduleType));
+  };
+
+  const handleDeleteBrief = (id: string) => {
+    deleteWorkspaceDesignBrief(id, repoContext);
+    setBriefs(loadWorkspaceDesignBriefs(repoContext).filter(b => b.module === moduleType));
+    toast('设计需求已删除', 'info');
   };
 
   
@@ -326,9 +356,52 @@ export function DesignWorkflowView({ moduleType }: Props) {
                    <Sparkles className="icon-sm mr-2 group-hover:animate-pulse" /> 启动云端算力群组
                 </button>
                 {briefs.length > 0 && (
-                  <p className="text-[11px] text-[var(--text-muted)] text-center font-medium pt-1">
-                    本模块已保存 {briefs.length} 条设计需求
-                  </p>
+                  <div className="border-t border-[var(--border-color)] pt-3 space-y-2">
+                    <h4 className="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest flex items-center justify-between">
+                      <span>已保存设计需求</span>
+                      <span className="text-[var(--text-main)]">{briefs.length}</span>
+                    </h4>
+                    <div className="space-y-2 max-h-56 overflow-y-auto custom-scrollbar">
+                      {briefs.map((brief) => {
+                        const statusStyle: Record<WorkspaceDesignBrief['status'], string> = {
+                          draft: 'bg-gray-100 text-gray-600 border-gray-200',
+                          in_progress: 'bg-blue-50 text-blue-700 border-blue-100',
+                          completed: 'bg-green-50 text-green-700 border-green-100',
+                          archived: 'bg-amber-50 text-amber-700 border-amber-100',
+                        };
+                        const statusLabel: Record<WorkspaceDesignBrief['status'], string> = {
+                          draft: '草稿', in_progress: '进行中', completed: '已完成', archived: '已归档',
+                        };
+                        return (
+                          <div key={brief.id} className="p-2.5 rounded-[var(--radius-lg)] border border-[var(--border-color)] bg-[var(--bg-panel)] shadow-sm">
+                            <p className="text-[12px] font-bold text-[var(--text-main)] leading-snug line-clamp-2 mb-1.5">{brief.businessGoal}</p>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => handleCycleStatus(brief)}
+                                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${statusStyle[brief.status]} transition-colors hover:opacity-80`}
+                                  title="点击切换状态"
+                                >
+                                  {statusLabel[brief.status]}
+                                </button>
+                                {brief.metadata?.generatedAssetId ? (
+                                  <span className="text-[10px] font-medium text-indigo-500 flex items-center" title="已关联生成资产">
+                                    <ImageIcon className="w-3 h-3 mr-0.5" /> 资产
+                                  </span>
+                                ) : null}
+                              </div>
+                              <button
+                                onClick={() => handleDeleteBrief(brief.id)}
+                                className="text-[10px] font-bold text-red-400 hover:text-red-600 transition-colors"
+                              >
+                                删除
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
               </>
             ) : (

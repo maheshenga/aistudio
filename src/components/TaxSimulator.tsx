@@ -4,6 +4,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { CurrencyConverter, CurrencyCode } from '../utils/currency';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createWorkspaceTaxRecord } from '../lib/data/taxRepository';
 
 export function TaxSimulator() {
   const session = useSaasSession();
@@ -57,7 +58,42 @@ export function TaxSimulator() {
 
       // Highlight the best strategy
       const maxImpact = Math.max(...strategies.map(s => s.impact));
-      
+
+      const taxRecord = createWorkspaceTaxRecord({
+        kind: 'simulation',
+        category: 'simulation',
+        title: '年度税务压力预测模拟',
+        inputs: { incomeGrowth, expenseGrowth, aiAdvisorEnabled },
+        result: {
+          projectedTax: 158000,
+          bestImpact: maxImpact,
+          scenarios: strategies.map(s => ({ name: s.name, tax: s.tax, impact: s.impact })),
+        },
+        status: 'draft',
+        actorId: session.user.id,
+        metadata: { source: 'tax_simulator' },
+      }, { workspaceId: session.workspace.id, userId: session.user.id });
+
+      logAuditEvent(
+        {
+          action: 'tax_simulation_run',
+          moduleId: 'tax',
+          targetType: 'workspace',
+          targetId: session.workspace.id,
+          metadata: {
+            incomeGrowth,
+            expenseGrowth,
+            aiAdvisorEnabled,
+            projectedTax: 158000,
+            bestImpact: maxImpact,
+            scenarioCount: strategies.length,
+            recordId: taxRecord.id,
+            durationMs: Date.now() - startedAt,
+          },
+        },
+        { session },
+      );
+
       setReport({
         projectedTax: 158000,
         scenarios: strategies.map(s => ({
@@ -73,24 +109,6 @@ export function TaxSimulator() {
             { month: '12月', 基准税负: 58000, 优化税负: aiAdvisorEnabled ? 12000 : 16000 }
         ]
       });
-      logAuditEvent(
-        {
-          action: 'tax_simulation_run',
-          moduleId: 'tax',
-          targetType: 'workspace',
-          targetId: session.workspace.id,
-          metadata: {
-            incomeGrowth,
-            expenseGrowth,
-            aiAdvisorEnabled,
-            projectedTax: 158000,
-            bestImpact: maxImpact,
-            scenarioCount: strategies.length,
-            durationMs: Date.now() - startedAt,
-          },
-        },
-        { session },
-      );
       window.dispatchEvent(new Event('activity_logged'));
       setIsSimulating(false);
   };

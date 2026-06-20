@@ -10,6 +10,7 @@ import { TaxReconciliationTool } from './TaxReconciliationTool';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { seedWorkspaceTaxEvents } from '../lib/data/taxEventRepository';
+import { createWorkspaceTaxRecord, type TaxRecordCategory } from '../lib/data/taxRepository';
 
 type TaxViewAuditAction =
   | 'tax_deadline_reminder'
@@ -21,6 +22,7 @@ type TaxViewAuditAction =
 export function TaxView() {
   const session = useSaasSession();
   const taxEventContext = useMemo(() => ({ workspaceId: session.workspace.id }), [session.workspace.id]);
+  const taxRecordContext = useMemo(() => ({ workspaceId: session.workspace.id, userId: session.user.id }), [session.workspace.id, session.user.id]);
   const [currency, setCurrency] = useState<CurrencyCode>(CurrencyConverter.getCurrency());
   const auditTax = useCallback((
     action: TaxViewAuditAction,
@@ -85,9 +87,25 @@ export function TaxView() {
   const handleCalculate = () => {
       setIsCalculating(true);
       setShowResult(true);
+      const category: TaxRecordCategory =
+        activeTab === 'individual' ? 'individual'
+        : activeTab === 'vat' ? 'vat'
+        : activeTab === 'corporate' ? 'corporate'
+        : 'other';
+      const record = createWorkspaceTaxRecord({
+        kind: 'calculation',
+        category,
+        title: `${activeTab === 'individual' ? '个人所得税' : activeTab === 'vat' ? '企业增值税' : activeTab === 'corporate' ? '企业所得税' : '税务'}测算`,
+        inputs: { activeTab, currency },
+        result: {},
+        status: 'draft',
+        actorId: session.user.id,
+        metadata: { source: 'tax_view_calculator' },
+      }, taxRecordContext);
       auditTax('tax_calculation_run', `tax_calculation_${activeTab}`, {
           activeTab,
           currency,
+          recordId: record.id,
       });
       setIsCalculating(false);
       toast('测算完成，已生成最优节税方案', 'success');

@@ -3,8 +3,21 @@ import { Newspaper, Lightbulb, Receipt, Building2, ExternalLink, Mail, CheckCirc
 import { toast } from './Toast';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
+import { createWorkspaceTask } from '../lib/data/taskRepository';
 
-export function CustomerInsights({ customerId, customerName }: { customerId: string, customerName: string }) {
+export interface CustomerInsightsFinancials {
+  taxId?: string;
+  bankInfo?: string;
+  totalInvoiced?: string;
+  pendingPayment?: string;
+}
+
+export function CustomerInsights({ customerId, customerName, company, financials }: {
+  customerId: string,
+  customerName: string,
+  company?: string,
+  financials?: CustomerInsightsFinancials,
+}) {
     const session = useSaasSession();
     const [isSendingSurvey, setIsSendingSurvey] = useState(false);
 
@@ -18,16 +31,28 @@ export function CustomerInsights({ customerId, customerName }: { customerId: str
         { source: "新商业情报", title: "主要竞品正加大短视频矩阵投入，可能构成竞争压力", time: "昨天", trend: "warning" }
     ];
 
-    const FINANCIAL_DATA = {
-        taxId: "91440101MA59LDU8X1",
-        bankInfo: "招商银行 科技园支行",
-        totalInvoiced: "¥ 85,000",
-        pendingPayment: "¥ 12,500"
+    const financialData = {
+        taxId: financials?.taxId ?? '未登记',
+        bankInfo: financials?.bankInfo ?? '未登记',
+        totalInvoiced: financials?.totalInvoiced ?? '¥ 0',
+        pendingPayment: financials?.pendingPayment ?? '¥ 0',
     };
 
     const handleSendSurvey = useCallback(() => {
         setIsSendingSurvey(true);
         try {
+            const followUpTask = createWorkspaceTask(
+                {
+                    title: `[满意度跟进] ${customerName}${company ? ` - ${company}` : ''}`,
+                    column: 'todo',
+                    priority: 'Medium',
+                    type: '客户维系',
+                    date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+                    isAuto: false,
+                    metadata: { customerId, source: 'crm_csat_survey' },
+                },
+                { workspaceId: session.workspace.id },
+            );
             logAuditEvent(
                 {
                     action: 'crm_survey_send',
@@ -40,16 +65,17 @@ export function CustomerInsights({ customerId, customerName }: { customerId: str
                         channel: 'email',
                         surveyType: 'csat',
                         status: 'sent',
+                        followUpTaskId: followUpTask.id,
                     },
                 },
                 { session },
             );
             window.dispatchEvent(new Event('activity_logged'));
-            toast('满意度问卷已通过邮件发送至客户', 'success');
+            toast('满意度问卷已发送，跟进任务已同步至任务中心', 'success');
         } finally {
             setIsSendingSurvey(false);
         }
-    }, [customerId, customerName, session]);
+    }, [customerId, customerName, company, session]);
 
     return (
         <div className="space-y-6 mt-8">
@@ -118,17 +144,17 @@ export function CustomerInsights({ customerId, customerName }: { customerId: str
                 <div className="grid grid-cols-2 gap-4">
                     <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
                         <p className="text-[11px] text-gray-500 font-bold mb-1">累计开票金额</p>
-                        <p className="text-[16px] font-black text-gray-800">{FINANCIAL_DATA.totalInvoiced}</p>
+                        <p className="text-[16px] font-black text-gray-800">{financialData.totalInvoiced}</p>
                     </div>
                     <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
                         <p className="text-[11px] text-gray-500 font-bold mb-1">待回款金额</p>
-                        <p className="text-[16px] font-black text-rose-600">{FINANCIAL_DATA.pendingPayment}</p>
+                        <p className="text-[16px] font-black text-rose-600">{financialData.pendingPayment}</p>
                     </div>
                     <div className="col-span-2 bg-gray-50 p-3 rounded-lg border border-gray-100 flex items-center space-x-3">
                         <Building2 className="w-5 h-5 text-gray-400 shrink-0" />
                         <div className="flex-1">
                             <p className="text-[11px] text-gray-500 font-bold mb-0.5">企业统一社会信用代码（税号）</p>
-                            <p className="text-[13px] font-bold text-gray-800 font-mono">{FINANCIAL_DATA.taxId}</p>
+                            <p className="text-[13px] font-bold text-gray-800 font-mono">{financialData.taxId}</p>
                         </div>
                         <button className="text-[11px] font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded hover:bg-blue-100 transition-colors">
                             开具电子发票

@@ -32,6 +32,10 @@ import {
   type CustomerServiceRepositoryContext,
 } from '../src/lib/data/customerServiceRepository';
 import {
+  loadWorkspaceTaxRecords, createWorkspaceTaxRecord, updateTaxRecordStatus, summarizeWorkspaceTaxRecords,
+  type TaxRepositoryContext,
+} from '../src/lib/data/taxRepository';
+import {
   loadWorkspaceEmployeeAccounts, createWorkspaceEmployeeAccount, updateEmployeeAccountStatus,
   type EmployeeAccountRepositoryContext,
 } from '../src/lib/data/employeeAccountRepository';
@@ -156,6 +160,42 @@ const otherStorage = createMemoryStorage();
   const accepted = updateCustomerServiceResponseStatus(resp.id, 'accepted', { editorId: userId }, ctx);
   assert.equal(accepted?.status, 'accepted');
   console.log('✓ P2-B05: customerServiceRepository (response lifecycle)');
+}
+
+// === Tax Repository ===
+{
+  const ctx: TaxRepositoryContext = { workspaceId: wsId, userId, storage };
+  const calc = createWorkspaceTaxRecord({
+    kind: 'calculation', category: 'vat', title: '企业增值税测算',
+    inputs: { activeTab: 'vat', currency: 'CNY' }, result: { payable: 500 },
+    status: 'draft', metadata: {},
+  }, ctx);
+  assert.equal(calc.workspaceId, wsId);
+  assert.equal(calc.kind, 'calculation');
+  assert.equal(calc.actorId, userId, 'actorId should default to ctx.userId');
+
+  const sim = createWorkspaceTaxRecord({
+    kind: 'simulation', category: 'simulation', title: '年度税务压力预测模拟',
+    inputs: { incomeGrowth: 15 }, result: { bestImpact: 90000 },
+    status: 'draft', metadata: {},
+  }, ctx);
+  assert.equal(loadWorkspaceTaxRecords(ctx).length, 2);
+  assert.equal(loadWorkspaceTaxRecords(ctx)[0].id, sim.id, 'records should be newest-first');
+
+  const submitted = updateTaxRecordStatus(calc.id, 'submitted', ctx, { metadata: { filedAt: 'now' } });
+  assert.equal(submitted?.status, 'submitted');
+
+  const summary = summarizeWorkspaceTaxRecords(ctx);
+  assert.equal(summary.total, 2);
+  assert.equal(summary.byKind.calculation, 1);
+  assert.equal(summary.byKind.simulation, 1);
+  assert.equal(summary.byStatus.submitted, 1);
+  assert.equal(summary.byStatus.draft, 1);
+
+  // Workspace isolation
+  const otherCtx: TaxRepositoryContext = { workspaceId: 'ws_other', userId, storage: otherStorage };
+  assert.equal(loadWorkspaceTaxRecords(otherCtx).length, 0, 'tax records should be workspace-scoped');
+  console.log('✓ P2-B06: taxRepository (calculation + simulation + filing lifecycle)');
 }
 
 // === Employee Account Repository ===

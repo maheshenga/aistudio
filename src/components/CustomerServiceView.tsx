@@ -126,6 +126,18 @@ export function CustomerServiceView() {
   const [newTemplate, setNewTemplate] = useState('');
 
   const [queueStats] = useState({ pending: 15, avgWaitTime: 3.2 });
+
+  const responseStats = useMemo(() => {
+    const counts: Record<string, number> = {
+      suggested: 0, accepted: 0, edited: 0, rejected: 0, escalated: 0, sent: 0,
+    };
+    for (const r of csResponses) {
+      if (counts[r.status] !== undefined) counts[r.status] += 1;
+    }
+    const handled = counts.accepted + counts.edited + counts.sent;
+    const resolutionRate = csResponses.length > 0 ? Math.round((handled / csResponses.length) * 100) : 0;
+    return { counts, total: csResponses.length, handled, resolutionRate };
+  }, [csResponses]);
   
   const [kbEntries, setKbEntries] = useState([
     { id: '1', question: '退换货政策是什么？', answer: '支持7天无理由退换，非人为损坏运费由我方承担。', active: true, lang: 'zh-CN', linkedIds: ['1-en', '1-ja'] },
@@ -423,9 +435,14 @@ export function CustomerServiceView() {
                     <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[11px] font-bold rounded">
                        {sessions.length} 个进行中
                     </span>
-                    {csResponses.filter(r => r.status === 'escalated').length > 0 && (
+                    {responseStats.counts.sent > 0 && (
+                      <span className="px-2 py-0.5 bg-green-50 border border-green-100 text-green-700 text-[11px] font-bold rounded ml-1">
+                         {responseStats.counts.sent} 已发送
+                      </span>
+                    )}
+                    {responseStats.counts.escalated > 0 && (
                       <span className="px-2 py-0.5 bg-red-50 border border-red-100 text-red-600 text-[11px] font-bold rounded ml-1">
-                         {csResponses.filter(r => r.status === 'escalated').length} 已升级
+                         {responseStats.counts.escalated} 已升级
                       </span>
                     )}
                  </div>
@@ -907,6 +924,42 @@ export function CustomerServiceView() {
                       </div>
                    </div>
                  </div>
+              </div>
+
+              <div className="bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] p-[var(--spacing-xl)] shadow-sm">
+                <div className="flex items-center justify-between mb-[var(--spacing-md)]">
+                  <h3 className="font-bold text-[var(--text-main)] text-lg flex items-center">
+                    <MessageSquare className="icon-md mr-2 text-indigo-500" />
+                    响应生命周期
+                  </h3>
+                  <span className="text-[12px] text-[var(--text-muted)]">基于工作区真实响应记录 · 共 {responseStats.total} 条</span>
+                </div>
+
+                {responseStats.total === 0 ? (
+                  <p className="text-[14px] text-[var(--text-muted)] py-6 text-center">暂无客服响应记录。在监控台采纳、编辑、升级或发送回复后，将在此汇总展示。</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-[var(--spacing-sm)] mb-[var(--spacing-md)]">
+                      {([
+                        { key: 'suggested', label: 'AI 建议', color: 'text-slate-500' },
+                        { key: 'accepted', label: '已采纳', color: 'text-blue-500' },
+                        { key: 'edited', label: '已编辑', color: 'text-indigo-500' },
+                        { key: 'sent', label: '已发送', color: 'text-green-600' },
+                        { key: 'escalated', label: '已升级', color: 'text-orange-500' },
+                        { key: 'rejected', label: '已拒绝', color: 'text-red-500' },
+                      ] as const).map(s => (
+                        <div key={s.key} className="bg-[var(--bg-subtle)] rounded-[var(--radius-lg)] p-4 border border-[var(--border-color)]">
+                          <p className="text-[12px] text-[var(--text-muted)] mb-1 font-medium">{s.label}</p>
+                          <p className={`text-2xl font-black ${s.color}`}>{responseStats.counts[s.key]}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-[var(--spacing-md)] text-[13px] text-[var(--text-muted)]">
+                      <span>已处理（采纳/编辑/发送）：<span className="font-bold text-[var(--text-main)]">{responseStats.handled}</span></span>
+                      <span>处理率：<span className="font-bold text-green-600">{responseStats.resolutionRate}%</span></span>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] p-[var(--spacing-xl)] shadow-sm">

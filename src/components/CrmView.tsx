@@ -60,6 +60,7 @@ type CrmCustomer = {
   aiScore: number;
   nextFollowUp: string;
   source?: WorkspaceCustomer['source'];
+  financials?: { taxId?: string; bankInfo?: string; totalInvoiced?: string; pendingPayment?: string };
 };
 
 const CRM_DEMO_CUSTOMERS: CrmCustomer[] = [
@@ -103,6 +104,9 @@ function mapWorkspaceCustomerToCrmCustomer(customer: WorkspaceCustomer): CrmCust
     aiScore: lifecycle.score,
     nextFollowUp,
     source: customer.source,
+    financials: (customer.metadata?.financial && typeof customer.metadata.financial === 'object')
+      ? customer.metadata.financial as CrmCustomer['financials']
+      : undefined,
   };
 }
 
@@ -1059,7 +1063,7 @@ export function CrmView() {
                   )}
 
                   {/* Customer Insights and Actions */}
-                  <CustomerInsights customerId={selectedCustomer.id} customerName={selectedCustomer.name} />
+                  <CustomerInsights customerId={selectedCustomer.id} customerName={selectedCustomer.name} company={selectedCustomer.company} financials={selectedCustomer.financials} />
 
                   {/* Customer Comments */}
                   <CustomerComments customerId={selectedCustomer.id} />

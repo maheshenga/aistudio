@@ -4,6 +4,7 @@ import { Mail, Search, Shield, UserPlus, Users, MessageSquare, PenTool, ListTodo
 import { ModuleId } from '../types';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { loadWorkspaceTeamMembers, createWorkspaceTeamMember, updateWorkspaceTeamMember, deleteWorkspaceTeamMember, type WorkspaceTeamMember, type TeamRepositoryContext } from '../lib/data/teamRepository';
+import { createWorkspaceTask } from '../lib/data/taskRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { hasWorkspacePermission } from '../saas/permissions';
 import { toast } from './Toast';
@@ -423,6 +424,25 @@ export function TeamView({ moduleId = 'team' }: TeamViewProps) {
     setTeamMembers(loadWorkspaceTeamMembers(repoContext));
   };
 
+  const handleAssignTask = (member: WorkspaceTeamMember) => {
+    if (!canManageMembers) { toast('权限不足', 'error'); return; }
+    const task = createWorkspaceTask(
+      {
+        title: `[团队协作] ${member.name} 的待办`,
+        column: 'todo',
+        priority: 'Medium',
+        type: '团队协作',
+        date: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        isAuto: false,
+        metadata: { assigneeMemberId: member.id, assigneeName: member.name, assignedBy: session.user.id },
+      },
+      { workspaceId: session.workspace.id },
+    );
+    logAuditEvent({ action: 'task_assign', moduleId: 'team', targetType: 'task', targetId: task.id, metadata: { assigneeMemberId: member.id, assigneeName: member.name } }, { session });
+    window.dispatchEvent(new Event('activity_logged'));
+    toast(`已为 ${member.name} 派发协作任务`, 'success');
+  };
+
   return (
     <div className="p-4 sm:p-[var(--spacing-lg)] lg:p-[var(--spacing-xl)] max-w-[1600px] mx-auto h-[calc(100vh-4rem)] flex flex-col lg:flex-row gap-[var(--spacing-md)] overflow-hidden">
       {/* Main Content Area */}
@@ -518,6 +538,11 @@ export function TeamView({ moduleId = 'team' }: TeamViewProps) {
                       )}
                     </td>
                     <td className="py-3 px-5 text-right space-x-2 whitespace-nowrap">
+                      {canManageMembers && member.status === 'active' && (
+                         <button onClick={() => handleAssignTask(member)} className="text-[11px] font-bold text-indigo-600 hover:text-white hover:bg-indigo-500 border border-indigo-200 bg-indigo-50 px-2 py-1 rounded transition-colors" title="为该成员创建一条协作任务">
+                           派发任务
+                         </button>
+                      )}
                       {member.status !== 'active' && (
                          <button className="text-[11px] font-bold text-[var(--color-primary)] hover:text-white hover:bg-[var(--color-primary)] border border-blue-200 bg-blue-50 px-2 py-1 rounded transition-colors tooltip" title="重发邮件与个人微信通知">
                            重新发送邀请
