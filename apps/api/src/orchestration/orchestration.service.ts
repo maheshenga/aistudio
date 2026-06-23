@@ -42,7 +42,7 @@ export class OrchestrationService {
           providerKind: dto.providerKind ?? null,
         },
       });
-      await this.credit.hold(tx, workspaceId, job.id, amount);
+      await this.credit.hold(tx, workspaceId, job.id, amount, job.attempt);
       await tx.auditLog.create({
         data: {
           workspaceId, action: 'task_dispatched', userId: actor.userId, actorRole: actor.role,
@@ -74,7 +74,7 @@ export class OrchestrationService {
         where: { id },
         data: { status: 'cancelled', finishedAt: new Date() },
       });
-      await this.credit.refund(tx, workspaceId, id, amount);
+      await this.credit.refund(tx, workspaceId, id, amount, job.attempt);
       await tx.auditLog.create({
         data: {
           workspaceId, action: 'task_cancelled', userId: actor.userId, actorRole: actor.role,
@@ -89,14 +89,28 @@ export class OrchestrationService {
   async retry(workspaceId: string, id: string, actor: Actor) {
     const job = await this.getJob(workspaceId, id);
     if (!TERMINAL.has(job.status)) throw validationError('Only terminal jobs can be retried');
-    const updated = await this.prisma.generationJob.update({
-      where: { id },
-      data: {
-        status: 'pending', externalTaskId: null, externalRef: Prisma.DbNull,
-        progress: null, currentStep: null, error: null, startedAt: null, finishedAt: null,
-      },
+    const amount = generationCredits(job);
+    const nextAttempt = job.attempt + 1;
+    // 必须在同一事务里为新一轮重新冻结额度:余额不足则整体回滚,job 状态不被破坏。
+    // 这同时堵死了"零余额白嫖"——retry 不再能免费开启新一轮生成。
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.generationJob.update({
+        where: { id },
+        data: {
+          status: 'pending', attempt: nextAttempt,
+          externalTaskId: null, externalRef: Prisma.DbNull,
+          progress: null, currentStep: null, error: null, startedAt: null, finishedAt: null,
+        },
+      });
+      await this.credit.hold(tx, workspaceId, id, amount, nextAttempt);
+      await tx.auditLog.create({
+        data: {
+          workspaceId, action: 'generation_job_retry', userId: actor.userId, actorRole: actor.role,
+          targetType: 'generation_job', targetId: updated.id,
+          metadata: { attempt: nextAttempt, heldCredits: amount } as Prisma.InputJsonValue,
+        },
+      });
+      return updated;
     });
-    await this.audit(workspaceId, 'generation_job_retry', updated, actor, {});
-    return updated;
   }
 }

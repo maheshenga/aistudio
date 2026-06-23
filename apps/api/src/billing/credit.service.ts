@@ -76,24 +76,24 @@ export class CreditService {
     }
   }
 
-  hold(tx: Tx, workspaceId: string, jobId: string, amount: number) {
+  hold(tx: Tx, workspaceId: string, jobId: string, amount: number, attempt = 1) {
     return this.applyLedgerEntry(tx, {
       workspaceId, delta: -amount, reason: 'hold',
-      refType: 'generation_job', refId: jobId, idempotencyKey: `job:${jobId}:hold`,
+      refType: 'generation_job', refId: jobId, idempotencyKey: `job:${jobId}:${attempt}:hold`,
     });
   }
 
-  capture(tx: Tx, workspaceId: string, jobId: string) {
+  capture(tx: Tx, workspaceId: string, jobId: string, attempt = 1) {
     return this.applyLedgerEntry(tx, {
       workspaceId, delta: 0, reason: 'capture',
-      refType: 'generation_job', refId: jobId, idempotencyKey: `job:${jobId}:capture`,
+      refType: 'generation_job', refId: jobId, idempotencyKey: `job:${jobId}:${attempt}:capture`,
     });
   }
 
-  refund(tx: Tx, workspaceId: string, jobId: string, amount: number) {
+  refund(tx: Tx, workspaceId: string, jobId: string, amount: number, attempt = 1) {
     return this.applyLedgerEntry(tx, {
       workspaceId, delta: amount, reason: 'refund',
-      refType: 'generation_job', refId: jobId, idempotencyKey: `job:${jobId}:refund`,
+      refType: 'generation_job', refId: jobId, idempotencyKey: `job:${jobId}:${attempt}:refund`,
     });
   }
 

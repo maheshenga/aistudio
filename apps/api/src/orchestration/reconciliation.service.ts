@@ -37,7 +37,7 @@ export class ReconciliationService {
           where: { id: orphan.id },
           data: { status: 'failed', error: 'dispatch not confirmed', finishedAt: now },
         });
-        await this.credit.refund(tx, orphan.workspaceId, orphan.id, generationCredits(orphan));
+        await this.credit.refund(tx, orphan.workspaceId, orphan.id, generationCredits(orphan), orphan.attempt);
       });
     }
 
@@ -53,7 +53,7 @@ export class ReconciliationService {
     }
   }
 
-  private async reconcileJob(job: { id: string; workspaceId: string; status: string; externalTaskId: string | null; runtimeMode: string | null; providerKind: string | null; startedAt: Date | null }, now: Date): Promise<void> {
+  private async reconcileJob(job: { id: string; workspaceId: string; status: string; externalTaskId: string | null; runtimeMode: string | null; providerKind: string | null; startedAt: Date | null; attempt: number }, now: Date): Promise<void> {
     const snap = await this.client!.getTask(job.externalTaskId!);
 
     if (snap.status === 'running') {
@@ -74,7 +74,7 @@ export class ReconciliationService {
   }
 
   private async finalize(
-    job: { id: string; workspaceId: string; externalTaskId: string | null; runtimeMode: string | null; providerKind: string | null; startedAt: Date | null },
+    job: { id: string; workspaceId: string; externalTaskId: string | null; runtimeMode: string | null; providerKind: string | null; startedAt: Date | null; attempt: number },
     terminal: 'succeeded' | 'failed' | 'cancelled',
     now: Date,
   ): Promise<void> {
