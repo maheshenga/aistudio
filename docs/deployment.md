@@ -143,7 +143,7 @@ cat backup.sql | docker compose exec -T db psql -U postgres aistudio
 - **frontend**:`test:p0-specialized` + `test:saas-foundation` + `test:launch-readiness` + `lint` + `build`
 - **backend**:起 Postgres service 容器 → `prisma generate` → `prisma migrate deploy` → Jest e2e
 
-> 注:`test:browser-smoke` 依赖 `@playwright/cli` 与浏览器二进制(运行时按需拉取),未纳入 CI,保留为本地验证。
+> 注: CI 在 frontend job 中运行 `test:browser-smoke`(需先 `build`); 本地可用 `npm run test:p0-release` 跑完整发布门禁。
 
 ## 故障排查
 
