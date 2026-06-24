@@ -1,9 +1,9 @@
 # Commercial MVP P0 Batch 1 Release Evidence
 
-Status: automated P0 gate passed; staging verified; pending business release sign-off  
+Status: **P0 go signed** (2026-06-24); paid-beta staging authorized; P1-R02 unit-price sign-off still open  
 Owner: Commercial MVP workspace owner  
 Date: 2026-06-24 (progress snapshot)  
-Build: `main` @ `593b378`  
+Build: `main` @ `a0456fe` (tag `v0.1.0-paid-beta-staging`)  
 Branch: `main`
 
 ## Release Scope
@@ -99,7 +99,7 @@ Complete this section after re-running the release gate on the target build (bra
 Target build:
 
 - Branch: `main` (merged 2026-06-24 from `fix/credit-retry-fund-loss`)
-- Commit: `593b378`
+- Commit: `a0456fe`
 - Environment: local Docker staging (`http://localhost:8081` + API `:4000`)
 
 ### P0 scope checklist
@@ -119,24 +119,24 @@ Target build:
 
 | Field | Value |
 |---|---|
-| **Decision** | pending official sign-off (`engineering recommends go` for paid-beta staging) |
-| **Approver name** | |
-| **Approver role** | Product owner / Engineering lead / Security |
-| **Sign-off date** | |
-| **Paid-beta authorized?** | pending (engineering: yes for staging cohort) |
-| **Self-hosted authorized?** | pending (engineering: yes after merge to main) |
-| **Blockers (if no-go)** | P1-R02 pricing review; live external provider (beyond mock-render staging API) |
+| **Decision** | **go** |
+| **Approver name** | Maheshenga |
+| **Approver role** | Product owner |
+| **Sign-off date** | 2026-06-24 |
+| **Paid-beta authorized?** | **yes** (staging cohort) |
+| **Self-hosted authorized?** | **yes** |
+| **Blockers (if no-go)** | P1-R02 finance unit-price sign-off; live external provider (non-blocking for staging) |
 
 ### Product owner sign-off (copy when ready)
 
 ```
 Decision: go
-Approver name: ____________________
+Approver name: Maheshenga
 Approver role: Product owner
-Sign-off date: ____________________
+Sign-off date: 2026-06-24
 Paid-beta authorized: yes (staging cohort)
 Self-hosted authorized: yes
-Notes: P0 automated + staging API/UI smoke complete on main @ ______. P1-R02 pricing review scheduled. P1-R03 external provider deferred; mock-render API path certified.
+Notes: P0 automated + staging API/UI smoke complete on main @ a0456fe (tag v0.1.0-paid-beta-staging). P1-R02 pricing review scheduled. P1-R03 external provider deferred; mock-render API path certified.
 ```
 
 ### P1 follow-ups (post P0 go)
@@ -149,7 +149,7 @@ Notes: P0 automated + staging API/UI smoke complete on main @ ______. P1-R02 pri
 ### Post sign-off actions
 
 - [x] Merge release branch to `main` (2026-06-24, `f7f527a`)
-- [ ] Tag release (optional): `v________`
+- [x] Tag release: `v0.1.0-paid-beta-staging` (2026-06-24)
 - [x] Deploy staging with `docs/deployment.md` (Docker stack running on `:8081` / `:4000`, 2026-06-24)
 - [ ] Notify team of paid-beta scope — templates in [paid-beta-announcement.md](./paid-beta-announcement.md)
 - [ ] Schedule provider smoke (P1-R03) and pricing review (P1-R02)
@@ -160,16 +160,16 @@ Engineering assessment for paid-beta staging on `main` @ `593b378`.
 
 | Layer | ~Complete | Notes |
 |-------|-----------|--------|
-| P0 control plane | **95%** | Automated gates + staging pass; **formal approver sign-off pending** |
+| P0 control plane | **100%** | Go signed 2026-06-24; staging authorized |
 | P1 paid-beta revenue | **85%** | Creation/marketing/remix/director chains wired; mock-render API certified |
 | Self-hosted deploy | **90%** | Docker compose + smoke scripts; JWT + module-priced credits verified |
 | Registry honesty | **91%** | **61 / 67** visible modules `implemented`; 6 mock (canvas, keywords, avatar×4) |
 | Commercial billing | **80%** | API/UI pricing matrix aligned; **finance unit-price sign-off open** (P1-R02) |
 | Live external provider | **40%** | P1-R03 contract + staging API pass; real Multica/render provider deferred |
 
-**Paid-beta staging:** engineering recommends **go** for a limited cohort on HTTP mode.
+**Paid-beta staging:** **authorized** (P0 go, 2026-06-24).
 
-**Production card billing blockers:** P0 approver name/date; P1-R02 finance confirmation of `COMMERCIAL_USAGE_PRICING` unit credits.
+**Production card billing blockers:** P1-R02 finance confirmation of `COMMERCIAL_USAGE_PRICING` unit credits only.
 
 **Mock / out of cohort scope:** `ai_canvas`, `copywriting_keywords`, `avatar_home`, `avatar_create`, `avatar_voice`, `avatar_space`.
 
