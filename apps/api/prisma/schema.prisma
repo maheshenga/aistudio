@@ -39,6 +39,7 @@ model Workspace {
   settings         Setting[]
   apiKeys          ApiKey[]
   webhookEndpoints WebhookEndpoint[]
+  webhookDeliveries WebhookDelivery[]
 }
 
 model Member {
@@ -500,5 +501,30 @@ model WebhookEndpoint {
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
   workspace               Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  deliveries              WebhookDelivery[]
+  @@index([workspaceId, createdAt])
+}
+
+model WebhookDelivery {
+  id          String   @id @default(cuid())
+  workspaceId String
+  endpointId  String
+  eventType   String
+  eventId     String
+  payload     Json
+  status      String   @default("pending")
+  attempt     Int      @default(0)
+  maxAttempts Int      @default(5)
+  httpStatus  Int?
+  error       String?
+  nextRetryAt DateTime @default(now())
+  deliveredAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  endpoint    WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@unique([endpointId, eventId])
+  @@index([status, nextRetryAt])
   @@index([workspaceId, createdAt])
 }

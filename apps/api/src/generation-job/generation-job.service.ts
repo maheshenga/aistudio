@@ -4,6 +4,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { notFound, validationError } from '../common/errors';
 import { CreditService } from '../billing/credit.service';
 import { generationCredits } from '../billing/credit-cost';
+import { WebhookDeliveryService } from '../webhook/webhook-delivery.service';
 import { CreateJobDto, UpdateStatusDto, ListJobQuery } from './dto';
 
 const ALLOWED: Record<string, string[]> = {
@@ -21,6 +22,7 @@ export class GenerationJobService {
   constructor(
     private prisma: PrismaService,
     private credit: CreditService,
+    private webhooks: WebhookDeliveryService,
   ) {}
 
   list(workspaceId: string, q: ListJobQuery) {
@@ -90,6 +92,7 @@ export class GenerationJobService {
         } else {
           await this.credit.refund(tx, workspaceId, id, amount, job.attempt);
         }
+        await this.webhooks.enqueueForTerminalJob(tx, updated);
       }
 
       return updated;

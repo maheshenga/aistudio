@@ -4,9 +4,10 @@ import { OrchestrationService } from './orchestration.service';
 import { ReconciliationService } from './reconciliation.service';
 import { MULTICA_SERVER_CLIENT, createMulticaServerClient } from './multica-server-client';
 import { BillingModule } from '../billing/billing.module';
+import { WebhookModule } from '../webhook/webhook.module';
 
 @Module({
-  imports: [BillingModule],
+  imports: [BillingModule, WebhookModule],
   controllers: [OrchestrationController],
   providers: [
     OrchestrationService,

@@ -5,6 +5,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { MULTICA_SERVER_CLIENT, type MulticaServerClient } from './multica-server-client';
 import { generationCredits } from '../billing/credit-cost';
 import { CreditService } from '../billing/credit.service';
+import { WebhookDeliveryService } from '../webhook/webhook-delivery.service';
 
 const ORPHAN_PENDING_TIMEOUT_MS = Number(process.env.ORCHESTRATION_ORPHAN_TIMEOUT_MS ?? 15 * 60 * 1000);
 
@@ -15,6 +16,7 @@ export class ReconciliationService {
   constructor(
     private prisma: PrismaService,
     private credit: CreditService,
+    private webhooks: WebhookDeliveryService,
     @Optional() @Inject(MULTICA_SERVER_CLIENT) private client: MulticaServerClient | null,
   ) {}
 
@@ -38,6 +40,8 @@ export class ReconciliationService {
           data: { status: 'failed', error: 'dispatch not confirmed', finishedAt: now },
         });
         await this.credit.refund(tx, orphan.workspaceId, orphan.id, generationCredits(orphan), orphan.attempt);
+        const failed = await tx.generationJob.findUnique({ where: { id: orphan.id } });
+        if (failed) await this.webhooks.enqueueForTerminalJob(tx, failed);
       });
     }
 
@@ -140,6 +144,9 @@ export class ReconciliationService {
           },
         });
       }
+
+      const finalized = await tx.generationJob.findUnique({ where: { id: job.id } });
+      if (finalized) await this.webhooks.enqueueForTerminalJob(tx, finalized);
     });
   }
 }
