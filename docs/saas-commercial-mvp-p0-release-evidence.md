@@ -94,8 +94,8 @@ Complete this section after re-running the release gate on the target build (bra
 
 Target build:
 
-- Branch: `fix/credit-retry-fund-loss` (or `main` after merge)
-- Commit: `74c7b59` (pre-merge on `fix/credit-retry-fund-loss`)
+- Branch: `main` (merged 2026-06-24 from `fix/credit-retry-fund-loss`)
+- Commit: `f7f527a`
 - Environment: local Docker staging (`http://localhost:8081` + API `:4000`)
 
 ### P0 scope checklist
@@ -132,7 +132,7 @@ Target build:
 
 ### Post sign-off actions
 
-- [ ] Merge release branch to `main`
+- [x] Merge release branch to `main` (2026-06-24, `f7f527a`)
 - [ ] Tag release (optional): `v________`
 - [ ] Deploy staging with `docs/deployment.md`
 - [ ] Notify team of paid-beta scope (P0 control plane + selected P1 modules)
