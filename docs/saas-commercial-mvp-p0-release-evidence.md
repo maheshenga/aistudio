@@ -151,7 +151,7 @@ Notes: P0 automated + staging API/UI smoke complete on main @ ______. P1-R02 pri
 - [x] Merge release branch to `main` (2026-06-24, `f7f527a`)
 - [ ] Tag release (optional): `v________`
 - [x] Deploy staging with `docs/deployment.md` (Docker stack running on `:8081` / `:4000`, 2026-06-24)
-- [ ] Notify team of paid-beta scope — see [paid-beta-scope.md](./paid-beta-scope.md)
+- [ ] Notify team of paid-beta scope — templates in [paid-beta-announcement.md](./paid-beta-announcement.md)
 - [ ] Schedule provider smoke (P1-R03) and pricing review (P1-R02)
 
 ## MVP Progress Snapshot (2026-06-24)
