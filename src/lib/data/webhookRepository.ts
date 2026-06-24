@@ -49,9 +49,27 @@ export interface WorkspaceWebhookExportRow {
   failureCount: number;
 }
 
+export type WorkspaceWebhookDeliveryStatus = 'pending' | 'delivered' | 'failed' | 'retrying';
+
+export interface WorkspaceWebhookDelivery {
+  id: string;
+  endpointId: string;
+  eventType: string;
+  eventId: string;
+  status: WorkspaceWebhookDeliveryStatus;
+  attempt: number;
+  maxAttempts: number;
+  httpStatus: number | null;
+  error: string | null;
+  nextRetryAt: number;
+  deliveredAt: number | null;
+  createdAt: number;
+}
+
 export const WEBHOOK_ENDPOINT_STORAGE_PREFIX = 'aistudio_workspace_webhook_endpoints';
 
 const WEBHOOK_STATUSES: readonly WorkspaceWebhookStatus[] = ['active', 'disabled', 'failing'];
+const WEBHOOK_DELIVERY_STATUSES: readonly WorkspaceWebhookDeliveryStatus[] = ['pending', 'delivered', 'failed', 'retrying'];
 const SENSITIVE_METADATA_KEYS = new Set([
   'secret',
   'signingSecret',
@@ -130,6 +148,26 @@ function sanitizeMetadata(metadata: unknown): Record<string, unknown> {
     sanitized[key] = value;
   }
   return sanitized;
+}
+
+function normalizeWebhookDelivery(row: Partial<WorkspaceWebhookDelivery>): WorkspaceWebhookDelivery {
+  const status = typeof row.status === 'string' && WEBHOOK_DELIVERY_STATUSES.includes(row.status as WorkspaceWebhookDeliveryStatus)
+    ? row.status as WorkspaceWebhookDeliveryStatus
+    : 'pending';
+  return {
+    id: normalizeText(row.id, `delivery_${Date.now()}`),
+    endpointId: normalizeText(row.endpointId, ''),
+    eventType: normalizeText(row.eventType, 'unknown'),
+    eventId: normalizeText(row.eventId, ''),
+    status,
+    attempt: normalizeInteger(row.attempt),
+    maxAttempts: normalizeInteger(row.maxAttempts, 5) || 5,
+    httpStatus: row.httpStatus === null || row.httpStatus === undefined ? null : normalizeInteger(row.httpStatus),
+    error: typeof row.error === 'string' ? row.error : null,
+    nextRetryAt: normalizeTimestamp(row.nextRetryAt, Date.now()),
+    deliveredAt: normalizeNullableTimestamp(row.deliveredAt),
+    createdAt: normalizeTimestamp(row.createdAt, Date.now()),
+  };
 }
 
 function normalizeWebhookEndpoint(
@@ -341,4 +379,22 @@ export async function hydrateWorkspaceWebhookEndpoints(context: WebhookRepositor
       window.dispatchEvent(new CustomEvent('workspace_webhooks_updated', { detail: { workspaceId: context.workspaceId } }));
     }
   }
+}
+
+export function isWebhookBackendConfigured(): boolean {
+  return webhookApiClient.configured;
+}
+
+export async function listWorkspaceWebhookDeliveries(
+  endpointId: string,
+  context: WebhookRepositoryContext,
+  limit = 8,
+): Promise<WorkspaceWebhookDelivery[]> {
+  if (!webhookApiClient.configured) return [];
+  const res = await webhookApiClient.get<WorkspaceWebhookDelivery[]>(
+    context.workspaceId,
+    `webhooks/${encodeURIComponent(endpointId)}/deliveries?limit=${limit}`,
+  );
+  if (!res.ok || !Array.isArray(res.value)) return [];
+  return res.value.map((row) => normalizeWebhookDelivery({ ...row, endpointId }));
 }

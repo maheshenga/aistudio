@@ -31,8 +31,11 @@ import {
   deleteWorkspaceWebhookEndpoint,
   exportWorkspaceWebhookEndpointRows,
   hydrateWorkspaceWebhookEndpoints,
+  isWebhookBackendConfigured,
+  listWorkspaceWebhookDeliveries,
   loadWorkspaceWebhookEndpoints,
   updateWorkspaceWebhookEndpoint,
+  type WorkspaceWebhookDelivery,
   type WorkspaceWebhookEndpoint,
 } from '../lib/data/webhookRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
@@ -68,6 +71,20 @@ const WEBHOOK_STATUS_CLASSES: Record<WorkspaceWebhookEndpoint['status'], string>
   active: 'bg-green-50 text-green-700 border-green-200',
   disabled: 'bg-gray-100 text-gray-600 border-gray-200',
   failing: 'bg-red-50 text-red-700 border-red-200',
+};
+
+const WEBHOOK_DELIVERY_STATUS_LABELS: Record<WorkspaceWebhookDelivery['status'], string> = {
+  pending: 'Pending',
+  delivered: 'Delivered',
+  failed: 'Failed',
+  retrying: 'Retrying',
+};
+
+const WEBHOOK_DELIVERY_STATUS_CLASSES: Record<WorkspaceWebhookDelivery['status'], string> = {
+  pending: 'bg-amber-50 text-amber-700 border-amber-200',
+  delivered: 'bg-green-50 text-green-700 border-green-200',
+  failed: 'bg-red-50 text-red-700 border-red-200',
+  retrying: 'bg-orange-50 text-orange-700 border-orange-200',
 };
 
 const WEBHOOK_EVENT_OPTIONS = [
@@ -138,6 +155,10 @@ export function ApiKeysView() {
   const [generatedWebhookName, setGeneratedWebhookName] = useState('');
   const [showWebhookExportModal, setShowWebhookExportModal] = useState(false);
   const [usageEvents, setUsageEvents] = useState<WorkspaceUsageEvent[]>([]);
+  const [expandedWebhookId, setExpandedWebhookId] = useState<string | null>(null);
+  const [webhookDeliveries, setWebhookDeliveries] = useState<Record<string, WorkspaceWebhookDelivery[]>>({});
+  const [loadingWebhookDeliveriesId, setLoadingWebhookDeliveriesId] = useState<string | null>(null);
+  const webhookBackendConfigured = isWebhookBackendConfigured();
 
   useEffect(() => {
     const refreshKeys = () => setKeys(loadWorkspaceApiKeys(apiKeyContext));
@@ -463,6 +484,37 @@ export function ApiKeysView() {
       url: endpoint.url,
     });
     toast(`Deleted ${endpoint.name}.`, 'success');
+    if (expandedWebhookId === endpoint.id) setExpandedWebhookId(null);
+  };
+
+  const handleToggleWebhookDeliveries = async (endpoint: WorkspaceWebhookEndpoint) => {
+    if (expandedWebhookId === endpoint.id) {
+      setExpandedWebhookId(null);
+      return;
+    }
+    setExpandedWebhookId(endpoint.id);
+    if (!webhookBackendConfigured) return;
+    if (webhookDeliveries[endpoint.id]) return;
+
+    setLoadingWebhookDeliveriesId(endpoint.id);
+    try {
+      const rows = await listWorkspaceWebhookDeliveries(endpoint.id, webhookContext, 8);
+      setWebhookDeliveries((current) => ({ ...current, [endpoint.id]: rows }));
+    } finally {
+      setLoadingWebhookDeliveriesId(null);
+    }
+  };
+
+  const handleRefreshWebhookDeliveries = async (endpoint: WorkspaceWebhookEndpoint) => {
+    if (!webhookBackendConfigured) return;
+    setLoadingWebhookDeliveriesId(endpoint.id);
+    try {
+      const rows = await listWorkspaceWebhookDeliveries(endpoint.id, webhookContext, 8);
+      setWebhookDeliveries((current) => ({ ...current, [endpoint.id]: rows }));
+      setExpandedWebhookId(endpoint.id);
+    } finally {
+      setLoadingWebhookDeliveriesId(null);
+    }
   };
 
   const handleExportWebhooks = () => {
@@ -701,7 +753,8 @@ export function ApiKeysView() {
                     </td>
                   </tr>
                 ) : webhooks.map((endpoint) => (
-                  <tr key={endpoint.id} className="hover:bg-gray-50/50 transition-colors">
+                  <React.Fragment key={endpoint.id}>
+                  <tr className="hover:bg-gray-50/50 transition-colors">
                     <td className="py-4 px-6">
                       <p className="font-bold text-[15px] text-[var(--text-main)]">{endpoint.name}</p>
                       <p className="text-[12px] text-[var(--text-muted)] mt-1 break-all">{endpoint.url}</p>
@@ -730,6 +783,12 @@ export function ApiKeysView() {
                     </td>
                     <td className="py-4 px-6 text-right space-y-2">
                       <button
+                        onClick={() => void handleToggleWebhookDeliveries(endpoint)}
+                        className="text-[var(--color-primary)] hover:text-blue-800 transition-colors text-sm font-bold flex items-center justify-end w-full"
+                      >
+                        {expandedWebhookId === endpoint.id ? 'Hide deliveries' : 'View deliveries'}
+                      </button>
+                      <button
                         onClick={() => handleToggleWebhookStatus(endpoint)}
                         disabled={!canManage}
                         className="text-[var(--color-primary)] hover:text-blue-800 transition-colors text-sm font-bold flex items-center justify-end w-full disabled:text-gray-300 disabled:cursor-not-allowed"
@@ -752,6 +811,75 @@ export function ApiKeysView() {
                       </button>
                     </td>
                   </tr>
+                  {expandedWebhookId === endpoint.id && (
+                    <tr className="bg-[var(--bg-app)]/70">
+                      <td colSpan={5} className="px-6 py-4">
+                        {!webhookBackendConfigured ? (
+                          <p className="text-sm text-[var(--text-muted)]">
+                            Delivery history is available when the HTTP API backend is configured.
+                          </p>
+                        ) : loadingWebhookDeliveriesId === endpoint.id ? (
+                          <p className="text-sm text-[var(--text-muted)]">Loading recent deliveries...</p>
+                        ) : (webhookDeliveries[endpoint.id]?.length ?? 0) === 0 ? (
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm text-[var(--text-muted)]">No deliveries recorded yet for this endpoint.</p>
+                            <button
+                              onClick={() => void handleRefreshWebhookDeliveries(endpoint)}
+                              className="text-sm font-bold text-[var(--color-primary)] hover:text-blue-800"
+                            >
+                              Refresh
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-bold text-[var(--text-main)]">Recent deliveries</p>
+                              <button
+                                onClick={() => void handleRefreshWebhookDeliveries(endpoint)}
+                                className="text-sm font-bold text-[var(--color-primary)] hover:text-blue-800 inline-flex items-center gap-1"
+                              >
+                                <RefreshCcw className="icon-sm" />
+                                Refresh
+                              </button>
+                            </div>
+                            <div className="overflow-x-auto rounded-xl border border-[var(--border-color)]">
+                              <table className="w-full text-left text-sm">
+                                <thead className="bg-[var(--bg-panel)] text-[11px] uppercase tracking-widest text-gray-400">
+                                  <tr>
+                                    <th className="px-4 py-3">Event</th>
+                                    <th className="px-4 py-3">Status</th>
+                                    <th className="px-4 py-3">Attempt</th>
+                                    <th className="px-4 py-3">HTTP</th>
+                                    <th className="px-4 py-3">Created</th>
+                                    <th className="px-4 py-3">Details</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                  {webhookDeliveries[endpoint.id]?.map((delivery) => (
+                                    <tr key={delivery.id}>
+                                      <td className="px-4 py-3 font-mono text-[12px]">{delivery.eventType}</td>
+                                      <td className="px-4 py-3">
+                                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded border ${WEBHOOK_DELIVERY_STATUS_CLASSES[delivery.status]}`}>
+                                          {WEBHOOK_DELIVERY_STATUS_LABELS[delivery.status]}
+                                        </span>
+                                      </td>
+                                      <td className="px-4 py-3">{delivery.attempt}/{delivery.maxAttempts}</td>
+                                      <td className="px-4 py-3">{delivery.httpStatus ?? '—'}</td>
+                                      <td className="px-4 py-3 whitespace-nowrap">{formatDateTime(delivery.createdAt)}</td>
+                                      <td className="px-4 py-3 text-[12px] text-[var(--text-muted)] max-w-xs truncate">
+                                        {delivery.error ?? (delivery.deliveredAt ? `Delivered ${formatDateTime(delivery.deliveredAt)}` : delivery.eventId)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
