@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ── Stage 1: build ─────────────────────────────────────────────
 # Vite bakes VITE_* env vars at build time, so the data-backend wiring must be
 # supplied as build args (not runtime env).
