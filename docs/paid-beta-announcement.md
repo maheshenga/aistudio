@@ -1,7 +1,9 @@
 # Paid-Beta Staging Announcement Templates
 
 Updated: 2026-06-24  
-Build: `main` @ `7c838df` (tag `v0.1.0-paid-beta-staging` when published)
+Build: `main` @ `b4f65c9` (tag `v0.1.0-paid-beta-staging`)
+
+**Ready-to-send notice:** [paid-beta-cohort-notice-2026-06-24.md](./paid-beta-cohort-notice-2026-06-24.md)
 
 Use after P0 sign-off in [saas-commercial-mvp-p0-release-evidence.md](./saas-commercial-mvp-p0-release-evidence.md).  
 Scope details: [paid-beta-scope.md](./paid-beta-scope.md)  
