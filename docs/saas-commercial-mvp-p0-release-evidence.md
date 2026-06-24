@@ -90,6 +90,7 @@ Complete this section after re-running the release gate on the target build (bra
 | Full P0 release gate | `npm run test:p0-release` | pass | 2026-06-24 | agent verification |
 | API e2e (if HTTP backend deployed) | `cd apps/api && npm test` | pass (36 suites / 170 tests) | 2026-06-24 | agent verification |
 | Staging compose smoke | `docker compose --env-file .env.deploy up -d --build` then register → job → reload | pass (login persists on reload; generation job hold 5 + capture on succeed) | 2026-06-24 | agent + user verification |
+| Staging API automated smoke | `npm run test:staging-api-smoke` | pass (hold/capture/refund + refresh) | 2026-06-24 | agent verification |
 | Git cleanliness | `git diff --check` | pass | 2026-06-24 | agent verification |
 
 Target build:
@@ -128,12 +129,12 @@ Target build:
 | ID | Item | Owner | Status |
 |---|---|---|---|
 | P1-R02 | Lock billing credit estimates vs commercial pricing | Product / Finance | open |
-| P1-R03 | Real provider callback smoke (video/remix/director) | Engineering | open |
+| P1-R03 | Real provider callback smoke (video/remix/director) | Engineering | contract tests pass (`npm run test:provider-callback`, 2026-06-24); live smoke open — see [paid-beta-scope.md](./paid-beta-scope.md) |
 
 ### Post sign-off actions
 
 - [x] Merge release branch to `main` (2026-06-24, `f7f527a`)
 - [ ] Tag release (optional): `v________`
 - [ ] Deploy staging with `docs/deployment.md`
-- [ ] Notify team of paid-beta scope (P0 control plane + selected P1 modules)
+- [ ] Notify team of paid-beta scope — see [paid-beta-scope.md](./paid-beta-scope.md)
 - [ ] Schedule provider smoke (P1-R03) and pricing review (P1-R02)

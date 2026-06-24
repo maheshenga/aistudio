@@ -16,6 +16,7 @@
     "test:workspace-state": "tsx scripts/workspace-state.test.ts",
     "test:launch-readiness": "tsx scripts/launch-readiness.test.ts",
     "test:browser-smoke": "tsx scripts/browser-smoke.test.ts",
+    "test:staging-api-smoke": "tsx scripts/staging-api-smoke.ts",
     "test:p0-specialized": "npm run test:product-registry && npm run test:data-backend && npm run test:workspace-state && npm run test:runtime-contract && npm run test:desktop-bridge && npm run test:multica-mappers && npm run test:multica-runtime-provider && npm run test:web-runtime-provider && npm run test:multica-api-client && npm run test:credit-repo && npm run test:credit-preflight && npm run test:billable-generation && npm run test:workspace-resource && npm run test:customer-repo && npm run test:campaign-repo && npm run test:announcement-repo && npm run test:agency-repo && npm run test:risk-repo && npm run test:risk-policy && npm run test:plugin-policy && npm run test:media-repo && npm run test:keyword-repo && npm run test:ticket-repo && npm run test:payment-repo && npm run test:tax-event-repo && npm run test:task-repo && npm run test:financial-repo && npm run test:settings-repo && npm run test:api-key-repo && npm run test:webhook-repo && npm run test:generation-job-repo-api",
     "test:p0-release": "npm run test:p0-specialized && npm run test:launch-readiness && npm run test:saas-foundation && npm run lint && npm run build && npm run test:browser-smoke",
     "test:runtime-contract": "tsx scripts/runtime-contract.test.ts",

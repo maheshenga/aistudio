@@ -65,6 +65,15 @@ curl -i http://localhost:4000/          # API 健康探测
 # 浏览器打开 http://<host>:8080
 ```
 
+自动化 API 冒烟(注册、credit hold/capture/refund、generation job 生命周期):
+
+```powershell
+npm run test:staging-api-smoke
+# 非默认端口: $env:STAGING_API_URL="http://localhost:4000"; npm run test:staging-api-smoke
+```
+
+Paid-beta 范围与手动 UI 清单见 [paid-beta-scope.md](./paid-beta-scope.md)。
+
 ## 数据库迁移
 
 迁移在 api 容器启动时由 entrypoint 自动 `prisma migrate deploy` 应用——这是生产安全命令,只执行已生成的迁移,不会重置库或交互提示。新增迁移后重新部署即可:
