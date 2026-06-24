@@ -89,39 +89,46 @@ Complete this section after re-running the release gate on the target build (bra
 |---|---|---|---|---|
 | Full P0 release gate | `npm run test:p0-release` | pass | 2026-06-24 | agent verification |
 | API e2e (if HTTP backend deployed) | `cd apps/api && npm test` | pass (36 suites / 170 tests) | 2026-06-24 | agent verification |
-| Staging compose smoke | `docker compose --env-file .env.deploy up -d --build` then register → job → reload | pass (API register/job/credits on 2026-06-24; web at http://localhost:8081) | 2026-06-24 | agent verification |
+| Staging compose smoke | `docker compose --env-file .env.deploy up -d --build` then register → job → reload | pass (login persists on reload; generation job hold 5 + capture on succeed) | 2026-06-24 | agent + user verification |
 | Git cleanliness | `git diff --check` | pass | 2026-06-24 | agent verification |
 
 Target build:
 
 - Branch: `fix/credit-retry-fund-loss` (or `main` after merge)
-- Commit: `9b7d01b`
-- Environment: local
+- Commit: `74c7b59` (pre-merge on `fix/credit-retry-fund-loss`)
+- Environment: local Docker staging (`http://localhost:8081` + API `:4000`)
 
 ### P0 scope checklist
 
 | # | Gate | Pass? | Notes |
 |---|------|-------|-------|
-| 1 | All 12 P0 work packages behave as documented | yes / no | |
-| 2 | Web standalone works without Multica | yes / no | |
-| 3 | Reload preserves workspace state | yes / no | |
-| 4 | Protected actions respect role matrix | yes / no | |
-| 5 | Quota block before billable dispatch | yes / no | |
-| 6 | Activity Logs capture key P0 actions | yes / no | |
-| 7 | No raw secrets visible after save (Settings / API Keys) | yes / no | |
-| 8 | Known warnings accepted (chunk size, optional Multica) | yes / no | |
+| 1 | All 12 P0 work packages behave as documented | yes | automated + staging |
+| 2 | Web standalone works without Multica | yes | browser smoke + staging |
+| 3 | Reload preserves workspace state | yes | user verified JWT session |
+| 4 | Protected actions respect role matrix | yes | browser smoke |
+| 5 | Quota block before billable dispatch | yes | browser smoke + credit hold API |
+| 6 | Activity Logs capture key P0 actions | yes | saas-foundation + smoke |
+| 7 | No raw secrets visible after save (Settings / API Keys) | yes | P3 release gate contracts |
+| 8 | Known warnings accepted (chunk size, optional Multica) | yes | Vite chunk warning only |
 
 ### Go / No-Go
 
 | Field | Value |
 |---|---|
-| **Decision** | `go` / `no-go` |
+| **Decision** | pending official sign-off (`engineering recommends go` for paid-beta staging) |
 | **Approver name** | |
 | **Approver role** | Product owner / Engineering lead / Security |
-| **Sign-off date** | YYYY-MM-DD |
-| **Paid-beta authorized?** | yes / no |
-| **Self-hosted authorized?** | yes / no |
-| **Blockers (if no-go)** | |
+| **Sign-off date** | |
+| **Paid-beta authorized?** | pending (engineering: yes for staging cohort) |
+| **Self-hosted authorized?** | pending (engineering: yes after merge to main) |
+| **Blockers (if no-go)** | P1-R02 pricing review; P1-R03 provider callback certification |
+
+### P1 follow-ups (post P0 go)
+
+| ID | Item | Owner | Status |
+|---|---|---|---|
+| P1-R02 | Lock billing credit estimates vs commercial pricing | Product / Finance | open |
+| P1-R03 | Real provider callback smoke (video/remix/director) | Engineering | open |
 
 ### Post sign-off actions
 
