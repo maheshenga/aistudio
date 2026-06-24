@@ -78,3 +78,55 @@ These checks are included in `npm.cmd run test:p0-specialized`, which is part of
 Decision: pending human `go` / `no-go`
 Approver: pending
 Notes: P0 Batch 1 automated release gate is ready for sign-off. Desktop Multica and self-hosted Multica are compatibility modes for this evidence package, not release-blocking promoted modes unless the release scope is expanded.
+
+## Human Sign-Off Record
+
+Complete this section after re-running the release gate on the target build (branch/commit) and any staging smoke.
+
+### Verification rerun (fill before sign-off)
+
+| Check | Command / action | Result | Date | Operator |
+|---|---|---|---|---|
+| Full P0 release gate | `npm run test:p0-release` | pass / fail | | |
+| API e2e (if HTTP backend deployed) | `cd apps/api && npm test` | pass / fail / n/a | | |
+| Staging compose smoke | `docker compose --env-file .env.deploy up -d --build` then register → job → reload | pass / fail / n/a | | |
+| Git cleanliness | `git diff --check` | pass / fail | | |
+
+Target build:
+
+- Branch: `fix/credit-retry-fund-loss` (or `main` after merge)
+- Commit: `________________`
+- Environment: local / staging / production-like
+
+### P0 scope checklist
+
+| # | Gate | Pass? | Notes |
+|---|------|-------|-------|
+| 1 | All 12 P0 work packages behave as documented | yes / no | |
+| 2 | Web standalone works without Multica | yes / no | |
+| 3 | Reload preserves workspace state | yes / no | |
+| 4 | Protected actions respect role matrix | yes / no | |
+| 5 | Quota block before billable dispatch | yes / no | |
+| 6 | Activity Logs capture key P0 actions | yes / no | |
+| 7 | No raw secrets visible after save (Settings / API Keys) | yes / no | |
+| 8 | Known warnings accepted (chunk size, optional Multica) | yes / no | |
+
+### Go / No-Go
+
+| Field | Value |
+|---|---|
+| **Decision** | `go` / `no-go` |
+| **Approver name** | |
+| **Approver role** | Product owner / Engineering lead / Security |
+| **Sign-off date** | YYYY-MM-DD |
+| **Paid-beta authorized?** | yes / no |
+| **Self-hosted authorized?** | yes / no |
+| **Blockers (if no-go)** | |
+
+### Post sign-off actions
+
+- [ ] Merge release branch to `main`
+- [ ] Tag release (optional): `v________`
+- [ ] Deploy staging with `docs/deployment.md`
+- [ ] Notify team of paid-beta scope (P0 control plane + selected P1 modules)
+- [ ] Schedule provider smoke (P1-R03) and pricing review (P1-R02)
