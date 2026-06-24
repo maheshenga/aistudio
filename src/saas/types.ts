@@ -92,6 +92,7 @@ export type AuditAction =
   | 'webhook_delete'
   | 'webhook_secret_rotate'
   | 'webhook_export'
+  | 'webhook_test'
   | 'financial_report_export'
   | 'financial_risk_audit'
   | 'tax_simulation_run'

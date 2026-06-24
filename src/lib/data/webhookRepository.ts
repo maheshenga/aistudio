@@ -398,3 +398,17 @@ export async function listWorkspaceWebhookDeliveries(
   if (!res.ok || !Array.isArray(res.value)) return [];
   return res.value.map((row) => normalizeWebhookDelivery({ ...row, endpointId }));
 }
+
+export async function sendTestWorkspaceWebhook(
+  endpointId: string,
+  context: WebhookRepositoryContext,
+): Promise<WorkspaceWebhookDelivery | null> {
+  if (!webhookApiClient.configured) return null;
+  const res = await webhookApiClient.post<WorkspaceWebhookDelivery>(
+    context.workspaceId,
+    `webhooks/${encodeURIComponent(endpointId)}/test`,
+    {},
+  );
+  if (!res.ok || !res.value) return null;
+  return normalizeWebhookDelivery({ ...res.value, endpointId });
+}

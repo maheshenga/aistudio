@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { signWebhookPayload, terminalGenerationEventType, buildGenerationWebhookPayload } from '../apps/api/src/webhook/webhook-delivery.service.ts';
+import { signWebhookPayload, terminalGenerationEventType, buildGenerationWebhookPayload, buildTestWebhookPayload } from '../apps/api/src/webhook/webhook-delivery.service.ts';
 
 {
   assert.equal(terminalGenerationEventType('succeeded'), 'generation.completed');
@@ -26,6 +26,10 @@ import { signWebhookPayload, terminalGenerationEventType, buildGenerationWebhook
   assert.match(signature, /^t=1718000000,v1=[0-9a-f]{64}$/);
   assert.equal(signWebhookPayload('whsec-demo', 1_718_000_000, body), signature);
   assert.notEqual(signWebhookPayload('whsec-other', 1_718_000_000, body), signature);
+
+  const testPayload = buildTestWebhookPayload('wh_ep1', 'generation.completed');
+  assert.equal(testPayload.data.test, true);
+  assert.match(String(testPayload.id), /^test:wh_ep1:/);
 }
 
 console.log('webhook delivery contract passed');

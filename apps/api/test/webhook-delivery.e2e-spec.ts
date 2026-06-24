@@ -130,4 +130,27 @@ describe('Webhook delivery (e2e)', () => {
     await delivery.processPendingBatch();
     expect(received?.body).toContain('provider timeout');
   });
+
+  it('POST test sends immediate signed test delivery', async () => {
+    const { workspaceId, accessToken } = await registerUser(app, 'whdel3@test.dev');
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${accessToken}`);
+    const port = (server.address() as AddressInfo).port;
+    const signingSecret = 'whsec-test-endpoint-secret';
+
+    const created = await auth(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/webhooks`).send({
+      name: 'Test ping hook',
+      url: `http://127.0.0.1:${port}/hook`,
+      signingSecret,
+      events: ['generation.completed'],
+    })).expect(201);
+    const endpointId = created.body.value.id;
+
+    received = null;
+    const testResult = await auth(request(app.getHttpServer())
+      .post(`/workspaces/${workspaceId}/webhooks/${endpointId}/test`)).expect(201);
+    expect(testResult.body.value.status).toBe('delivered');
+    expect(testResult.body.value.httpStatus).toBe(200);
+    expect(received).toBeTruthy();
+    expect(JSON.parse(received!.body)).toMatchObject({ type: 'generation.completed', data: { test: true } });
+  });
 });

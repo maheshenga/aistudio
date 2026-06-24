@@ -5,6 +5,7 @@ import {
   hydrateWorkspaceWebhookEndpoints,
   listWorkspaceWebhookDeliveries,
   loadWorkspaceWebhookEndpoints,
+  sendTestWorkspaceWebhook,
   createWorkspaceWebhookEndpoint,
   deleteWorkspaceWebhookEndpoint,
 } from '../src/lib/data/webhookRepository.ts';
@@ -21,7 +22,13 @@ function fakeApi(configured: boolean): ApiClient {
       }
       return { ok: true, value: null } as any;
     },
-    post: async (_ws: string, path: string, body: any) => { lastPost = { path, body }; return { ok: true, value: {} } as any; },
+    post: async (_ws: string, path: string, body: any) => {
+      lastPost = { path, body };
+      if (path.endsWith('/test')) {
+        return { ok: true, value: { id: 'd-test', endpointId: 'srv1', eventType: 'generation.completed', eventId: 'test:srv1:1', status: 'delivered', attempt: 1, maxAttempts: 5, httpStatus: 200, error: null, nextRetryAt: Date.now(), deliveredAt: Date.now(), createdAt: Date.now() } } as any;
+      }
+      return { ok: true, value: {} } as any;
+    },
     patch: async () => ({ ok: true, value: {} }) as any,
     del: async (_ws: string, path: string) => { lastDel = path; return { ok: true, value: {} } as any; },
   } as any;
@@ -41,6 +48,11 @@ async function run() {
   assert.equal(deliveries.length, 1);
   assert.equal(deliveries[0].eventType, 'generation.completed');
   assert.equal(deliveries[0].status, 'delivered');
+
+  const testDelivery = await sendTestWorkspaceWebhook('srv1', { workspaceId: 'wsA', storage: storageA });
+  assert.ok(testDelivery);
+  assert.equal(testDelivery!.status, 'delivered');
+  assert.equal(lastPost?.path, 'webhooks/srv1/test');
 
   lastPost = null;
   const { signingSecret } = createWorkspaceWebhookEndpoint({ name: 'New Hook', url: 'https://ex.com/n', events: ['order.created'], signingSecret: 'whsec-zzzz4321' }, { workspaceId: 'wsA', storage: storageA });

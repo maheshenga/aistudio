@@ -34,6 +34,7 @@ import {
   isWebhookBackendConfigured,
   listWorkspaceWebhookDeliveries,
   loadWorkspaceWebhookEndpoints,
+  sendTestWorkspaceWebhook,
   updateWorkspaceWebhookEndpoint,
   type WorkspaceWebhookDelivery,
   type WorkspaceWebhookEndpoint,
@@ -158,6 +159,7 @@ export function ApiKeysView() {
   const [expandedWebhookId, setExpandedWebhookId] = useState<string | null>(null);
   const [webhookDeliveries, setWebhookDeliveries] = useState<Record<string, WorkspaceWebhookDelivery[]>>({});
   const [loadingWebhookDeliveriesId, setLoadingWebhookDeliveriesId] = useState<string | null>(null);
+  const [testingWebhookId, setTestingWebhookId] = useState<string | null>(null);
   const webhookBackendConfigured = isWebhookBackendConfigured();
 
   useEffect(() => {
@@ -220,7 +222,8 @@ export function ApiKeysView() {
       | 'webhook_update'
       | 'webhook_delete'
       | 'webhook_secret_rotate'
-      | 'webhook_export',
+      | 'webhook_export'
+      | 'webhook_test',
     targetType: 'api_key' | 'webhook' | 'workspace',
     targetId: string,
     metadata: Record<string, unknown>,
@@ -517,6 +520,43 @@ export function ApiKeysView() {
     }
   };
 
+  const handleSendTestWebhook = async (endpoint: WorkspaceWebhookEndpoint) => {
+    if (!canManage) {
+      auditDeveloperPermissionDenied('webhook_test', 'webhook', endpoint.id, { status: endpoint.status });
+      return;
+    }
+    if (!webhookBackendConfigured) {
+      toast('Test delivery requires the HTTP API backend.', 'error');
+      return;
+    }
+    setTestingWebhookId(endpoint.id);
+    try {
+      const result = await sendTestWorkspaceWebhook(endpoint.id, webhookContext);
+      if (!result) {
+        toast('Test webhook request failed.', 'error');
+        return;
+      }
+      setWebhookDeliveries((current) => ({
+        ...current,
+        [endpoint.id]: [result, ...(current[endpoint.id] ?? []).filter((row) => row.id !== result.id)],
+      }));
+      setExpandedWebhookId(endpoint.id);
+      auditDeveloperAction('webhook_test', 'webhook', endpoint.id, {
+        deliveryId: result.id,
+        status: result.status,
+        httpStatus: result.httpStatus,
+      });
+      if (result.status === 'delivered') {
+        toast(`Test webhook delivered (${result.httpStatus ?? 200}).`, 'success');
+      } else {
+        toast(result.error ?? 'Test webhook delivery failed.', 'error');
+      }
+      setWebhooks(loadWorkspaceWebhookEndpoints(webhookContext));
+    } finally {
+      setTestingWebhookId(null);
+    }
+  };
+
   const handleExportWebhooks = () => {
     if (!canManage) {
       auditDeveloperPermissionDenied('webhook_export', 'workspace', session.workspace.id, { webhookCount: webhooks.length });
@@ -782,6 +822,13 @@ export function ApiKeysView() {
                       )}
                     </td>
                     <td className="py-4 px-6 text-right space-y-2">
+                      <button
+                        onClick={() => void handleSendTestWebhook(endpoint)}
+                        disabled={!canManage || testingWebhookId === endpoint.id || endpoint.status !== 'active'}
+                        className="text-[var(--color-primary)] hover:text-blue-800 transition-colors text-sm font-bold flex items-center justify-end w-full disabled:text-gray-300 disabled:cursor-not-allowed"
+                      >
+                        {testingWebhookId === endpoint.id ? 'Sending test...' : 'Send test'}
+                      </button>
                       <button
                         onClick={() => void handleToggleWebhookDeliveries(endpoint)}
                         className="text-[var(--color-primary)] hover:text-blue-800 transition-colors text-sm font-bold flex items-center justify-end w-full"

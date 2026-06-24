@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { Prisma, type GenerationJob } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { EncryptionService } from '../common/encryption/encryption.service';
-import { notFound } from '../common/errors';
+import { notFound, validationError } from '../common/errors';
 
 const RETRY_DELAYS_MS = [30_000, 120_000, 600_000, 3_600_000, 21_600_000];
 const DELIVERY_TIMEOUT_MS = Number(process.env.WEBHOOK_DELIVERY_TIMEOUT_MS ?? 10_000);
@@ -32,6 +32,22 @@ export function buildGenerationWebhookPayload(job: GenerationJob, eventType: str
       progress: job.progress,
       attempt: job.attempt,
       finishedAt: job.finishedAt?.toISOString() ?? null,
+    },
+  };
+}
+
+export function buildTestWebhookPayload(endpointId: string, eventType: string) {
+  const eventId = `test:${endpointId}:${Date.now()}`;
+  return {
+    id: eventId,
+    type: eventType,
+    createdAt: new Date().toISOString(),
+    data: {
+      test: true,
+      endpointId,
+      message: 'AI Studio webhook test ping',
+      sampleJobId: 'job_test_preview',
+      status: 'succeeded',
     },
   };
 }
@@ -129,6 +145,50 @@ export class WebhookDeliveryService {
       deliveredAt: row.deliveredAt?.getTime() ?? null,
       createdAt: row.createdAt.getTime(),
     }));
+  }
+
+  async sendTestDelivery(workspaceId: string, endpointId: string) {
+    const endpoint = await this.prisma.webhookEndpoint.findFirst({ where: { id: endpointId, workspaceId } });
+    if (!endpoint) throw notFound('Webhook endpoint not found');
+    if (endpoint.status !== 'active') {
+      throw validationError('Webhook endpoint must be active to send a test delivery');
+    }
+
+    const eventType = endpoint.events[0] ?? 'generation.completed';
+    const payload = buildTestWebhookPayload(endpointId, eventType);
+    const eventId = String(payload.id);
+
+    const delivery = await this.prisma.webhookDelivery.create({
+      data: {
+        workspaceId,
+        endpointId,
+        eventType,
+        eventId,
+        payload: payload as Prisma.InputJsonValue,
+        status: 'pending',
+        nextRetryAt: new Date(),
+      },
+    });
+
+    await this.deliverOne(delivery.id);
+
+    const updated = await this.prisma.webhookDelivery.findUnique({ where: { id: delivery.id } });
+    if (!updated) throw notFound('Webhook delivery not found');
+
+    return {
+      id: updated.id,
+      endpointId: updated.endpointId,
+      eventType: updated.eventType,
+      eventId: updated.eventId,
+      status: updated.status,
+      attempt: updated.attempt,
+      maxAttempts: updated.maxAttempts,
+      httpStatus: updated.httpStatus,
+      error: updated.error,
+      nextRetryAt: updated.nextRetryAt.getTime(),
+      deliveredAt: updated.deliveredAt?.getTime() ?? null,
+      createdAt: updated.createdAt.getTime(),
+    };
   }
 
   async deliverOne(deliveryId: string): Promise<void> {
