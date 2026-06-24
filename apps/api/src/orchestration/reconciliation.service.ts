@@ -106,13 +106,14 @@ export class ReconciliationService {
             where: { workspaceId: job.workspaceId, jobId: job.id, metadata: { path: ['externalArtifactId'], equals: externalArtifactId } },
           });
           if (exists) continue;
-          await tx.asset.create({
+          const asset = await tx.asset.create({
             data: {
               workspaceId: job.workspaceId, jobId: job.id,
               kind: String(art.kind ?? 'output'), url: art.url ?? null,
               metadata: { externalArtifactId, source: 'multica' } as Prisma.InputJsonValue,
             },
           });
+          await this.webhooks.enqueueForAssetCreated(tx, asset);
         }
         const usageExists = await tx.usageEvent.findFirst({ where: { workspaceId: job.workspaceId, jobId: job.id, category: 'generation' } });
         if (!usageExists) {

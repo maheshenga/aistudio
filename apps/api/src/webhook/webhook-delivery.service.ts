@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
-import { Prisma, type GenerationJob } from '@prisma/client';
+import { Prisma, type Asset, type FinancialRecord, type GenerationJob, type Task } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { EncryptionService } from '../common/encryption/encryption.service';
 import { notFound, validationError } from '../common/errors';
@@ -36,6 +36,63 @@ export function buildGenerationWebhookPayload(job: GenerationJob, eventType: str
   };
 }
 
+export function buildAssetCreatedPayload(asset: Asset) {
+  return {
+    id: `asset.created:${asset.id}`,
+    type: 'asset.created',
+    createdAt: new Date().toISOString(),
+    data: {
+      assetId: asset.id,
+      workspaceId: asset.workspaceId,
+      kind: asset.kind,
+      name: asset.name,
+      url: asset.url,
+      jobId: asset.jobId,
+      projectId: asset.projectId,
+      source: asset.source,
+      moduleId: asset.moduleId,
+    },
+  };
+}
+
+export function buildInvoiceIssuedPayload(record: FinancialRecord) {
+  return {
+    id: `billing.invoice_issued:${record.id}`,
+    type: 'billing.invoice_issued',
+    createdAt: new Date().toISOString(),
+    data: {
+      invoiceId: record.id,
+      workspaceId: record.workspaceId,
+      amountCents: record.amountCents,
+      currency: record.currency,
+      status: record.status,
+      planId: record.planId,
+      counterparty: record.counterparty,
+      occurredAt: record.occurredAt.toISOString(),
+    },
+  };
+}
+
+export function buildTaskUpdatedPayload(task: Task, change: 'created' | 'updated') {
+  return {
+    id: `agent.task_updated:${task.id}:${task.updatedAt.getTime()}`,
+    type: 'agent.task_updated',
+    createdAt: new Date().toISOString(),
+    data: {
+      taskId: task.id,
+      workspaceId: task.workspaceId,
+      change,
+      title: task.title,
+      column: task.column,
+      priority: task.priority,
+      status: task.status,
+      runtimeStatus: task.runtimeStatus,
+      agentId: task.agentId,
+      updatedAt: task.updatedAt.toISOString(),
+    },
+  };
+}
+
 export function buildTestWebhookPayload(endpointId: string, eventType: string) {
   const eventId = `test:${endpointId}:${Date.now()}`;
   return {
@@ -66,25 +123,25 @@ export class WebhookDeliveryService {
     private encryption: EncryptionService,
   ) {}
 
-  async enqueueForTerminalJob(tx: Tx, job: GenerationJob): Promise<void> {
-    const eventType = terminalGenerationEventType(job.status);
-    if (!eventType) return;
-
+  async enqueueForEvent(
+    tx: Tx,
+    workspaceId: string,
+    eventType: string,
+    payload: { id: string; type: string; createdAt: string; data: Record<string, unknown> },
+  ): Promise<void> {
     const endpoints = await tx.webhookEndpoint.findMany({
       where: {
-        workspaceId: job.workspaceId,
+        workspaceId,
         status: 'active',
         OR: [{ events: { has: eventType } }, { events: { has: '*' } }],
       },
     });
     if (endpoints.length === 0) return;
 
-    const payload = buildGenerationWebhookPayload(job, eventType);
     const eventId = String(payload.id);
-
     await tx.webhookDelivery.createMany({
       data: endpoints.map((endpoint) => ({
-        workspaceId: job.workspaceId,
+        workspaceId,
         endpointId: endpoint.id,
         eventType,
         eventId,
@@ -94,6 +151,24 @@ export class WebhookDeliveryService {
       })),
       skipDuplicates: true,
     });
+  }
+
+  async enqueueForTerminalJob(tx: Tx, job: GenerationJob): Promise<void> {
+    const eventType = terminalGenerationEventType(job.status);
+    if (!eventType) return;
+    await this.enqueueForEvent(tx, job.workspaceId, eventType, buildGenerationWebhookPayload(job, eventType));
+  }
+
+  async enqueueForAssetCreated(tx: Tx, asset: Asset): Promise<void> {
+    await this.enqueueForEvent(tx, asset.workspaceId, 'asset.created', buildAssetCreatedPayload(asset));
+  }
+
+  async enqueueForInvoiceIssued(tx: Tx, record: FinancialRecord): Promise<void> {
+    await this.enqueueForEvent(tx, record.workspaceId, 'billing.invoice_issued', buildInvoiceIssuedPayload(record));
+  }
+
+  async enqueueForTaskUpdated(tx: Tx, task: Task, change: 'created' | 'updated'): Promise<void> {
+    await this.enqueueForEvent(tx, task.workspaceId, 'agent.task_updated', buildTaskUpdatedPayload(task, change));
   }
 
   async processPendingBatch(limit = 20): Promise<number> {

@@ -153,4 +153,93 @@ describe('Webhook delivery (e2e)', () => {
     expect(received).toBeTruthy();
     expect(JSON.parse(received!.body)).toMatchObject({ type: 'generation.completed', data: { test: true } });
   });
+
+  it('enqueues asset.created when an asset is created', async () => {
+    const { workspaceId, accessToken } = await registerUser(app, 'whdel4@test.dev');
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${accessToken}`);
+    const port = (server.address() as AddressInfo).port;
+
+    await auth(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/webhooks`).send({
+      name: 'Asset hook',
+      url: `http://127.0.0.1:${port}/hook`,
+      signingSecret: 'whsec-asset-secret',
+      events: ['asset.created'],
+    })).expect(201);
+
+    const created = await auth(request(app.getHttpServer())
+      .post(`/workspaces/${workspaceId}/assets`)
+      .send({ kind: 'image', url: 'http://x/photo.png', name: 'Hero' })).expect(201);
+    const assetId = created.body.value.id;
+
+    const row = await prisma.webhookDelivery.findFirst({ where: { workspaceId } });
+    expect(row?.eventType).toBe('asset.created');
+
+    await delivery.processPendingBatch();
+    expect(JSON.parse(received!.body)).toMatchObject({
+      type: 'asset.created',
+      data: { assetId, kind: 'image', url: 'http://x/photo.png' },
+    });
+  });
+
+  it('enqueues billing.invoice_issued for issued invoices', async () => {
+    const { workspaceId, accessToken } = await registerUser(app, 'whdel5@test.dev');
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${accessToken}`);
+    const port = (server.address() as AddressInfo).port;
+
+    await auth(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/webhooks`).send({
+      name: 'Invoice hook',
+      url: `http://127.0.0.1:${port}/hook`,
+      signingSecret: 'whsec-invoice-secret',
+      events: ['billing.invoice_issued'],
+    })).expect(201);
+
+    const created = await auth(request(app.getHttpServer())
+      .post(`/workspaces/${workspaceId}/financial-records`)
+      .send({ kind: 'invoice', status: 'issued', amountCents: 12000, counterparty: 'Acme' })).expect(201);
+    const invoiceId = created.body.value.id;
+
+    const row = await prisma.webhookDelivery.findFirst({ where: { workspaceId } });
+    expect(row?.eventType).toBe('billing.invoice_issued');
+
+    await delivery.processPendingBatch();
+    expect(JSON.parse(received!.body)).toMatchObject({
+      type: 'billing.invoice_issued',
+      data: { invoiceId, amountCents: 12000, counterparty: 'Acme' },
+    });
+  });
+
+  it('enqueues agent.task_updated on task create and update', async () => {
+    const { workspaceId, accessToken } = await registerUser(app, 'whdel6@test.dev');
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${accessToken}`);
+    const port = (server.address() as AddressInfo).port;
+
+    await auth(request(app.getHttpServer()).post(`/workspaces/${workspaceId}/webhooks`).send({
+      name: 'Task hook',
+      url: `http://127.0.0.1:${port}/hook`,
+      signingSecret: 'whsec-task-secret',
+      events: ['agent.task_updated'],
+    })).expect(201);
+
+    const created = await auth(request(app.getHttpServer())
+      .post(`/workspaces/${workspaceId}/tasks`)
+      .send({ title: 'Draft copy', column: 'todo', priority: 'Medium', type: 'content', date: '', isAuto: false })).expect(201);
+    const taskId = created.body.value.id;
+
+    const rows = await prisma.webhookDelivery.findMany({ where: { workspaceId }, orderBy: { createdAt: 'asc' } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].eventType).toBe('agent.task_updated');
+
+    await auth(request(app.getHttpServer())
+      .patch(`/workspaces/${workspaceId}/tasks/${taskId}`)
+      .send({ column: 'done' })).expect(200);
+
+    const afterUpdate = await prisma.webhookDelivery.findMany({ where: { workspaceId }, orderBy: { createdAt: 'asc' } });
+    expect(afterUpdate).toHaveLength(2);
+
+    await delivery.processPendingBatch();
+    expect(JSON.parse(received!.body)).toMatchObject({
+      type: 'agent.task_updated',
+      data: { taskId, column: 'done', change: 'updated' },
+    });
+  });
 });
