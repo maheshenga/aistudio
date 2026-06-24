@@ -83,7 +83,7 @@ Defined in `src/lib/data/billingRepository.ts` (`loadWorkspaceBillingPlans`):
 ## After sign-off (engineering)
 
 1. Update `COMMERCIAL_USAGE_PRICING` (frontend + API copies) if prices change  
-2. Re-run `npm run test:saas-foundation`, `npm run test:billable-generation`, `npm run test:staging-api-smoke`  
+2. Re-run `npm run test:saas-foundation`, `npm run test:billable-generation`, `npm run test:pricing-matrix-sync`, `npm run test:staging-api-smoke`  
 3. Rebuild staging API container: `docker compose --env-file .env.deploy up -d --build api`  
 4. Mark P1-R02 closed in [saas-commercial-mvp-p0-release-evidence.md](./saas-commercial-mvp-p0-release-evidence.md)
 

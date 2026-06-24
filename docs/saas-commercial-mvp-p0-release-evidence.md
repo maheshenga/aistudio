@@ -92,13 +92,14 @@ Complete this section after re-running the release gate on the target build (bra
 | Staging compose smoke | `docker compose --env-file .env.deploy up -d --build` then register → job → reload | pass (login persists on reload; generation job hold 5 + capture on succeed) | 2026-06-24 | agent + user verification |
 | Staging API automated smoke | `npm run test:staging-api-smoke` | pass (hold/capture/refund + refresh) | 2026-06-24 | agent verification (re-run pass) |
 | Staging callback smoke (P1-R03) | `npm run test:staging-callback-smoke` | pass (video/remix/director hold/capture/refund/idempotent) | 2026-06-24 | agent verification |
+| Pricing matrix API/UI sync | `npm run test:pricing-matrix-sync` | pass | 2026-06-24 | agent verification |
 | Staging UI image module smoke | Login → 商用级图像生成 → asset on dashboard | pass (`image-*.jpg` asset visible; JWT session persists) | 2026-06-24 | user + agent verification |
 | Git cleanliness | `git diff --check` | pass | 2026-06-24 | agent verification |
 
 Target build:
 
 - Branch: `main` (merged 2026-06-24 from `fix/credit-retry-fund-loss`)
-- Commit: `fb23690`
+- Commit: `60304e8`
 - Environment: local Docker staging (`http://localhost:8081` + API `:4000`)
 
 ### P0 scope checklist
