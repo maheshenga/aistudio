@@ -25,6 +25,16 @@ export default defineConfig(() => {
             const normalizedId = id.replace(/\\/g, '/');
             if (!normalizedId.includes('/node_modules/')) {
               if (
+                normalizedId.includes('/src/lib/') ||
+                normalizedId.includes('/src/runtime/') ||
+                normalizedId.includes('/src/saas/') ||
+                normalizedId.includes('/src/hooks/') ||
+                normalizedId.includes('/src/product/') ||
+                normalizedId.endsWith('/src/types.ts')
+              ) {
+                return 'app-core';
+              }
+              if (
                 normalizedId.includes('/src/components/Store') ||
                 normalizedId.includes('/src/components/Crm') ||
                 normalizedId.includes('/src/components/Customer')
