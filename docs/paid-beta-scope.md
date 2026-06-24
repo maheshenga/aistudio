@@ -111,6 +111,15 @@ Module: **商用级图像生成** (`image`)
 
 **Automated (API):** `npm run test:staging-api-smoke` — pass on 2026-06-24 against `http://localhost:4000`.
 
+**Automated (P1-R03 callback path):**
+
+```powershell
+npm run test:provider-callback          # local handler fixtures (7 cases)
+npm run test:staging-callback-smoke     # video / remix_smart / director_desk on live API
+```
+
+Recorded: **pass** on 2026-06-24 (mock-render provider id mapping, hold/capture/refund, terminal idempotency, asset link).
+
 **Manual (UI on staging web):**
 
 1. [ ] Open Image Creation, submit prompt, confirm credit preflight / hold
@@ -123,6 +132,10 @@ Module: **商用级图像生成** (`image`)
 
 Module: **视频创作引擎** (`video`)
 
+**Automated:** `npm run test:staging-callback-smoke` — **pass** 2026-06-24 (API: externalTaskId mapping, succeed capture, failed refund, idempotent terminal).
+
+**Manual (UI on staging web):**
+
 1. [ ] Start video job; note local `generationJobId` in UI or network tab
 2. [ ] Job enters `running`; provider external id stored in job metadata (not replacing local id)
 3. [ ] On provider completion: job → `succeeded`, video asset linked
@@ -134,6 +147,10 @@ Module: **视频创作引擎** (`video`)
 
 Module: **智能混剪** (`remix_smart`)
 
+**Automated:** `npm run test:staging-callback-smoke` — **pass** 2026-06-24 (API path).
+
+**Manual (UI):**
+
 1. [ ] Create remix job with test media
 2. [ ] Callback success → assets + task follow-up if configured
 3. [ ] Partial success metadata preserved on job
@@ -142,6 +159,10 @@ Module: **智能混剪** (`remix_smart`)
 ### D. Director desk render (async)
 
 Module: **全局导演台** (`director_desk`)
+
+**Automated:** `npm run test:staging-callback-smoke` — **pass** 2026-06-24 (API path).
+
+**Manual (UI):**
 
 1. [ ] Trigger billable director action that enqueues render/generation
 2. [ ] Callback links output to director asset version
@@ -153,9 +174,9 @@ Module: **全局导演台** (`director_desk`)
 | Module | Operator | Date | Result | Notes |
 |---|---|---|---|---|
 | `image` | user + agent | 2026-06-24 | pass | Staging UI asset `image-*.jpg` + API smoke |
-| `video` | | | pass / fail | |
-| `remix_smart` | | | pass / fail | |
-| `director_desk` | | | pass / fail | |
+| `video` | agent | 2026-06-24 | pass (API) | `test:staging-callback-smoke`; UI manual optional |
+| `remix_smart` | agent | 2026-06-24 | pass (API) | `test:staging-callback-smoke`; UI manual optional |
+| `director_desk` | agent | 2026-06-24 | pass (API) | `test:staging-callback-smoke`; UI manual optional |
 
 When all required rows are **pass**, update P1-R03 status in [saas-commercial-mvp-p0-release-evidence.md](./saas-commercial-mvp-p0-release-evidence.md) and [saas-commercial-mvp-remaining-issues.md](./saas-commercial-mvp-remaining-issues.md).
 

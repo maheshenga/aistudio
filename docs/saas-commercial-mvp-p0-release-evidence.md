@@ -91,6 +91,7 @@ Complete this section after re-running the release gate on the target build (bra
 | API e2e (if HTTP backend deployed) | `cd apps/api && npm test` | pass (36 suites / 170 tests) | 2026-06-24 | agent verification |
 | Staging compose smoke | `docker compose --env-file .env.deploy up -d --build` then register → job → reload | pass (login persists on reload; generation job hold 5 + capture on succeed) | 2026-06-24 | agent + user verification |
 | Staging API automated smoke | `npm run test:staging-api-smoke` | pass (hold/capture/refund + refresh) | 2026-06-24 | agent verification (re-run pass) |
+| Staging callback smoke (P1-R03) | `npm run test:staging-callback-smoke` | pass (video/remix/director hold/capture/refund/idempotent) | 2026-06-24 | agent verification |
 | Staging UI image module smoke | Login → 商用级图像生成 → asset on dashboard | pass (`image-*.jpg` asset visible; JWT session persists) | 2026-06-24 | user + agent verification |
 | Git cleanliness | `git diff --check` | pass | 2026-06-24 | agent verification |
 
@@ -123,14 +124,26 @@ Target build:
 | **Sign-off date** | |
 | **Paid-beta authorized?** | pending (engineering: yes for staging cohort) |
 | **Self-hosted authorized?** | pending (engineering: yes after merge to main) |
-| **Blockers (if no-go)** | P1-R02 pricing review; P1-R03 provider callback certification |
+| **Blockers (if no-go)** | P1-R02 pricing review; live external provider (beyond mock-render staging API) |
+
+### Product owner sign-off (copy when ready)
+
+```
+Decision: go
+Approver name: ____________________
+Approver role: Product owner
+Sign-off date: ____________________
+Paid-beta authorized: yes (staging cohort)
+Self-hosted authorized: yes
+Notes: P0 automated + staging API/UI smoke complete on main @ ______. P1-R02 pricing review scheduled. P1-R03 external provider deferred; mock-render API path certified.
+```
 
 ### P1 follow-ups (post P0 go)
 
 | ID | Item | Owner | Status |
 |---|---|---|---|
 | P1-R02 | Lock billing credit estimates vs commercial pricing | Product / Finance | open |
-| P1-R03 | Real provider callback smoke (video/remix/director) | Engineering | contract tests pass (`npm run test:provider-callback`, 2026-06-24); live smoke open — see [paid-beta-scope.md](./paid-beta-scope.md) |
+| P1-R03 | Real provider callback smoke (video/remix/director) | Engineering | contract + staging API pass (`test:provider-callback`, `test:staging-callback-smoke`, 2026-06-24); live external provider open — see [paid-beta-scope.md](./paid-beta-scope.md) |
 
 ### Post sign-off actions
 

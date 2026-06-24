@@ -72,6 +72,13 @@ npm run test:staging-api-smoke
 # 非默认端口: $env:STAGING_API_URL="http://localhost:4000"; npm run test:staging-api-smoke
 ```
 
+P1-R03 异步 callback 路径（video / remix / director，mock-render provider）:
+
+```powershell
+npm run test:staging-callback-smoke
+npm run test:provider-callback
+```
+
 Paid-beta 范围与手动 UI 清单见 [paid-beta-scope.md](./paid-beta-scope.md)。
 
 ## 数据库迁移
