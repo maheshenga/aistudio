@@ -87,16 +87,16 @@ Complete this section after re-running the release gate on the target build (bra
 
 | Check | Command / action | Result | Date | Operator |
 |---|---|---|---|---|
-| Full P0 release gate | `npm run test:p0-release` | pass / fail | | |
-| API e2e (if HTTP backend deployed) | `cd apps/api && npm test` | pass / fail / n/a | | |
-| Staging compose smoke | `docker compose --env-file .env.deploy up -d --build` then register → job → reload | pass / fail / n/a | | |
-| Git cleanliness | `git diff --check` | pass / fail | | |
+| Full P0 release gate | `npm run test:p0-release` | pass | 2026-06-24 | agent verification |
+| API e2e (if HTTP backend deployed) | `cd apps/api && npm test` | pass (36 suites / 170 tests) | 2026-06-24 | agent verification |
+| Staging compose smoke | `docker compose --env-file .env.deploy up -d --build` then register → job → reload | pending | | |
+| Git cleanliness | `git diff --check` | pass | 2026-06-24 | agent verification |
 
 Target build:
 
 - Branch: `fix/credit-retry-fund-loss` (or `main` after merge)
-- Commit: `________________`
-- Environment: local / staging / production-like
+- Commit: `9b7d01b`
+- Environment: local
 
 ### P0 scope checklist
 
