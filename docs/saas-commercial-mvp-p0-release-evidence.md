@@ -142,7 +142,7 @@ Notes: P0 automated + staging API/UI smoke complete on main @ ______. P1-R02 pri
 
 | ID | Item | Owner | Status |
 |---|---|---|---|
-| P1-R02 | Lock billing credit estimates vs commercial pricing | Product / Finance | open |
+| P1-R02 | Lock billing credit estimates vs commercial pricing | Product / Finance | open — review [p1-r02-pricing-review.md](./p1-r02-pricing-review.md) |
 | P1-R03 | Real provider callback smoke (video/remix/director) | Engineering | contract + staging API pass (`test:provider-callback`, `test:staging-callback-smoke`, 2026-06-24); live external provider open — see [paid-beta-scope.md](./paid-beta-scope.md) |
 
 ### Post sign-off actions
