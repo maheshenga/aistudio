@@ -1,24 +1,21 @@
 # P1-R02 Commercial Pricing Review
 
 Updated: 2026-06-24  
-Status: **pending product / finance sign-off**  
+Status: **API aligned with matrix (2026-06-24); pending product / finance sign-off on unit prices**  
 Code source of truth (UI usage estimates): `src/lib/data/usageRepository.ts` → `COMMERCIAL_USAGE_PRICING`  
-API generation-job hold/capture: `apps/api/src/billing/credit-cost.ts` → **flat 5 credits** per job today
+API generation-job hold/capture: `apps/api/src/billing/credit-cost.ts` + `commercial-pricing.ts` → **module-aware credits** (defaults to 5 when module unknown)
 
 ## Why this review blocks production billing
 
-Paid-beta staging already charges credits on the **API** when `VITE_DATA_BACKEND=http`:
+Paid-beta staging charges credits on the **API** when `VITE_DATA_BACKEND=http`:
 
-- Job create → **hold 5** (API `generationCredits()`)
+- Job create → **hold** per module matrix (e.g. `image` = 8, `video` = 24)
 - Job succeed → capture hold
 - Job fail → refund
 
-The **Billing / usage UI** shows different per-module estimates from `COMMERCIAL_USAGE_PRICING` (e.g. `image` generation = **8** credits in usage events, API hold = **5**).
+The **Billing / usage UI** uses the same `COMMERCIAL_USAGE_PRICING` matrix for usage events and preflight.
 
-Finance must either:
-
-1. **Approve the mismatch** for staging (document as known beta gap), or  
-2. **Align API holds** with the commercial matrix before real invoices.
+Finance must **approve the unit prices** in the matrix before production invoices — engineering alignment is complete.
 
 ## Proposed matrix (engineering estimates — all `billingStatus: estimated`)
 
@@ -72,7 +69,6 @@ Defined in `src/lib/data/billingRepository.ts` (`loadWorkspaceBillingPlans`):
 ## Finance / product sign-off checklist
 
 - [ ] Approve or revise each **unitCredits** value in the table above
-- [ ] Decide **API hold policy**: keep flat 5 vs sync with matrix per `moduleId` + action
 - [ ] Confirm **monthly plan allowances** and overage pricing
 - [ ] Confirm **export** actions are billable in paid-beta scope
 - [ ] Sign approver name + date below
@@ -82,13 +78,13 @@ Defined in `src/lib/data/billingRepository.ts` (`loadWorkspaceBillingPlans`):
 | Decision | pending |
 | Approver | |
 | Date | |
-| API alignment required before production? | yes / no |
+| API alignment required before production? | done (2026-06-24) — finance still approves prices |
 
 ## After sign-off (engineering)
 
-1. Update `COMMERCIAL_USAGE_PRICING` if prices change  
-2. Align `apps/api/src/billing/credit-cost.ts` (or module-aware pricing service) with approved matrix  
-3. Re-run `npm run test:saas-foundation`, `npm run test:billable-generation`, `npm run test:staging-api-smoke`  
+1. Update `COMMERCIAL_USAGE_PRICING` (frontend + API copies) if prices change  
+2. Re-run `npm run test:saas-foundation`, `npm run test:billable-generation`, `npm run test:staging-api-smoke`  
+3. Rebuild staging API container: `docker compose --env-file .env.deploy up -d --build api`  
 4. Mark P1-R02 closed in [saas-commercial-mvp-p0-release-evidence.md](./saas-commercial-mvp-p0-release-evidence.md)
 
 ## Related docs

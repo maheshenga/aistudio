@@ -31,7 +31,11 @@ export class OrchestrationService {
   }
 
   async dispatch(workspaceId: string, dto: DispatchDto, actor: Actor) {
-    const amount = generationCredits({ runtimeMode: dto.runtimeMode, providerKind: dto.providerKind ?? null });
+    const amount = generationCredits({
+      type: dto.type,
+      runtimeMode: dto.runtimeMode,
+      providerKind: dto.providerKind ?? null,
+    });
     return this.prisma.$transaction(async (tx) => {
       await this.credit.ensureMonthlyGrant(tx, workspaceId);
       const job = await tx.generationJob.create({

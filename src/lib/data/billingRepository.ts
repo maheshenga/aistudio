@@ -322,6 +322,11 @@ export function estimateGenerationJobCredits(job: GenerationJob): number {
   const metadataCost = readNumericMetadata(job, ['computeCost', 'costCredits', 'creditCost', 'estimatedCredits']);
   if (metadataCost !== null) return metadataCost;
 
+  if (job.moduleId) {
+    const priced = calculateCommercialUsageCredits(job.moduleId, 'generation');
+    if (priced > 0) return priced;
+  }
+
   if (job.runtimeMode === 'desktop_multica') return 1;
   if (job.providerKind === 'multica') return 3;
   return 5;

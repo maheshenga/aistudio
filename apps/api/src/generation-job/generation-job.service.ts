@@ -46,6 +46,8 @@ export class GenerationJobService {
   create(workspaceId: string, dto: CreateJobDto) {
     const { runtimeTaskId, input, metadata, status, ...rest } = dto;
     const amount = generationCredits({
+      moduleId: dto.moduleId ?? null,
+      type: dto.type ?? null,
       runtimeMode: dto.runtimeMode ?? null,
       providerKind: dto.providerKind ?? null,
     });

@@ -13,12 +13,12 @@ const API = (process.env.STAGING_API_URL ?? 'http://localhost:4000').replace(/\/
 const email = process.env.STAGING_SMOKE_EMAIL ?? `staging-callback-${Date.now()}@test.dev`;
 const password = process.env.STAGING_SMOKE_PASSWORD ?? 'StagingSmoke1!';
 
-type ModuleCase = { moduleId: string; assetKind: string; title: string };
+type ModuleCase = { moduleId: string; assetKind: string; title: string; cost: number };
 
 const MODULES: ModuleCase[] = [
-  { moduleId: 'video', assetKind: 'video', title: 'Staging callback video' },
-  { moduleId: 'remix_smart', assetKind: 'video', title: 'Staging callback remix' },
-  { moduleId: 'director_desk', assetKind: 'video', title: 'Staging callback director' },
+  { moduleId: 'video', assetKind: 'video', title: 'Staging callback video', cost: 24 },
+  { moduleId: 'remix_smart', assetKind: 'video', title: 'Staging callback remix', cost: 20 },
+  { moduleId: 'director_desk', assetKind: 'video', title: 'Staging callback director', cost: 6 },
 ];
 
 async function api(path: string, init: RequestInit = {}, token?: string) {
@@ -87,7 +87,7 @@ async function runModule(
   assert.notEqual(jobId, providerJobId, `${mod.moduleId}: local job id must not be replaced`);
 
   const startBalance = await balance(token, workspaceId);
-  assert.equal(startBalance, before - 5, `${mod.moduleId}: hold on create`);
+  assert.equal(startBalance, before - mod.cost, `${mod.moduleId}: hold on create`);
 
   await api(`/workspaces/${workspaceId}/generation-jobs/${jobId}/status`, {
     method: 'PATCH',
@@ -134,7 +134,7 @@ async function runModule(
   }, token);
   assert.equal(failed.status, 201);
   const failedId = (failed.body as { value: { id: string } }).value.id;
-  assert.equal(await balance(token, workspaceId), startBalance - 5);
+  assert.equal(await balance(token, workspaceId), startBalance - mod.cost);
   await api(`/workspaces/${workspaceId}/generation-jobs/${failedId}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status: 'failed', error: 'Provider timeout' }),

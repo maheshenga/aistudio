@@ -70,7 +70,7 @@ describe('GenerationJob (e2e)', () => {
 
     const created = await auth(request(app.getHttpServer())
       .post(`/workspaces/${workspaceId}/generation-jobs`)
-      .send({ type: 'image', providerKind: 'gemini', runtimeMode: 'web', status: 'pending' })).expect(201);
+      .send({ type: 'generation', providerKind: 'gemini', runtimeMode: 'web', status: 'pending' })).expect(201);
     const id = created.body.value.id;
     expect((await credit.getBalance(workspaceId)).balance).toBe(before - 5);
 
@@ -80,10 +80,27 @@ describe('GenerationJob (e2e)', () => {
 
     const failed = await auth(request(app.getHttpServer())
       .post(`/workspaces/${workspaceId}/generation-jobs`)
-      .send({ type: 'image', providerKind: 'gemini', runtimeMode: 'web', status: 'pending' })).expect(201);
+      .send({ type: 'generation', providerKind: 'gemini', runtimeMode: 'web', status: 'pending' })).expect(201);
     const failedId = failed.body.value.id;
     expect((await credit.getBalance(workspaceId)).balance).toBe(before - 10);
     await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${failedId}/status`).send({ status: 'failed', error: 'boom' })).expect(200);
     expect((await credit.getBalance(workspaceId)).balance).toBe(before - 5);
+  });
+
+  it('create holds module-priced credits when moduleId is set', async () => {
+    const { workspaceId, accessToken } = await registerUser(app, 'gjb2@test.dev');
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${accessToken}`);
+    const credit = app.get(CreditService);
+    const before = (await credit.getBalance(workspaceId)).balance;
+
+    const created = await auth(request(app.getHttpServer())
+      .post(`/workspaces/${workspaceId}/generation-jobs`)
+      .send({ type: 'generation', moduleId: 'image', providerKind: 'mock', runtimeMode: 'web', status: 'pending' })).expect(201);
+    const id = created.body.value.id;
+    expect((await credit.getBalance(workspaceId)).balance).toBe(before - 8);
+
+    await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${id}/status`).send({ status: 'running' })).expect(200);
+    await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${id}/status`).send({ status: 'succeeded' })).expect(200);
+    expect((await credit.getBalance(workspaceId)).balance).toBe(before - 8);
   });
 });

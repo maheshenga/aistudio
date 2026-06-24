@@ -1,7 +1,23 @@
-// 确定性生成成本(与前端 src/lib/data/billingRepository.ts estimateGenerationJobCredits 对齐)。
-// 仅依赖 runtimeMode/providerKind,dispatch 时已知 → 预估=实际,无补差。
-export function generationCredits(job: { runtimeMode: string | null; providerKind: string | null }): number {
+import { commercialUsageCredits, type CommercialUsagePricingAction } from './commercial-pricing';
+
+export type GenerationCreditInput = {
+  moduleId?: string | null;
+  type?: string | null;
+  runtimeMode?: string | null;
+  providerKind?: string | null;
+  pricingAction?: CommercialUsagePricingAction;
+};
+
+/** Deterministic generation hold/capture amount (aligned with frontend usage matrix). */
+export function generationCredits(job: GenerationCreditInput): number {
   if (job.runtimeMode === 'desktop_multica') return 1;
   if (job.providerKind === 'multica') return 3;
+
+  const moduleId = job.moduleId ?? job.type ?? null;
+  if (moduleId) {
+    const priced = commercialUsageCredits(moduleId, job.pricingAction ?? 'generation');
+    if (priced !== null) return priced;
+  }
+
   return 5;
 }

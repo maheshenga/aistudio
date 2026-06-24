@@ -32,6 +32,8 @@ async function api(path: string, init: RequestInit = {}, token?: string) {
   return { status: res.status, body };
 }
 
+const IMAGE_GENERATION_CREDITS = 8;
+
 async function run() {
   console.log(`Staging API smoke → ${API}`);
 
@@ -69,7 +71,7 @@ async function run() {
 
   const afterHold = await api(`/workspaces/${workspaceId}/credits/balance`, {}, accessToken);
   const held = (afterHold.body as { value: { balance: number } }).value.balance;
-  assert.equal(held, before - 5, `hold: expected ${before - 5}, got ${held}`);
+  assert.equal(held, before - IMAGE_GENERATION_CREDITS, `hold: expected ${before - IMAGE_GENERATION_CREDITS}, got ${held}`);
 
   await api(`/workspaces/${workspaceId}/generation-jobs/${jobId}/status`, {
     method: 'PATCH',
@@ -83,7 +85,7 @@ async function run() {
 
   const afterCapture = await api(`/workspaces/${workspaceId}/credits/balance`, {}, accessToken);
   const captured = (afterCapture.body as { value: { balance: number } }).value.balance;
-  assert.equal(captured, before - 5, `capture: expected ${before - 5}, got ${captured}`);
+  assert.equal(captured, before - IMAGE_GENERATION_CREDITS, `capture: expected ${before - IMAGE_GENERATION_CREDITS}, got ${captured}`);
 
   const failedJob = await api(`/workspaces/${workspaceId}/generation-jobs`, {
     method: 'POST',
@@ -98,7 +100,7 @@ async function run() {
   assert.equal(failedJob.status, 201);
   const failedId = (failedJob.body as { value: { id: string } }).value.id;
   const midBalance = (await api(`/workspaces/${workspaceId}/credits/balance`, {}, accessToken)).body as { value: { balance: number } };
-  assert.equal(midBalance.value.balance, before - 10);
+  assert.equal(midBalance.value.balance, before - IMAGE_GENERATION_CREDITS * 2);
 
   await api(`/workspaces/${workspaceId}/generation-jobs/${failedId}/status`, {
     method: 'PATCH',
@@ -107,7 +109,7 @@ async function run() {
 
   const afterRefund = await api(`/workspaces/${workspaceId}/credits/balance`, {}, accessToken);
   const refunded = (afterRefund.body as { value: { balance: number } }).value.balance;
-  assert.equal(refunded, before - 5, `refund: expected ${before - 5}, got ${refunded}`);
+  assert.equal(refunded, before - IMAGE_GENERATION_CREDITS, `refund: expected ${before - IMAGE_GENERATION_CREDITS}, got ${refunded}`);
 
   const refresh = await api('/auth/refresh', {
     method: 'POST',
@@ -117,7 +119,7 @@ async function run() {
   assert.ok((refresh.body as { value: { accessToken: string } }).value.accessToken);
 
   console.log('✓ register + workspace');
-  console.log('✓ credit hold (-5) on job create');
+  console.log(`✓ credit hold (-${IMAGE_GENERATION_CREDITS}) on image job create`);
   console.log('✓ credit capture on succeed (no double charge)');
   console.log('✓ credit refund on failed job');
   console.log('✓ refresh token rotation');
