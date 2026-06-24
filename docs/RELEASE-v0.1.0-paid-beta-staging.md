@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-24  
 **Tag:** `v0.1.0-paid-beta-staging`  
-**Branch:** `main` @ `6a28f87`
+**Branch:** `main` @ `c22a2c7`
 
 ## Summary
 

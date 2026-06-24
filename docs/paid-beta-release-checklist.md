@@ -1,6 +1,6 @@
 # Paid-Beta Release Checklist
 
-Updated: 2026-06-24 · `main` @ `6a28f87`
+Updated: 2026-06-24 · `main` @ `c22a2c7`
 
 ## Done
 
