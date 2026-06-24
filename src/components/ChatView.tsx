@@ -2,7 +2,8 @@ import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useUndoRedo } from '../context/UndoRedoContext';
 import { Send, Bot, Sparkles, Plus, Image as ImageIcon, FileText, Code, Settings2, MoreVertical, Search, Paperclip, MessageSquare, Briefcase, Hash, History, PenTool, Database, Megaphone, Check, Compass, Users, Video, Music, Layout, BookOpen, Star, TrendingUp, Brain, ToggleLeft, ToggleRight, Copy, ThumbsUp, ThumbsDown, RefreshCcw, Command, Square, X, Trash2, Bookmark, CheckSquare } from 'lucide-react';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { updateGenerationJob } from '../lib/data/generationJobRepository';
+import { buildBillableGenerationPricing, startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
@@ -95,9 +96,9 @@ export function ChatView() {
     ]);
   }, [activeAgent]);
 
-  const handleStop = () => {
+  const handleStop = async () => {
     if (activeJobRef.current) {
-      updateGenerationJob(activeJobRef.current, { status: 'cancelled', progress: 100, error: 'Stopped by user' }, jobContext);
+      await updateGenerationJob(activeJobRef.current, { status: 'cancelled', progress: 100, error: 'Stopped by user' }, jobContext);
       logAuditEvent({
         action: 'generation_job_failed',
         moduleId: 'chat',
@@ -130,7 +131,7 @@ export function ChatView() {
     ]);
   };
 
-  const handleSend = (textOrEvent?: string | React.MouseEvent) => {
+  const handleSend = async (textOrEvent?: string | React.MouseEvent) => {
     let text = typeof textOrEvent === 'string' ? textOrEvent : prompt;
     if ((!text.trim() && attachments.length === 0) || isGenerating || isStreaming) return;
     setIsGenerating(true);
@@ -156,7 +157,7 @@ export function ChatView() {
     setPrompt('');
     setAttachments([]);
 
-    const job = createGenerationJob({
+    const started = await startBillableGenerationJob({
       title: `Chat - ${activeAgent.name}`,
       prompt: userMsg,
       status: 'running',
@@ -170,7 +171,17 @@ export function ChatView() {
         memoryEnabled,
         attachments: attachments.map(attachment => attachment.name),
       },
-    }, jobContext);
+    }, jobContext, {
+      workspaceId: session.workspace.id,
+      plan: session.workspace.plan,
+      pricing: buildBillableGenerationPricing('chat'),
+    });
+    if (started.ok === false) {
+      toast(started.message, 'error');
+      setIsGenerating(false);
+      return;
+    }
+    const job = started.job;
     activeJobRef.current = job.id;
     logAuditEvent({
       action: 'generation_job_start',
@@ -189,7 +200,7 @@ export function ChatView() {
 
     const fullResponse = `基于 ${activeAgent.name} 的专业知识模型，针对您的问题：“${text || '针对附件内容的分析'}”，以下是我的分析建议：\n\n1. **核心观点阐述**\n问题本质在于信息流的分发与整合，建议通过结构化数据重塑链路。\n\n2. **可执行方案拆解**\n- 第一阶段：梳理现有存量资源。\n- 第二阶段：引入自动化工作流脚本。\n- 第三阶段：持续监控与A/B测试。\n\n3. **预测与复盘指标**\n预计能降低 30% 的沟通成本，同时提高产出一致性。\n\n需要我进一步将其细化或生成可视化报告吗？${memoryText}`;
 
-    updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+    await updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
     const asset = createWorkspaceAsset({
       name: `chat-response-${Date.now()}.md`,
       type: 'text',

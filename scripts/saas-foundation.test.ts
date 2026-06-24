@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 
+function createsGenerationJob(source: string): boolean {
+  return source.includes('startBillableGenerationJob') || source.includes('createGenerationJob');
+}
+
 import {
   AUTH_SESSION_STORAGE_KEY,
   clearAuthSession,
@@ -1462,7 +1466,13 @@ assert.equal(
   'desktop runtime setting should fall back to Web when the desktop bridge is unavailable',
 );
 
-const generationJob = createGenerationJob(
+let generationJob: Awaited<ReturnType<typeof createGenerationJob>>;
+let completedGenerationJob: Awaited<ReturnType<typeof updateGenerationJob>>;
+let failedGenerationJob: Awaited<ReturnType<typeof failGenerationJob>>;
+let retriedGenerationJob: Awaited<ReturnType<typeof retryGenerationJob>>;
+
+await (async () => {
+  generationJob = await createGenerationJob(
   {
     title: 'Generate hero image',
     prompt: 'Create a clean product hero image',
@@ -1482,7 +1492,7 @@ assert.equal(generationJob.userId, session.user.id);
 assert.equal(listGenerationJobs({ storage, workspaceId: session.workspace.id }).length, 1);
 assert.equal(listGenerationJobs({ storage, workspaceId: 'workspace_other' }).length, 0);
 
-const completedGenerationJob = updateGenerationJob(
+completedGenerationJob = await updateGenerationJob(
   generationJob.id,
   { status: 'succeeded', progress: 100 },
   { storage, workspaceId: session.workspace.id, now: 1_780_000_000_400 },
@@ -1491,7 +1501,7 @@ assert.equal(completedGenerationJob?.status, 'succeeded');
 assert.equal(completedGenerationJob?.completedAt, 1_780_000_000_400);
 assert.equal(getGenerationJob(generationJob.id, { storage, workspaceId: session.workspace.id })?.progress, 100);
 
-const failedGenerationJob = failGenerationJob(
+failedGenerationJob = await failGenerationJob(
   generationJob.id,
   {
     error: 'Provider timed out before returning an image.',
@@ -1510,7 +1520,7 @@ assert.equal(failedGenerationJob?.metadata.retryable, true);
 assert.equal(failedGenerationJob?.metadata.retryCount, 0);
 assert.equal(failedGenerationJob?.metadata.failureKind, 'timeout');
 
-const retriedGenerationJob = retryGenerationJob(
+retriedGenerationJob = await retryGenerationJob(
   failedGenerationJob!.id,
   { storage, workspaceId: session.workspace.id, userId: session.user.id, now: 1_780_000_000_460 },
 );
@@ -1520,6 +1530,7 @@ assert.equal(retriedGenerationJob?.status, 'pending');
 assert.equal(retriedGenerationJob?.progress, 0);
 assert.equal(retriedGenerationJob?.metadata.retryOfJobId, failedGenerationJob?.id);
 assert.equal(retriedGenerationJob?.metadata.attempt, 2);
+})();
 assert.equal(
   getGenerationJob(failedGenerationJob!.id, { storage, workspaceId: session.workspace.id })?.metadata.retryCount,
   1,
@@ -4180,7 +4191,7 @@ assert.ok(
     'AICopilot should persist assistant work through SaaS repositories',
   );
   assert.ok(
-    source.includes('createGenerationJob') &&
+    createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('logAuditEvent') &&
@@ -4215,7 +4226,7 @@ assert.ok(
     'QuickPromptFAB should persist quick prompt work through SaaS repositories',
   );
   assert.ok(
-    source.includes('createGenerationJob') &&
+    createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('logAuditEvent') &&
@@ -4246,7 +4257,7 @@ assert.ok(
     'FeatureView should persist generated work and usage through SaaS repositories',
   );
   assert.ok(
-    source.includes('createGenerationJob') &&
+    createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('createWorkspaceUsageEvent') &&
@@ -4260,7 +4271,7 @@ assert.ok(
   );
   const generateHandler = source.slice(source.indexOf('const handleGenerate'), source.indexOf('const handleKeyDown'));
   assert.ok(
-    generateHandler.includes('createGenerationJob') &&
+    createsGenerationJob(generateHandler) &&
       generateHandler.includes('updateGenerationJob') &&
       generateHandler.includes('createWorkspaceAsset') &&
       generateHandler.includes('createWorkspaceUsageEvent') &&
@@ -4321,7 +4332,7 @@ assert.ok(
     'RemixView should persist smart remix generation and usage through SaaS repositories',
   );
   assert.ok(
-    source.includes('createGenerationJob') &&
+    createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('createPricedWorkspaceUsageEvent') &&
@@ -4337,7 +4348,7 @@ assert.ok(
     source.indexOf('return (', source.indexOf('function RemixSmart')),
   );
   assert.ok(
-    previewHandler.includes('createGenerationJob') &&
+    createsGenerationJob(previewHandler) &&
       previewHandler.includes('updateGenerationJob') &&
       previewHandler.includes('createWorkspaceAsset') &&
       previewHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -4389,7 +4400,7 @@ assert.ok(
     source.indexOf('return (', source.indexOf('function RemixViral')),
   );
   assert.ok(
-    viralHandler.includes('createGenerationJob') &&
+    createsGenerationJob(viralHandler) &&
       viralHandler.includes('updateGenerationJob') &&
       viralHandler.includes('createWorkspaceAsset') &&
       viralHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -4422,7 +4433,7 @@ assert.ok(
       source.includes('updateWorkspaceCampaign') &&
       source.includes('createOrUpdateWorkspaceCustomerLead') &&
       source.includes('createWorkspaceTask') &&
-      source.includes('createGenerationJob') &&
+      createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('createPricedWorkspaceUsageEvent') &&
@@ -4454,7 +4465,7 @@ assert.ok(
     viralHandler.includes('createWorkspaceCampaign') &&
     viralHandler.includes('updateWorkspaceCampaign') &&
       viralHandler.includes('createMarketingLeadHandoff') &&
-      viralHandler.includes('createGenerationJob') &&
+      createsGenerationJob(viralHandler) &&
       viralHandler.includes('updateGenerationJob') &&
       viralHandler.includes('createWorkspaceAsset') &&
       viralHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -4486,7 +4497,7 @@ assert.ok(
   assert.ok(
     websiteHandler.includes('createWorkspaceCampaign') &&
       websiteHandler.includes('createMarketingLeadHandoff') &&
-      websiteHandler.includes('createGenerationJob') &&
+      createsGenerationJob(websiteHandler) &&
       websiteHandler.includes('updateGenerationJob') &&
       websiteHandler.includes('createWorkspaceAsset') &&
       websiteHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -4598,7 +4609,7 @@ assert.ok(
   );
   assert.ok(
     source.includes('listGenerationJobs') &&
-      source.includes('createGenerationJob') &&
+      createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('createPricedWorkspaceUsageEvent') &&
@@ -4615,7 +4626,7 @@ assert.ok(
   );
   const generateHandler = source.slice(source.indexOf('const handleGenerate'), source.indexOf('const handleGenerateSeo'));
   assert.ok(
-    generateHandler.includes('createGenerationJob') &&
+    createsGenerationJob(generateHandler) &&
       generateHandler.includes('updateGenerationJob') &&
       generateHandler.includes('createWorkspaceAsset') &&
       generateHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -4632,7 +4643,7 @@ assert.ok(
   );
   const seoHandler = source.slice(source.indexOf('const handleGenerateSeo'), source.indexOf('const isImgMethod'));
   assert.ok(
-    seoHandler.includes('createGenerationJob') &&
+    createsGenerationJob(seoHandler) &&
       seoHandler.includes('updateGenerationJob') &&
       seoHandler.includes('createWorkspaceAsset') &&
       seoHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -4661,7 +4672,7 @@ assert.ok(
     'CopywritingView should persist generated copy and usage through SaaS repositories',
   );
   assert.ok(
-    source.includes('createGenerationJob') &&
+    createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('createPricedWorkspaceUsageEvent') &&
@@ -4690,7 +4701,7 @@ assert.ok(
     'ImageCreationView should persist generated images and usage through SaaS repositories',
   );
   assert.ok(
-    source.includes('createGenerationJob') &&
+    createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('createPricedWorkspaceUsageEvent') &&
@@ -4718,7 +4729,7 @@ assert.ok(
     'ImageEditorView should persist image editing work and usage through SaaS repositories',
   );
   assert.ok(
-    source.includes('createGenerationJob') &&
+    createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('createPricedWorkspaceUsageEvent') &&
@@ -4746,7 +4757,7 @@ assert.ok(
     source.indexOf('return (', source.indexOf('const handleApplyTool')),
   );
   assert.ok(
-    applyHandler.includes('createGenerationJob') &&
+    createsGenerationJob(applyHandler) &&
       applyHandler.includes('updateGenerationJob') &&
       applyHandler.includes('createWorkspaceAsset') &&
       applyHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -4775,7 +4786,7 @@ assert.ok(
     'VideoCreationView should persist generated videos and usage through SaaS repositories',
   );
   assert.ok(
-    source.includes('createGenerationJob') &&
+    createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('createPricedWorkspaceUsageEvent') &&
@@ -4803,7 +4814,7 @@ assert.ok(
     'SpeechView should persist generated speech and usage through SaaS repositories',
   );
   assert.ok(
-    source.includes('createGenerationJob') &&
+    createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('createPricedWorkspaceUsageEvent') &&
@@ -4832,7 +4843,7 @@ assert.ok(
     'ChatView should persist assistant replies and usage through SaaS repositories',
   );
   assert.ok(
-    source.includes('createGenerationJob') &&
+    createsGenerationJob(source) &&
       source.includes('updateGenerationJob') &&
       source.includes('createWorkspaceAsset') &&
       source.includes('createPricedWorkspaceUsageEvent') &&

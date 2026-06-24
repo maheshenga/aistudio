@@ -1,7 +1,8 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Play, Pause, Download, Settings2, Mic, History, Wand2, Plus, SlidersHorizontal, AudioLines, Share2, Sparkles, Search, Trash2, Globe, User, Layers, FileText, ChevronDown, SplitSquareVertical, GripVertical } from 'lucide-react';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import { createGenerationJob, failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
@@ -50,6 +51,7 @@ export function SpeechView() {
   // P1-R08: Speech voice/provider consent 策略
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [showConsentPrompt, setShowConsentPrompt] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   // 切换 voice 时重置 consent
   useEffect(() => {
@@ -82,7 +84,7 @@ export function SpeechView() {
     return () => clearInterval(interval);
   }, [isPlaying]);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     const speechText = mode === 'single'
       ? text.trim()
       : scriptLines.map(line => `${line.role}: ${line.text.trim()}`).filter(line => line.trim()).join('\n');
@@ -98,8 +100,9 @@ export function SpeechView() {
     setIsGenerating(true);
     setAudioReady(false);
     setIsPlaying(false);
+    setGenerationError(null);
 
-    const job = createGenerationJob({
+    const started = await startBillableGenerationJob({
       title: `Speech - ${activeVoice.name}`,
       prompt: speechText,
       status: 'running',
@@ -120,7 +123,23 @@ export function SpeechView() {
         consentReason: activeVoice.consentReason,
         language: activeVoice.lang,
       },
-    }, jobContext);
+    }, jobContext, {
+      workspaceId: session.workspace.id,
+      plan: session.workspace.plan,
+      pricing: {
+        moduleId: 'speech',
+        pricingAction: 'generation',
+        providerKind: 'mock',
+        runtimeMode: 'web',
+        unitCount: Math.max(1, Math.ceil(speechText.length / 120)),
+      },
+    });
+    if (started.ok === false) {
+      setGenerationError(started.message);
+      setIsGenerating(false);
+      return;
+    }
+    const job = started.job;
     logAuditEvent({
       action: 'generation_job_start',
       moduleId: 'speech',
@@ -139,7 +158,7 @@ export function SpeechView() {
 
     try {
       const audioUrl = `aistudio://generated-audio/${job.id}.wav`;
-      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+      await updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
       const asset = createWorkspaceAsset({
         name: `speech-${Date.now()}.wav`,
         type: 'audio',
@@ -195,7 +214,7 @@ export function SpeechView() {
       setIsPlaying(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Speech provider failed before returning audio.';
-      failGenerationJob(job.id, {
+      await failGenerationJob(job.id, {
         error: message,
         metadata: {
           mode,

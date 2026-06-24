@@ -44,6 +44,16 @@ export interface GenerationJobRepositoryContext {
   now?: number;
 }
 
+export class GenerationJobApiError extends Error {
+  code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'GenerationJobApiError';
+    this.code = code;
+  }
+}
+
 export const GENERATION_JOB_STORAGE_PREFIX = 'aistudio_generation_jobs';
 
 function storageKey(context: GenerationJobRepositoryContext): string {
@@ -62,11 +72,15 @@ function toOptionalTimestamp(value: unknown): number | undefined {
   }
   return undefined;
 }
+
 function toTimestamp(value: unknown, fallback: number): number {
   return toOptionalTimestamp(value) ?? fallback;
 }
 
-function normalizeJob(raw: GenerationJob & { externalTaskId?: string; finishedAt?: number | string }, context: GenerationJobRepositoryContext): GenerationJob {
+export function normalizeGenerationJob(
+  raw: GenerationJob & { externalTaskId?: string; finishedAt?: number | string },
+  context: GenerationJobRepositoryContext,
+): GenerationJob {
   const now = context.now ?? Date.now();
   const status = (raw.status ?? 'pending') as GenerationJobStatus;
   const runtimeTaskId = raw.runtimeTaskId ?? raw.externalTaskId;
@@ -80,7 +94,7 @@ function normalizeJob(raw: GenerationJob & { externalTaskId?: string; finishedAt
     status,
     providerKind: (raw.providerKind ?? 'gemini') as RuntimeProviderKind,
     runtimeMode: (raw.runtimeMode ?? 'single') as RuntimeMode,
-    moduleId: raw.moduleId,
+    moduleId: raw.moduleId as ModuleId | undefined,
     agentId: raw.agentId,
     runtimeTaskId,
     progress: Math.max(0, Math.min(100, Number(raw.progress ?? 0))),
@@ -100,7 +114,7 @@ function readJobs(context: GenerationJobRepositoryContext): GenerationJob[] {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.map((job) => normalizeJob(job as GenerationJob, context));
+    return parsed.map((job) => normalizeGenerationJob(job as GenerationJob, context));
   } catch {
     return [];
   }
@@ -114,7 +128,7 @@ function dispatchJobsUpdated(workspaceId: string): void {
 
 function writeJobs(jobs: GenerationJob[], context: GenerationJobRepositoryContext): GenerationJob[] {
   const storage = getRepositoryStorage(context.storage);
-  const normalized = jobs.map((job) => normalizeJob(job, context));
+  const normalized = jobs.map((job) => normalizeGenerationJob(job, context));
   storage?.setItem(storageKey(context), JSON.stringify(normalized));
   dispatchJobsUpdated(context.workspaceId);
   return normalized;
@@ -123,7 +137,27 @@ function writeJobs(jobs: GenerationJob[], context: GenerationJobRepositoryContex
 let generationJobApiClient: ApiClient = defaultApiClient;
 export function __setGenerationJobApiClientForTest(client: ApiClient): void { generationJobApiClient = client; }
 
-const generationJobCache = new Map<string, GenerationJob[]>(); // key=workspaceId
+export function isGenerationJobBackendConfigured(): boolean {
+  return generationJobApiClient.configured;
+}
+
+const generationJobCache = new Map<string, GenerationJob[]>();
+
+function upsertJobInCache(job: GenerationJob, context: GenerationJobRepositoryContext): GenerationJob {
+  const normalized = normalizeGenerationJob(job, context);
+  const current = generationJobCache.get(context.workspaceId) ?? [];
+  const next = [normalized, ...current.filter((row) => row.id !== normalized.id)];
+  generationJobCache.set(context.workspaceId, next);
+  dispatchJobsUpdated(context.workspaceId);
+  return normalized;
+}
+
+export function mirrorGenerationJobFromBackend(
+  raw: GenerationJob & { externalTaskId?: string; finishedAt?: number | string },
+  context: GenerationJobRepositoryContext,
+): GenerationJob {
+  return upsertJobInCache(raw, context);
+}
 
 export async function hydrateGenerationJobs(context: GenerationJobRepositoryContext): Promise<void> {
   if (!generationJobApiClient.configured) return;
@@ -131,7 +165,7 @@ export async function hydrateGenerationJobs(context: GenerationJobRepositoryCont
   if (res.ok && Array.isArray(res.value)) {
     generationJobCache.set(
       context.workspaceId,
-      res.value.map((j) => normalizeJob(j as GenerationJob, context)),
+      res.value.map((j) => normalizeGenerationJob(j as GenerationJob, context)),
     );
     dispatchJobsUpdated(context.workspaceId);
   }
@@ -149,8 +183,38 @@ export function getGenerationJob(id: string, context: GenerationJobRepositoryCon
   return readJobs(context).find((job) => job.id === id) ?? null;
 }
 
-export function createGenerationJob(input: GenerationJobInput, context: GenerationJobRepositoryContext): GenerationJob {
+function buildCreatePayload(input: GenerationJobInput) {
+  return {
+    title: input.title,
+    prompt: input.prompt,
+    status: input.status,
+    providerKind: input.providerKind,
+    runtimeMode: input.runtimeMode,
+    moduleId: input.moduleId,
+    agentId: input.agentId,
+    runtimeTaskId: input.runtimeTaskId,
+    progress: input.progress,
+    metadata: input.metadata,
+    error: input.error,
+  };
+}
+
+export async function createGenerationJob(
+  input: GenerationJobInput,
+  context: GenerationJobRepositoryContext,
+): Promise<GenerationJob> {
   const now = context.now ?? Date.now();
+
+  if (generationJobApiClient.configured) {
+    const res = await generationJobApiClient.post<GenerationJob>(context.workspaceId, 'generation-jobs', buildCreatePayload(input));
+    if (!res.ok) {
+      const failure = res as { ok: false; error: { code: string; message: string } };
+      throw new GenerationJobApiError(failure.error.code, failure.error.message);
+    }
+    if (!res.value) throw new GenerationJobApiError('unknown_error', 'createGenerationJob failed');
+    return upsertJobInCache(res.value as GenerationJob, context);
+  }
+
   const job: GenerationJob = {
     id: `gen_${now}_${Math.random().toString(36).slice(2, 8)}`,
     workspaceId: context.workspaceId,
@@ -170,59 +234,34 @@ export function createGenerationJob(input: GenerationJobInput, context: Generati
     completedAt: isCompletedStatus(input.status) ? now : undefined,
     error: input.error,
   };
-
-  if (generationJobApiClient.configured) {
-    const normalized = normalizeJob(job, context);
-    generationJobCache.set(context.workspaceId, [normalized, ...(generationJobCache.get(context.workspaceId) ?? [])]);
-    dispatchJobsUpdated(context.workspaceId);
-    void generationJobApiClient
-      .post(context.workspaceId, 'generation-jobs', {
-        title: job.title,
-        prompt: job.prompt,
-        status: job.status,
-        providerKind: job.providerKind,
-        runtimeMode: job.runtimeMode,
-        moduleId: job.moduleId,
-        agentId: job.agentId,
-        runtimeTaskId: job.runtimeTaskId,
-        progress: job.progress,
-        metadata: job.metadata,
-        error: job.error,
-      })
-      .then((res) => { if (!res.ok) console.error('createGenerationJob write-through failed', res); })
-      .catch((err) => console.error('createGenerationJob write-through failed', err));
-    return normalized;
-  }
-
   writeJobs([job, ...readJobs(context)], context);
   return job;
 }
 
-// Status transitions go to the dedicated `generation-jobs/{id}/status` endpoint (state machine),
-// NOT a plain PATCH. fire-and-forget; preserves local state-machine computation.
-function writeThroughJobStatus(
+async function writeThroughJobStatus(
   id: string,
   status: GenerationJobStatus,
   error: string | undefined,
   context: GenerationJobRepositoryContext,
-): void {
-  void generationJobApiClient
-    .patch(context.workspaceId, `generation-jobs/${id}/status`, { status, error })
-    .then((res) => { if (!res.ok) console.error('generationJob status write-through failed', res); })
-    .catch((err) => console.error('generationJob status write-through failed', err));
+): Promise<void> {
+  const res = await generationJobApiClient.patch(context.workspaceId, `generation-jobs/${id}/status`, { status, error });
+  if (!res.ok) {
+    const failure = res as { ok: false; error: { code: string; message: string } };
+    throw new GenerationJobApiError(failure.error.code, failure.error.message);
+  }
 }
 
-export function updateGenerationJob(
+export async function updateGenerationJob(
   id: string,
   patch: Partial<Omit<GenerationJob, 'id' | 'workspaceId' | 'createdAt'>>,
   context: GenerationJobRepositoryContext,
-): GenerationJob | null {
+): Promise<GenerationJob | null> {
   const now = context.now ?? Date.now();
   let updatedJob: GenerationJob | null = null;
   const applyPatch = (job: GenerationJob): GenerationJob => {
     if (job.id !== id) return job;
     const status = patch.status ?? job.status;
-    updatedJob = normalizeJob({
+    updatedJob = normalizeGenerationJob({
       ...job,
       ...patch,
       updatedAt: now,
@@ -236,13 +275,12 @@ export function updateGenerationJob(
     generationJobCache.set(context.workspaceId, current.map(applyPatch));
     dispatchJobsUpdated(context.workspaceId);
     if (updatedJob && patch.status !== undefined) {
-      writeThroughJobStatus(id, updatedJob.status, updatedJob.error, context);
+      await writeThroughJobStatus(id, updatedJob.status, updatedJob.error, context);
     }
     return updatedJob;
   }
 
   const updatedJobs = readJobs(context).map(applyPatch);
-
   writeJobs(updatedJobs, context);
   return updatedJob;
 }
@@ -257,11 +295,11 @@ function readAttempt(metadata: Record<string, unknown>): number {
   return Number.isFinite(attempt) && attempt > 0 ? attempt : 1;
 }
 
-export function failGenerationJob(
+export async function failGenerationJob(
   id: string,
   input: GenerationJobFailureInput,
   context: GenerationJobRepositoryContext,
-): GenerationJob | null {
+): Promise<GenerationJob | null> {
   const existingJob = getGenerationJob(id, context);
   if (!existingJob) return null;
 
@@ -285,15 +323,37 @@ export function failGenerationJob(
   );
 }
 
-export function retryGenerationJob(id: string, context: GenerationJobRepositoryContext): GenerationJob | null {
+export async function retryGenerationJob(
+  id: string,
+  context: GenerationJobRepositoryContext,
+): Promise<GenerationJob | null> {
   const failedJob = getGenerationJob(id, context);
   if (!failedJob || failedJob.status !== 'failed') return null;
+
+  if (generationJobApiClient.configured) {
+    const res = await generationJobApiClient.post<{ job: GenerationJob }>(context.workspaceId, `orchestration/jobs/${id}/retry`, {});
+    if (!res.ok || !res.value?.job) return null;
+    const retried = upsertJobInCache(res.value.job, context);
+    await updateGenerationJob(
+      failedJob.id,
+      {
+        metadata: {
+          ...failedJob.metadata,
+          retryable: true,
+          retryCount: readRetryCount(failedJob.metadata) + 1,
+          lastRetryRequestedAt: context.now ?? Date.now(),
+        },
+      },
+      context,
+    );
+    return retried;
+  }
 
   const now = context.now ?? Date.now();
   const retryCount = readRetryCount(failedJob.metadata) + 1;
   const attempt = readAttempt(failedJob.metadata) + 1;
 
-  const retryJob = createGenerationJob(
+  const retryJob = await createGenerationJob(
     {
       title: failedJob.title,
       prompt: failedJob.prompt,
@@ -316,7 +376,7 @@ export function retryGenerationJob(id: string, context: GenerationJobRepositoryC
     context,
   );
 
-  updateGenerationJob(
+  await updateGenerationJob(
     failedJob.id,
     {
       metadata: {

@@ -24,7 +24,7 @@ import {
   type WorkspaceInvoiceRow,
 } from '../lib/data/financialRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
-import { hydrateCreditBalance, getCreditBalanceSnapshot, grantCredits } from '../lib/data/creditRepository';
+import { hydrateCreditBalance, getCreditBalanceSnapshot, grantCredits, isCreditBackendConfigured } from '../lib/data/creditRepository';
 import {
   getDefaultWorkspacePaymentMethod,
   updateWorkspacePaymentMethod,
@@ -172,7 +172,9 @@ export function BillingView() {
   );
 
   const backendSnapshot = getCreditBalanceSnapshot({ workspaceId: session.workspace.id });
-  const remainingCredits = backendSnapshot?.balance ?? billingUsage.remainingCredits;
+  const remainingCredits = isCreditBackendConfigured()
+    ? (backendSnapshot?.balance ?? 0)
+    : billingUsage.remainingCredits;
 
   const plans = billingPlans
     .filter((plan) => plan.status === 'active' || plan.id === session.workspace.plan)

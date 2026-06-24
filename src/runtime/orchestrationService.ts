@@ -12,6 +12,7 @@ export interface DispatchTaskInput {
 
 export interface DispatchTaskResult {
   jobId: string;
+  job: Record<string, unknown>;
   externalTaskId?: string;
 }
 
@@ -47,13 +48,14 @@ export function createOrchestrationService(options: OrchestrationServiceOptions)
         throw err;
       }
       if (!dispatched.value) throw new Error('dispatch failed');
-      const jobId = dispatched.value.job.id;
+      const job = dispatched.value.job;
+      const jobId = job.id;
       // task 已由调用方(modal)通过 provider.createTask 创建,这里只绑定外部任务,避免重复创建
       const externalTaskId = extractExternalTaskId(task);
       if (externalTaskId) {
         await apiClient.post(workspaceId, `orchestration/jobs/${jobId}/link-external`, { externalTaskId });
       }
-      return { jobId, externalTaskId };
+      return { jobId, job, externalTaskId };
     },
 
     async cancelTask(jobId, externalTaskId) {

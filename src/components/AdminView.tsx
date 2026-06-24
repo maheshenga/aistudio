@@ -2528,8 +2528,8 @@ function AdminTasks() {
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 20);
 
-  const handleCancelJob = (job: GenerationJob) => {
-    updateGenerationJob(job.id, { status: 'cancelled', progress: 100, error: 'Cancelled by admin console' }, jobContext);
+  const handleCancelJob = async (job: GenerationJob) => {
+    await updateGenerationJob(job.id, { status: 'cancelled', progress: 100, error: 'Cancelled by admin console' }, jobContext);
     logAuditEvent({
       action: 'generation_job_failed',
       moduleId: 'admin' as ModuleId,
@@ -2545,8 +2545,8 @@ function AdminTasks() {
     toast(`Cancelled ${job.title}`, 'success');
   };
 
-  const handleRetryJob = (job: GenerationJob) => {
-    updateGenerationJob(job.id, { status: 'pending', progress: 0, error: undefined, completedAt: undefined }, jobContext);
+  const handleRetryJob = async (job: GenerationJob) => {
+    await updateGenerationJob(job.id, { status: 'pending', progress: 0, error: undefined, completedAt: undefined }, jobContext);
     logAuditEvent({
       action: 'generation_job_start',
       moduleId: 'admin' as ModuleId,

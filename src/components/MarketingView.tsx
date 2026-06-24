@@ -4,7 +4,8 @@ import { useSaasSession } from '../saas/SaasAuthContext';
 import { createWorkspaceCampaign, updateWorkspaceCampaign, type WorkspaceCampaign } from '../lib/data/campaignRepository';
 import { createOrUpdateWorkspaceCustomerLead } from '../lib/data/customerRepository';
 import { createWorkspaceTask } from '../lib/data/taskRepository';
-import { createGenerationJob, failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { buildBillableGenerationPricing, startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
@@ -151,7 +152,7 @@ function MarketingViral({ onNavigate }: { onNavigate?: (id: any) => void }) {
   const [activeView, setActiveView] = React.useState<'list' | 'editor'>('list');
   const [publishStatus, setPublishStatus] = React.useState<string | null>(null);
 
-  const handlePublishCampaign = () => {
+  const handlePublishCampaign = async () => {
     const campaign = createWorkspaceCampaign({
       name: '春季上新满减大促',
       channel: 'viral_qr',
@@ -169,7 +170,7 @@ function MarketingViral({ onNavigate }: { onNavigate?: (id: any) => void }) {
         distribution: 'customer_authorized_video_matrix',
       },
     }, repositoryContext);
-    const job = createGenerationJob({
+    const started = await startBillableGenerationJob({
       title: 'Marketing viral QR campaign kit',
       prompt: `Create QR print assets and video-matrix distribution rules for ${campaign.name}`,
       status: 'running',
@@ -182,7 +183,16 @@ function MarketingViral({ onNavigate }: { onNavigate?: (id: any) => void }) {
         channel: campaign.channel,
         offer: '50 CNY coupon',
       },
-    }, repositoryContext);
+    }, repositoryContext, {
+      workspaceId: session.workspace.id,
+      plan: session.workspace.plan,
+      pricing: buildBillableGenerationPricing('marketing_viral'),
+    });
+    if (started.ok === false) {
+      setPublishStatus(started.message);
+      return;
+    }
+    const job = started.job;
     logAuditEvent({
       action: 'generation_job_start',
       moduleId: 'marketing_viral',
@@ -195,7 +205,7 @@ function MarketingViral({ onNavigate }: { onNavigate?: (id: any) => void }) {
     }, { session });
 
     try {
-      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
+      await updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
       const asset = createWorkspaceAsset({
       name: 'spring-viral-qr-print-kit.pdf',
       type: 'document',
@@ -292,7 +302,7 @@ function MarketingViral({ onNavigate }: { onNavigate?: (id: any) => void }) {
       setActiveView('list');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Marketing provider failed before returning campaign assets.';
-      failGenerationJob(job.id, {
+      await failGenerationJob(job.id, {
         error: message,
         metadata: {
           campaignId: campaign.id,
@@ -804,7 +814,7 @@ function MarketingWebsite({ onNavigate }: { onNavigate?: (id: any) => void }) {
   );
   const [generationStatus, setGenerationStatus] = React.useState<string | null>(null);
 
-  const handleGenerateWebsite = () => {
+  const handleGenerateWebsite = async () => {
     const campaign = createWorkspaceCampaign({
       name: 'Nexus Tech AI landing page',
       channel: 'website',
@@ -822,7 +832,7 @@ function MarketingWebsite({ onNavigate }: { onNavigate?: (id: any) => void }) {
         seoScoreTarget: 94,
       },
     }, repositoryContext);
-    const job = createGenerationJob({
+    const started = await startBillableGenerationJob({
       title: 'Marketing website landing page',
       prompt: `Generate responsive SaaS landing page and SEO metadata for ${campaign.name}`,
       status: 'running',
@@ -835,7 +845,16 @@ function MarketingWebsite({ onNavigate }: { onNavigate?: (id: any) => void }) {
         domain: 'landing.nexus-tech.io',
         seoScoreTarget: 94,
       },
-    }, repositoryContext);
+    }, repositoryContext, {
+      workspaceId: session.workspace.id,
+      plan: session.workspace.plan,
+      pricing: buildBillableGenerationPricing('marketing_website'),
+    });
+    if (started.ok === false) {
+      setGenerationStatus(started.message);
+      return;
+    }
+    const job = started.job;
     logAuditEvent({
       action: 'generation_job_start',
       moduleId: 'marketing_website',
@@ -848,7 +867,7 @@ function MarketingWebsite({ onNavigate }: { onNavigate?: (id: any) => void }) {
     }, { session });
 
     try {
-      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
+      await updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
       const asset = createWorkspaceAsset({
       name: 'nexus-tech-ai-landing-page.html',
       type: 'document',
@@ -946,7 +965,7 @@ function MarketingWebsite({ onNavigate }: { onNavigate?: (id: any) => void }) {
       setGenerationStatus('Website campaign generated, saved, and usage recorded.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Website provider failed before returning a landing page.';
-      failGenerationJob(job.id, {
+      await failGenerationJob(job.id, {
         error: message,
         metadata: {
           campaignId: campaign.id,

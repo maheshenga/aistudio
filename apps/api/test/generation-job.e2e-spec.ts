@@ -2,6 +2,7 @@ import * as request from 'supertest';
 import { INestApplication } from '@nestjs/common';
 import { bootstrapTestApp, resetDb, registerUser } from './helpers';
 import { PrismaService } from '../src/common/prisma/prisma.service';
+import { CreditService } from '../src/billing/credit.service';
 
 describe('GenerationJob (e2e)', () => {
   let app: INestApplication; let prisma: PrismaService;
@@ -59,5 +60,30 @@ describe('GenerationJob (e2e)', () => {
     await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${id}/status`).send({ status: 'cancelled' })).expect(200);
     const bad = await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${id}/status`).send({ status: 'running' })).expect(400);
     expect(bad.body.error.code).toBe('validation_error');
+  });
+
+  it('create holds credits; succeed captures; fail refunds', async () => {
+    const { workspaceId, accessToken } = await registerUser(app, 'gjb1@test.dev');
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${accessToken}`);
+    const credit = app.get(CreditService);
+    const before = (await credit.getBalance(workspaceId)).balance;
+
+    const created = await auth(request(app.getHttpServer())
+      .post(`/workspaces/${workspaceId}/generation-jobs`)
+      .send({ type: 'image', providerKind: 'gemini', runtimeMode: 'web', status: 'pending' })).expect(201);
+    const id = created.body.value.id;
+    expect((await credit.getBalance(workspaceId)).balance).toBe(before - 5);
+
+    await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${id}/status`).send({ status: 'running' })).expect(200);
+    await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${id}/status`).send({ status: 'succeeded' })).expect(200);
+    expect((await credit.getBalance(workspaceId)).balance).toBe(before - 5);
+
+    const failed = await auth(request(app.getHttpServer())
+      .post(`/workspaces/${workspaceId}/generation-jobs`)
+      .send({ type: 'image', providerKind: 'gemini', runtimeMode: 'web', status: 'pending' })).expect(201);
+    const failedId = failed.body.value.id;
+    expect((await credit.getBalance(workspaceId)).balance).toBe(before - 10);
+    await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${failedId}/status`).send({ status: 'failed', error: 'boom' })).expect(200);
+    expect((await credit.getBalance(workspaceId)).balance).toBe(before - 5);
   });
 });

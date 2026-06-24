@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { ImageIcon, Wand2, Plus, Download, Sliders, Maximize2, RotateCcw, Copy, Trash2, Check, LayoutTemplate, Box, Settings2, ImagePlus, Globe } from 'lucide-react';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import { createGenerationJob, failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset, recordWorkspaceAssetExport, type WorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
@@ -25,14 +26,16 @@ export function ImageCreationView() {
   const [activeModel, setActiveModel] = useState('Midjourney V6');
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [styleMode, setStyleMode] = useState('摄影写实');
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!prompt.trim() || isGenerating) return;
     setIsGenerating(true);
     setResult(null);
     setResultAsset(null);
+    setGenerationError(null);
 
-    const job = createGenerationJob({
+    const started = await startBillableGenerationJob({
       title: `Image - ${activeModel}`,
       prompt: prompt.trim(),
       status: 'running',
@@ -45,7 +48,17 @@ export function ImageCreationView() {
         aspectRatio,
         styleMode,
       },
-    }, jobContext);
+    }, jobContext, {
+      workspaceId: session.workspace.id,
+      plan: session.workspace.plan,
+      pricing: { moduleId: 'image', pricingAction: 'generation', providerKind: 'mock', runtimeMode: 'web' },
+    });
+    if (started.ok === false) {
+      setGenerationError(started.message);
+      setIsGenerating(false);
+      return;
+    }
+    const job = started.job;
     logAuditEvent({
       action: 'generation_job_start',
       moduleId: 'image',
@@ -59,7 +72,7 @@ export function ImageCreationView() {
     }, { session });
 
     try {
-      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+      await updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
       const asset = createWorkspaceAsset({
         name: `image-${Date.now()}.jpg`,
         type: 'image',
@@ -108,7 +121,7 @@ export function ImageCreationView() {
       setResult(GENERATED_IMAGE_URL);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Image provider failed before returning an output.';
-      failGenerationJob(job.id, {
+      await failGenerationJob(job.id, {
         error: message,
         metadata: { activeModel, aspectRatio, styleMode },
       }, jobContext);
@@ -277,6 +290,9 @@ export function ImageCreationView() {
              placeholder="详细描述您想要生成的画面细节、主体、光影与氛围..."
              className="w-full resize-none h-32 p-4 bg-gray-50/50 border-[1.5px] border-[var(--border-color)] rounded-[var(--radius-xl)] text-[14px] leading-relaxed focus:bg-[var(--bg-panel)] focus:ring-[4px] focus:ring-indigo-500/10 focus:border-indigo-500 outline-none placeholder-gray-400 transition-all font-medium mb-4"
            />
+           {generationError && (
+             <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{generationError}</div>
+           )}
            <button
              onClick={handleGenerate}
              disabled={!prompt.trim() || isGenerating}

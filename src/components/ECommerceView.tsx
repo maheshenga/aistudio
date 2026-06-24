@@ -2,13 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Image as ImageIcon, Sparkles, Wand2, Download, Copy, Play, Check, ImageOff, Plus, Minus, Upload, Video, LayoutTemplate, RotateCcw, Clock, Trash2, Save, X, Smartphone, Monitor, ChevronDown, ChevronRight, AlignLeft, Tags, Layers } from 'lucide-react';
 import type { ModuleId } from '../types';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import {
-  createGenerationJob,
-  failGenerationJob,
-  listGenerationJobs,
-  updateGenerationJob,
-  type GenerationJob,
-} from '../lib/data/generationJobRepository';
+import { failGenerationJob, listGenerationJobs, updateGenerationJob, type GenerationJob } from '../lib/data/generationJobRepository';
+import { buildBillableGenerationPricing, startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset, recordWorkspaceAssetExport, type WorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
@@ -370,8 +365,8 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
     setProductFiles([]);
   };
 
-  const handleSaveDraft = () => {
-    createGenerationJob({
+  const handleSaveDraft = async () => {
+    const started = await startBillableGenerationJob({
       title: `Draft: ${productName || config.namePlaceholder}`,
       prompt: sellingPoints || config.textPlaceholder,
       status: 'pending',
@@ -385,7 +380,15 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
         aspectRatio,
         selectedTone,
       },
-    }, jobContext);
+    }, jobContext, {
+      workspaceId: session.workspace.id,
+      plan: session.workspace.plan,
+      pricing: buildBillableGenerationPricing(moduleId as ModuleId),
+    });
+    if (started.ok === false) {
+      setHasError(true);
+      return;
+    }
     triggerToast();
   };
 
@@ -415,9 +418,9 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
     triggerToast();
   };
 
-  const handleGenerationFailure = (job: GenerationJob, error: unknown, metadata: Record<string, unknown>) => {
+  const handleGenerationFailure = async (job: GenerationJob, error: unknown, metadata: Record<string, unknown>) => {
     const message = error instanceof Error ? error.message : 'Provider failed before returning an output.';
-    failGenerationJob(job.id, {
+    await failGenerationJob(job.id, {
       error: message,
       metadata,
     }, jobContext);
@@ -435,7 +438,7 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
     setHasError(true);
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (isGenerating) return;
     setIsGenerating(true);
     setProgress(0);
@@ -443,7 +446,7 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
     setExportAsset(null);
     setHasError(false);
 
-    const job = createGenerationJob({
+    const started = await startBillableGenerationJob({
       title: `${title} - ${productName || config.namePlaceholder}`,
       prompt: sellingPoints || config.textPlaceholder,
       status: 'running',
@@ -460,7 +463,17 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
         selectedAngle,
         batchCount,
       },
-    }, jobContext);
+    }, jobContext, {
+      workspaceId: session.workspace.id,
+      plan: session.workspace.plan,
+      pricing: buildBillableGenerationPricing(moduleId as ModuleId),
+    });
+    if (started.ok === false) {
+      setHasError(true);
+      setIsGenerating(false);
+      return;
+    }
+    const job = started.job;
     logAuditEvent({
       action: 'generation_job_start',
       moduleId: moduleId as ModuleId,
@@ -474,7 +487,7 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
     }, { session });
 
     try {
-      updateGenerationJob(job.id, {
+      await updateGenerationJob(job.id, {
         progress: 100,
         status: 'succeeded',
       }, jobContext);
@@ -562,11 +575,11 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
     }
   };
 
-  const handleGenerateSeo = () => {
+  const handleGenerateSeo = async () => {
      if (isGeneratingSeo) return;
      setIsGeneratingSeo(true);
 
-     const job = createGenerationJob({
+     const started = await startBillableGenerationJob({
        title: `SEO - ${productName || config.namePlaceholder}`,
        prompt: sellingPoints || config.textPlaceholder,
        status: 'running',
@@ -580,7 +593,17 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
          platform,
          selectedTone,
        },
-     }, jobContext);
+     }, jobContext, {
+       workspaceId: session.workspace.id,
+       plan: session.workspace.plan,
+       pricing: buildBillableGenerationPricing(moduleId as ModuleId),
+     });
+     if (started.ok === false) {
+       setHasError(true);
+       setIsGeneratingSeo(false);
+       return;
+     }
+     const job = started.job;
      logAuditEvent({
        action: 'generation_job_start',
        moduleId: moduleId as ModuleId,
@@ -599,7 +622,7 @@ export function ECommerceView({ title, moduleId }: ECommerceViewProps) {
         desc: '这款宝贝绝对是今年最大的黑马！结合了顶级材质与智能设计，不仅解决受众痛点，还能在各种场合展示独特质感。'
      };
      setSeoMetadata(generatedSeoMetadata);
-     updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+     await updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
      const asset = createWorkspaceAsset({
        name: `seo-metadata-${Date.now()}.json`,
        type: 'text',

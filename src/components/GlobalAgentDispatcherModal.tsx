@@ -4,7 +4,12 @@ import { AlertTriangle, CheckCircle2, FileText, Loader2, Network, Send, X } from
 import type { AgentSummary, AgentTask } from '../runtime/agentRuntimeTypes.ts';
 import { useAgentRuntime } from '../runtime/AgentRuntimeContext.tsx';
 import { estimateRequestedGenerationCredits, canStartBillableGeneration, getPlanMonthlyAllowance, loadWorkspaceBillingPlans } from '../lib/data/billingRepository';
-import { createGenerationJob, updateGenerationJob, listGenerationJobs } from '../lib/data/generationJobRepository';
+import {
+  createGenerationJob,
+  mirrorGenerationJobFromBackend,
+  updateGenerationJob,
+  listGenerationJobs,
+} from '../lib/data/generationJobRepository';
 import { createWorkspaceTask, updateWorkspaceTask } from '../lib/data/taskRepository';
 import { createWorkspaceUsageEvent, listWorkspaceUsageEvents, loadModuleUsage } from '../lib/data/usageRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
@@ -197,6 +202,7 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
             priority: 'medium',
             metadata: { source: 'global_agent_dispatcher' },
           });
+          let generationJob;
           if (apiClient.configured) {
             try {
               const dispatched = await orchestration.dispatchTask({
@@ -207,30 +213,46 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
                 providerKind: task.source,
               }, task);
               backendJobId = dispatched.jobId;
+              generationJob = mirrorGenerationJobFromBackend({
+                ...(dispatched.job as unknown as Parameters<typeof mirrorGenerationJobFromBackend>[0]),
+                title: task.title,
+                prompt: task.description ?? taskInput.trim(),
+                providerKind: task.source,
+                runtimeMode: runtime.mode,
+                agentId: task.agentId,
+                runtimeTaskId: task.id,
+                progress: task.progress ?? 0,
+                metadata: {
+                  source: 'global_agent_dispatcher',
+                  runtimeId: task.runtimeId,
+                  externalRef: task.externalRef,
+                  backendJobId: dispatched.jobId,
+                },
+              }, billingContext);
             } catch (e) {
               if ((e as { code?: string }).code === 'insufficient_credits') {
                 setRuntimeError('算力余额不足:本次调度被后端拦截,请升级套餐或充值后重试。');
                 throw e;
               }
-              console.error('backend orchestration dispatch failed; continuing with local mirror', e);
+              throw e;
             }
+          } else {
+            generationJob = await createGenerationJob({
+              title: task.title,
+              prompt: task.description ?? taskInput.trim(),
+              status: task.status,
+              providerKind: task.source,
+              runtimeMode: runtime.mode,
+              agentId: task.agentId,
+              runtimeTaskId: task.id,
+              progress: task.progress ?? 0,
+              metadata: {
+                source: 'global_agent_dispatcher',
+                runtimeId: task.runtimeId,
+                externalRef: task.externalRef,
+              },
+            }, billingContext);
           }
-          const generationJob = createGenerationJob({
-            title: task.title,
-            prompt: task.description ?? taskInput.trim(),
-            status: task.status,
-            providerKind: task.source,
-            runtimeMode: runtime.mode,
-            agentId: task.agentId,
-            runtimeTaskId: task.id,
-            progress: task.progress ?? 0,
-            metadata: {
-              source: 'global_agent_dispatcher',
-              runtimeId: task.runtimeId,
-              externalRef: task.externalRef,
-              backendJobId,
-            },
-          }, billingContext);
           const initialTaskState = mapRuntimeStatusToWorkspaceTask(task.status);
           const workspaceTask = createWorkspaceTask({
             title: task.title,
@@ -340,10 +362,10 @@ export function GlobalAgentDispatcherModal({ isOpen, onClose }: { isOpen: boolea
             }, { session });
           };
           let unsubscribe: (() => void) | undefined;
-          unsubscribe = runtime.subscribeToTask(task.id, (event) => {
+          unsubscribe = runtime.subscribeToTask(task.id, async (event) => {
             const nextProgress = event.progress ?? (isFinalTaskStatus(event.status) ? 100 : task.progress ?? 0);
             const nextTaskState = mapRuntimeStatusToWorkspaceTask(event.status);
-            updateGenerationJob(
+            await updateGenerationJob(
               generationJob.id,
               {
                 status: event.status,

@@ -3,6 +3,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { commercialMvpP0Batch1ModuleIds, getProductFeature } from '../src/product/registry.ts';
 
+function createsGenerationJob(source: string): boolean {
+  return source.includes('startBillableGenerationJob') || source.includes('createGenerationJob');
+}
+
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as {
   scripts?: Record<string, string>;
 };
@@ -349,7 +353,7 @@ assert.ok(
     aiCopilotSource.includes('../lib/data/generationJobRepository') &&
     aiCopilotSource.includes('../lib/data/assetRepository') &&
     aiCopilotSource.includes('../lib/data/auditLogRepository') &&
-    aiCopilotSource.includes('createGenerationJob') &&
+    createsGenerationJob(aiCopilotSource) &&
     aiCopilotSource.includes('updateGenerationJob') &&
     aiCopilotSource.includes('createWorkspaceAsset') &&
     aiCopilotSource.includes('logAuditEvent') &&
@@ -382,7 +386,7 @@ assert.ok(
     quickPromptSource.includes('../lib/data/generationJobRepository') &&
     quickPromptSource.includes('../lib/data/assetRepository') &&
     quickPromptSource.includes('../lib/data/auditLogRepository') &&
-    quickPromptSource.includes('createGenerationJob') &&
+    createsGenerationJob(quickPromptSource) &&
     quickPromptSource.includes('updateGenerationJob') &&
     quickPromptSource.includes('createWorkspaceAsset') &&
     quickPromptSource.includes('logAuditEvent') &&
@@ -411,7 +415,7 @@ assert.ok(
     featureViewSource.includes('../lib/data/assetRepository') &&
     featureViewSource.includes('../lib/data/auditLogRepository') &&
     featureViewSource.includes('../lib/data/usageRepository') &&
-    featureViewSource.includes('createGenerationJob') &&
+    createsGenerationJob(featureViewSource) &&
     featureViewSource.includes('updateGenerationJob') &&
     featureViewSource.includes('createWorkspaceAsset') &&
     featureViewSource.includes('createWorkspaceUsageEvent') &&
@@ -428,7 +432,7 @@ const featureViewGenerateHandler = featureViewSource.slice(
   featureViewSource.indexOf('const handleKeyDown'),
 );
 assert.ok(
-  featureViewGenerateHandler.includes('createGenerationJob') &&
+  createsGenerationJob(featureViewGenerateHandler) &&
     featureViewGenerateHandler.includes('updateGenerationJob') &&
     featureViewGenerateHandler.includes('createWorkspaceAsset') &&
     featureViewGenerateHandler.includes('createWorkspaceUsageEvent') &&
@@ -498,7 +502,7 @@ assert.ok(
     remixSource.includes('../lib/data/auditLogRepository') &&
     remixSource.includes('../lib/data/usageRepository') &&
     remixSource.includes('createPricedWorkspaceUsageEvent') &&
-    remixSource.includes('createGenerationJob') &&
+    createsGenerationJob(remixSource) &&
     remixSource.includes('failGenerationJob') &&
     remixSource.includes('GenerationFailureRecoveryPanel') &&
     remixSource.includes('updateGenerationJob') &&
@@ -526,7 +530,7 @@ const remixPreviewHandler = remixSource.slice(
   remixSource.indexOf('return (', remixSource.indexOf('function RemixSmart')),
 );
 assert.ok(
-  remixPreviewHandler.includes('createGenerationJob') &&
+  createsGenerationJob(remixPreviewHandler) &&
     remixPreviewHandler.includes('updateGenerationJob') &&
     remixPreviewHandler.includes('createWorkspaceAsset') &&
     remixPreviewHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -578,7 +582,7 @@ const remixViralHandler = remixSource.slice(
   remixSource.indexOf('return (', remixSource.indexOf('function RemixViral')),
 );
 assert.ok(
-  remixViralHandler.includes('createGenerationJob') &&
+  createsGenerationJob(remixViralHandler) &&
     remixViralHandler.includes('updateGenerationJob') &&
     remixViralHandler.includes('createWorkspaceAsset') &&
     remixViralHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -607,7 +611,7 @@ assert.ok(
     marketingSource.includes('updateWorkspaceCampaign') &&
     marketingSource.includes('createOrUpdateWorkspaceCustomerLead') &&
     marketingSource.includes('createWorkspaceTask') &&
-    marketingSource.includes('createGenerationJob') &&
+    createsGenerationJob(marketingSource) &&
     marketingSource.includes('failGenerationJob') &&
     marketingSource.includes('GenerationFailureRecoveryPanel') &&
     marketingSource.includes('updateGenerationJob') &&
@@ -644,7 +648,7 @@ assert.ok(
   marketingViralHandler.includes('createWorkspaceCampaign') &&
     marketingViralHandler.includes('updateWorkspaceCampaign') &&
     marketingViralHandler.includes('createMarketingLeadHandoff') &&
-    marketingViralHandler.includes('createGenerationJob') &&
+    createsGenerationJob(marketingViralHandler) &&
     marketingViralHandler.includes('updateGenerationJob') &&
     marketingViralHandler.includes('createWorkspaceAsset') &&
     marketingViralHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -676,7 +680,7 @@ const marketingWebsiteHandler = marketingSource.slice(
 assert.ok(
   marketingWebsiteHandler.includes('createWorkspaceCampaign') &&
     marketingWebsiteHandler.includes('createMarketingLeadHandoff') &&
-    marketingWebsiteHandler.includes('createGenerationJob') &&
+    createsGenerationJob(marketingWebsiteHandler) &&
     marketingWebsiteHandler.includes('updateGenerationJob') &&
     marketingWebsiteHandler.includes('createWorkspaceAsset') &&
     marketingWebsiteHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -784,7 +788,7 @@ assert.ok(
     eCommerceSource.includes('../lib/data/usageRepository') &&
     eCommerceSource.includes('createPricedWorkspaceUsageEvent') &&
     eCommerceSource.includes('listGenerationJobs') &&
-    eCommerceSource.includes('createGenerationJob') &&
+    createsGenerationJob(eCommerceSource) &&
     eCommerceSource.includes('failGenerationJob') &&
     eCommerceSource.includes('GenerationFailureRecoveryPanel') &&
     eCommerceSource.includes('updateGenerationJob') &&
@@ -820,7 +824,7 @@ const eCommerceGenerateHandler = eCommerceSource.slice(
   eCommerceSource.indexOf('const handleGenerateSeo'),
 );
 assert.ok(
-  eCommerceGenerateHandler.includes('createGenerationJob') &&
+  createsGenerationJob(eCommerceGenerateHandler) &&
     eCommerceGenerateHandler.includes('updateGenerationJob') &&
     eCommerceGenerateHandler.includes('createWorkspaceAsset') &&
     eCommerceGenerateHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -836,7 +840,7 @@ assert.equal(
   'ECommerceView main generation should not use interval-based progress placeholders',
 );
 assert.ok(
-  eCommerceSeoHandler.includes('createGenerationJob') &&
+  createsGenerationJob(eCommerceSeoHandler) &&
     eCommerceSeoHandler.includes('updateGenerationJob') &&
     eCommerceSeoHandler.includes('createWorkspaceAsset') &&
     eCommerceSeoHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -861,7 +865,7 @@ assert.ok(
     copywritingSource.includes('../lib/data/keywordRepository') &&
     copywritingSource.includes('../lib/data/auditLogRepository') &&
     copywritingSource.includes('../lib/data/usageRepository') &&
-    copywritingSource.includes('createGenerationJob') &&
+    createsGenerationJob(copywritingSource) &&
     copywritingSource.includes('updateGenerationJob') &&
     copywritingSource.includes('createWorkspaceAsset') &&
     copywritingSource.includes('createPricedWorkspaceUsageEvent') &&
@@ -907,7 +911,7 @@ assert.ok(
     imageCreationSource.includes('../lib/data/auditLogRepository') &&
     imageCreationSource.includes('../lib/data/usageRepository') &&
     imageCreationSource.includes('createPricedWorkspaceUsageEvent') &&
-    imageCreationSource.includes('createGenerationJob') &&
+    createsGenerationJob(imageCreationSource) &&
     imageCreationSource.includes('failGenerationJob') &&
     imageCreationSource.includes('updateGenerationJob') &&
     imageCreationSource.includes('createWorkspaceAsset') &&
@@ -942,7 +946,7 @@ assert.ok(
     imageEditorSource.includes('../lib/data/assetRepository') &&
     imageEditorSource.includes('../lib/data/auditLogRepository') &&
     imageEditorSource.includes('../lib/data/usageRepository') &&
-    imageEditorSource.includes('createGenerationJob') &&
+    createsGenerationJob(imageEditorSource) &&
     imageEditorSource.includes('updateGenerationJob') &&
     imageEditorSource.includes('createWorkspaceAsset') &&
     imageEditorSource.includes('createPricedWorkspaceUsageEvent') &&
@@ -973,7 +977,7 @@ const imageEditorApplyHandler = imageEditorSource.slice(
   imageEditorSource.indexOf('return (', imageEditorSource.indexOf('const handleApplyTool')),
 );
 assert.ok(
-    imageEditorApplyHandler.includes('createGenerationJob') &&
+    createsGenerationJob(imageEditorApplyHandler) &&
     imageEditorApplyHandler.includes('updateGenerationJob') &&
     imageEditorApplyHandler.includes('createWorkspaceAsset') &&
     imageEditorApplyHandler.includes('createPricedWorkspaceUsageEvent') &&
@@ -998,7 +1002,7 @@ assert.ok(
     videoCreationSource.includes('../lib/data/auditLogRepository') &&
     videoCreationSource.includes('../lib/data/usageRepository') &&
     videoCreationSource.includes('createPricedWorkspaceUsageEvent') &&
-    videoCreationSource.includes('createGenerationJob') &&
+    createsGenerationJob(videoCreationSource) &&
     videoCreationSource.includes('failGenerationJob') &&
     videoCreationSource.includes('updateGenerationJob') &&
     videoCreationSource.includes('createWorkspaceAsset') &&
@@ -1034,7 +1038,7 @@ assert.ok(
     speechSource.includes('../lib/data/auditLogRepository') &&
     speechSource.includes('../lib/data/usageRepository') &&
     speechSource.includes('createPricedWorkspaceUsageEvent') &&
-    speechSource.includes('createGenerationJob') &&
+    createsGenerationJob(speechSource) &&
     speechSource.includes('failGenerationJob') &&
     speechSource.includes('updateGenerationJob') &&
     speechSource.includes('createWorkspaceAsset') &&
@@ -1061,7 +1065,7 @@ assert.ok(
     chatSource.includes('../lib/data/assetRepository') &&
     chatSource.includes('../lib/data/auditLogRepository') &&
     chatSource.includes('../lib/data/usageRepository') &&
-    chatSource.includes('createGenerationJob') &&
+    createsGenerationJob(chatSource) &&
     chatSource.includes('updateGenerationJob') &&
     chatSource.includes('createWorkspaceAsset') &&
     chatSource.includes('createPricedWorkspaceUsageEvent') &&

@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Sparkles, Send, Bot, MessageSquare, Zap, Cpu, Search, ImageIcon, Video, Layers, ChevronDown, CheckCircle2, LineChart, Play, Palette, Mic } from 'lucide-react';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { updateGenerationJob } from '../lib/data/generationJobRepository';
+import { buildBillableGenerationPricing, startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 
@@ -71,7 +72,7 @@ export function AICopilot({ isOpen, onClose }: AICopilotProps) {
     }
   };
 
-  const sendMsg = (textOverride?: string, isVoice: boolean = false) => {
+  const sendMsg = async (textOverride?: string, isVoice: boolean = false) => {
     const userText = (textOverride ?? input).trim();
     if (!userText || isTyping) return;
 
@@ -82,7 +83,7 @@ export function AICopilot({ isOpen, onClose }: AICopilotProps) {
     let jobId: string | null = null;
     try {
       const reply = buildCopilotReply(userText);
-      const job = createGenerationJob({
+      const started = await startBillableGenerationJob({
         title: `Copilot Command ${isVoice ? '(Voice)' : '(Text)'}`,
         prompt: userText,
         status: 'running',
@@ -96,7 +97,16 @@ export function AICopilot({ isOpen, onClose }: AICopilotProps) {
           widget: reply.widget,
           source: 'global_copilot',
         },
-      }, repositoryContext);
+      }, repositoryContext, {
+        workspaceId: session.workspace.id,
+        plan: session.workspace.plan,
+        pricing: buildBillableGenerationPricing('chat'),
+      });
+      if (started.ok === false) {
+        setMessages(prev => [...prev, { role: 'ai', text: started.message }]);
+        return;
+      }
+      const job = started.job;
       jobId = job.id;
       logAuditEvent({
         action: 'ai_command',
@@ -120,7 +130,7 @@ export function AICopilot({ isOpen, onClose }: AICopilotProps) {
           widget: reply.widget,
         },
       }, { session });
-      updateGenerationJob(job.id, {
+      await updateGenerationJob(job.id, {
         status: 'succeeded',
         progress: 100,
         metadata: {
@@ -172,7 +182,7 @@ export function AICopilot({ isOpen, onClose }: AICopilotProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Copilot command failed';
       if (jobId) {
-        updateGenerationJob(jobId, { status: 'failed', progress: 100, error: message }, repositoryContext);
+        await updateGenerationJob(jobId, { status: 'failed', progress: 100, error: message }, repositoryContext);
         logAuditEvent({
           action: 'generation_job_failed',
           moduleId: 'dashboard',

@@ -47,8 +47,8 @@ export function GenerationFailureRecoveryPanel({
     [jobs, moduleId],
   );
 
-  const handleRetry = (job: GenerationJob) => {
-    const retryJob = retryGenerationJob(job.id, context);
+  const handleRetry = async (job: GenerationJob) => {
+    const retryJob = await retryGenerationJob(job.id, context);
     if (!retryJob) return;
 
     logAuditEvent(

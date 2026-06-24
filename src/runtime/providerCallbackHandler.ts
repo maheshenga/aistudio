@@ -127,12 +127,12 @@ export function createCallbackFixture(
  * @param auditContext audit log context（含 session）
  * @param moduleId 关联的模块 id（video / remix_smart / director_desk 等）
  */
-export function handleProviderCallback(
+export async function handleProviderCallback(
   payload: ProviderCallbackPayload,
   jobRepoContext: GenerationJobRepositoryContext,
   auditContext: AuditRepositoryContext,
   moduleId: ModuleId,
-): ProviderCallbackResult {
+): Promise<ProviderCallbackResult> {
   const existingJob = getGenerationJob(payload.localJobId, jobRepoContext);
   if (!existingJob) {
     return { handled: false, idempotent: false, jobStatus: 'pending', assetIds: [], error: 'Local job not found' };
@@ -158,7 +158,7 @@ export function handleProviderCallback(
   switch (payload.scenario) {
     case 'success':
     case 'partial_success': {
-      updateGenerationJob(payload.localJobId, {
+      await updateGenerationJob(payload.localJobId, {
         status: 'succeeded',
         progress: 100,
         metadata: {
@@ -210,7 +210,7 @@ export function handleProviderCallback(
 
     case 'provider_error':
     case 'timeout': {
-      failGenerationJob(payload.localJobId, {
+      await failGenerationJob(payload.localJobId, {
         error: payload.errorMessage ?? `Provider callback: ${payload.scenario}`,
         retryable: true,
         metadata: {
@@ -238,7 +238,7 @@ export function handleProviderCallback(
     case 'duplicate': {
       // 重复回调：job 仍在 running，但 fixtures 标记 duplicate——幂等返回
       // 不更新状态，仅记录收到过重复回调
-      updateGenerationJob(payload.localJobId, {
+      await updateGenerationJob(payload.localJobId, {
         metadata: {
           ...existingJob.metadata,
           ...providerMapping,

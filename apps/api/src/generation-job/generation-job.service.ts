@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { notFound, validationError } from '../common/errors';
+import { CreditService } from '../billing/credit.service';
+import { generationCredits } from '../billing/credit-cost';
 import { CreateJobDto, UpdateStatusDto, ListJobQuery } from './dto';
 
 const ALLOWED: Record<string, string[]> = {
@@ -16,7 +18,11 @@ const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 
 @Injectable()
 export class GenerationJobService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private credit: CreditService,
+  ) {}
+
   list(workspaceId: string, q: ListJobQuery) {
     return this.prisma.generationJob.findMany({
       where: {
@@ -28,36 +34,65 @@ export class GenerationJobService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
   async get(workspaceId: string, id: string) {
     const row = await this.prisma.generationJob.findFirst({ where: { id, workspaceId } });
     if (!row) throw notFound('Generation job not found');
     return row;
   }
+
   create(workspaceId: string, dto: CreateJobDto) {
-    // Map frontend runtimeTaskId → backend externalTaskId
-    const { runtimeTaskId, input, metadata, ...rest } = dto;
-    const data: Prisma.GenerationJobUncheckedCreateInput = {
-      ...rest,
-      workspaceId,
-      ...(input ? { input: input as Prisma.InputJsonValue } : {}),
-      ...(metadata ? { externalRef: metadata as Prisma.InputJsonValue } : {}),
-      ...(runtimeTaskId ? { externalTaskId: runtimeTaskId } : {}),
-    };
-    return this.prisma.generationJob.create({ data });
+    const { runtimeTaskId, input, metadata, status, ...rest } = dto;
+    const amount = generationCredits({
+      runtimeMode: dto.runtimeMode ?? null,
+      providerKind: dto.providerKind ?? null,
+    });
+
+    return this.prisma.$transaction(async (tx) => {
+      await this.credit.ensureMonthlyGrant(tx, workspaceId);
+      const data: Prisma.GenerationJobUncheckedCreateInput = {
+        ...rest,
+        workspaceId,
+        status: status ?? 'pending',
+        ...(input ? { input: input as Prisma.InputJsonValue } : {}),
+        ...(metadata ? { externalRef: metadata as Prisma.InputJsonValue } : {}),
+        ...(runtimeTaskId ? { externalTaskId: runtimeTaskId } : {}),
+      };
+      const job = await tx.generationJob.create({ data });
+      await this.credit.hold(tx, workspaceId, job.id, amount, job.attempt);
+      return job;
+    });
   }
+
   async updateStatus(workspaceId: string, id: string, dto: UpdateStatusDto) {
-    const job = await this.get(workspaceId, id);
-    if (!ALLOWED[job.status]?.includes(dto.status))
-      throw validationError(`Cannot transition from ${job.status} to ${dto.status}`);
-    const finishedAt = TERMINAL.has(dto.status) ? new Date() : undefined;
-    return this.prisma.generationJob.update({
-      where: { id },
-      data: {
-        status: dto.status,
-        error: dto.error ?? null,
-        ...(dto.progress !== undefined ? { progress: dto.progress } : {}),
-        ...(finishedAt ? { finishedAt } : {}),
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const job = await tx.generationJob.findFirst({ where: { id, workspaceId } });
+      if (!job) throw notFound('Generation job not found');
+      if (!ALLOWED[job.status]?.includes(dto.status)) {
+        throw validationError(`Cannot transition from ${job.status} to ${dto.status}`);
+      }
+
+      const finishedAt = TERMINAL.has(dto.status) ? new Date() : undefined;
+      const updated = await tx.generationJob.update({
+        where: { id },
+        data: {
+          status: dto.status,
+          error: dto.error ?? null,
+          ...(dto.progress !== undefined ? { progress: dto.progress } : {}),
+          ...(finishedAt ? { finishedAt } : {}),
+        },
+      });
+
+      if (TERMINAL.has(dto.status)) {
+        const amount = generationCredits(job);
+        if (dto.status === 'succeeded') {
+          await this.credit.capture(tx, workspaceId, id, job.attempt);
+        } else {
+          await this.credit.refund(tx, workspaceId, id, amount, job.attempt);
+        }
+      }
+
+      return updated;
     });
   }
 }

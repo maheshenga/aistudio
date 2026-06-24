@@ -22,6 +22,10 @@ export class CreditService {
 
   private async applyLedgerEntry(tx: Tx, input: LedgerInput) {
     if (input.idempotencyKey) {
+      // 同一 idempotencyKey 的并发会在 check-then-create 之间竞态:第二笔 create
+      // 撞唯一约束使事务 aborted,无法在同一事务内恢复(Postgres 25P02)。用事务级
+      // advisory lock 串行化同 key 的写入,让"查重→改余额→落账"成为原子序列。
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.workspaceId}:${input.idempotencyKey}`})::int8)`;
       const existing = await tx.creditLedger.findUnique({
         where: { workspaceId_idempotencyKey: { workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey } },
       });

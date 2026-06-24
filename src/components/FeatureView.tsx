@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Send, Upload, Sparkles, Settings2, Download, Copy, Play, Check, ChevronRight, Wand2, MessageSquare, LayoutTemplate, Mic, Volume2, AlignLeft, User, Bot, StopCircle, RefreshCw, AudioLines, Camera } from 'lucide-react';
 import type { ModuleId } from '../types';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { updateGenerationJob } from '../lib/data/generationJobRepository';
+import { buildBillableGenerationPricing, startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset, type WorkspaceAssetType } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createWorkspaceUsageEvent } from '../lib/data/usageRepository';
@@ -84,6 +85,7 @@ export function FeatureView({ title, type, models }: FeatureViewProps) {
   const [activeModel, setActiveModel] = useState(models[0]);
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<string | null>(null);
 
@@ -105,12 +107,13 @@ export function FeatureView({ title, type, models }: FeatureViewProps) {
     }
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     const userPrompt = prompt.trim();
     if (!userPrompt || isGenerating) return;
     setIsGenerating(true);
     setProgress(0);
     setResult(null);
+    setGenerationError(null);
 
     setPrompt('');
 
@@ -123,7 +126,7 @@ export function FeatureView({ title, type, models }: FeatureViewProps) {
     let jobId: string | null = null;
     try {
       const generatedContent = buildFeatureGeneratedContent({ title, type, activeModel, prompt: userPrompt });
-      const job = createGenerationJob({
+      const started = await startBillableGenerationJob({
         title: `${title} - ${activeModel}`,
         prompt: userPrompt,
         status: 'running',
@@ -137,7 +140,17 @@ export function FeatureView({ title, type, models }: FeatureViewProps) {
           featureType: type,
           activeModel,
         },
-      }, repositoryContext);
+      }, repositoryContext, {
+        workspaceId: session.workspace.id,
+        plan: session.workspace.plan,
+        pricing: buildBillableGenerationPricing(moduleId),
+      });
+      if (started.ok === false) {
+        setGenerationError(started.message);
+        setIsGenerating(false);
+        return;
+      }
+      const job = started.job;
       jobId = job.id;
       logAuditEvent({
         action: 'generation_job_start',
@@ -151,7 +164,7 @@ export function FeatureView({ title, type, models }: FeatureViewProps) {
         },
       }, { session });
 
-      updateGenerationJob(job.id, {
+      await updateGenerationJob(job.id, {
         status: 'succeeded',
         progress: 100,
         metadata: {
@@ -238,7 +251,7 @@ export function FeatureView({ title, type, models }: FeatureViewProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Feature generation failed';
       if (jobId) {
-        updateGenerationJob(jobId, { status: 'failed', progress: 100, error: message }, repositoryContext);
+        await updateGenerationJob(jobId, { status: 'failed', progress: 100, error: message }, repositoryContext);
         logAuditEvent({
           action: 'generation_job_failed',
           moduleId,
@@ -519,6 +532,9 @@ export function FeatureView({ title, type, models }: FeatureViewProps) {
       <div className="h-[calc(100vh-4rem)] flex flex-col md:flex-row bg-[var(--bg-app)] p-[var(--spacing-lg)] gap-[var(--spacing-md)] selection:bg-blue-500/20">
         <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm animate-in fade-in slide-in-from-bottom-2">
           {renderHeader()}
+          {generationError && (
+            <div className="mx-4 md:mx-[var(--spacing-xl)] mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{generationError}</div>
+          )}
           
           <div className="flex-1 overflow-y-auto p-4 md:p-[var(--spacing-xl)] bg-[var(--bg-app)] custom-scrollbar flex flex-col gap-[var(--spacing-md)]">
             <div className="text-center mt-2 mb-4">
@@ -608,6 +624,9 @@ export function FeatureView({ title, type, models }: FeatureViewProps) {
     <div className="h-[calc(100vh-4rem)] flex flex-col md:flex-row bg-[var(--bg-app)] p-[var(--spacing-lg)] gap-[var(--spacing-md)] selection:bg-blue-500/20">
       <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-[var(--bg-panel)] rounded-[24px] border border-[var(--border-color)] shadow-sm animate-in fade-in slide-in-from-bottom-2">
         {renderHeader()}
+        {generationError && (
+          <div className="mx-4 md:mx-10 mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{generationError}</div>
+        )}
 
          <div className="flex-1 overflow-y-auto p-[var(--spacing-lg)] md:p-10 bg-[#F4F6F8] flex flex-col items-center justify-center relative inner-shadow-sm">
            {!isGenerating && !result ? (

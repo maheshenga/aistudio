@@ -2,7 +2,8 @@ import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { PenTool, Wrench, BookType, Sparkles, Plus, Search, Tag, Copy, Share, Database, Layout, Loader2, Wand2, RefreshCw, Languages, FileText, CheckCircle2, ChevronRight, Hash, ArrowUpRight, Archive, Edit3, Trash2, X } from 'lucide-react';
 import { useSessionAutoSave } from '../hooks/useSessionAutoSave';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { updateGenerationJob } from '../lib/data/generationJobRepository';
+import { startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset, recordWorkspaceAssetExport, type WorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
@@ -48,14 +49,16 @@ function CopywritingCreate() {
   const [activeType, setActiveType] = useState('小红书种草');
   const [activeLength, setActiveLength] = useState('中篇');
   const [activeTone, setActiveTone] = useState('专业严谨');
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (activeType !== '电商产品详情' && !prompt.trim()) return;
     setIsGenerating(true);
     setResult('');
     setResultAsset(null);
+    setGenerationError(null);
 
-    const job = createGenerationJob({
+    const started = await startBillableGenerationJob({
       title: `Copywriting - ${activeType}`,
       prompt: prompt.trim() || activeType,
       status: 'running',
@@ -68,7 +71,17 @@ function CopywritingCreate() {
         activeLength,
         activeTone,
       },
-    }, jobContext);
+    }, jobContext, {
+      workspaceId: session.workspace.id,
+      plan: session.workspace.plan,
+      pricing: { moduleId: 'copywriting_create', pricingAction: 'generation', providerKind: 'mock', runtimeMode: 'web' },
+    });
+    if (started.ok === false) {
+      setGenerationError(started.message);
+      setIsGenerating(false);
+      return;
+    }
+    const job = started.job;
     logAuditEvent({
       action: 'generation_job_start',
       moduleId: 'copywriting_create',
@@ -85,7 +98,7 @@ function CopywritingCreate() {
       ? `🔥 爆款电商详情页策划案\n\n【模块一：首屏吸睛 (头图区)】\n视觉建议：大特写展示产品质感，配以加粗标题“定义全新体验”。\n文案：不只是[商品名]，更是生活方式的升级。一键开启，享受真正的静谧空间。\n\n【模块二：直击痛点 (痛点区)】\n文案：你还在忍受这些困扰吗？（配以嘈杂环境、电量焦虑、佩戴不适的图文比对）。是时候对妥协说不了！\n\n【模块三：硬核卖点 (参数区)】\n文案：四大核心科技，重塑行业标杆。\n1. 行业领先技术：实力摆在这里，不惧对比。\n2. 极致续航表现：告别电量焦虑，随时在线。\n3. 人体工学设计：久戴不痛，宛若无物。\n\n【模块四：权威背书与买家秀】\n文案：口碑见证，超过 100,000+ 用户的共同选择...`
       : `🔥 熬夜狂欢后的护肤救星来啦！✨\n\n经常加班熬夜的打工人，是不是总觉得脸部暗沉、细纹悄悄爬上眼角？😱 今天给大家按头安利这款【夜间修护视黄醇精华】！\n\n✅ 核心卖点划重点：\n1️⃣ **温和不刺激**：专为敏感肌研发的微囊包裹技术，不用建立耐受也能轻松上脸！\n2️⃣ **抗老淡纹**：高浓度纯净视黄醇，直击干纹细纹，让肌肤重回弹润嘭嘭肌。💦\n3️⃣ **水润修护**：复配神经酰胺与玻尿酸，抗老同时不忘修护肌肤屏障。\n\n💡 使用感受：\n质地像牛奶一样丝滑，上脸嗖的一下就吸收了，一点也不油腻！隔天起床皮肤真的亮了一个度，透出那种健康的光泽感，绝绝子！😭\n\n🛒 还在等什么？趁着活动赶紧囤起来，做办公室里最亮的崽！💃\n\n#抗初老 #视黄醇精华 #熬夜党必备 #温和抗老 #好物分享 #平价精华`;
 
-    updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+    await updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
     const asset = createWorkspaceAsset({
       name: `${activeType}-${Date.now()}.txt`,
       type: 'text',

@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Film, Play, Download, Wand2, Box, Sparkles, Video, Clapperboard, MonitorPlay, History, Activity, Share2, Scissors, Music, Layers, HardDrive, Maximize2 } from 'lucide-react';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import { createGenerationJob, failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset, recordWorkspaceAssetExport, type WorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
@@ -26,14 +27,16 @@ export function VideoCreationView() {
   const [motionStrength, setMotionStrength] = useState(5);
   const [cameraMovement, setCameraMovement] = useState('平移推移');
   const [duration, setDuration] = useState('4s');
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!prompt.trim() || isGenerating) return;
     setIsGenerating(true);
     setResult(null);
     setResultAsset(null);
+    setGenerationError(null);
 
-    const job = createGenerationJob({
+    const started = await startBillableGenerationJob({
       title: `Video - ${activeModel}`,
       prompt: prompt.trim(),
       status: 'running',
@@ -47,7 +50,17 @@ export function VideoCreationView() {
         cameraMovement,
         duration,
       },
-    }, jobContext);
+    }, jobContext, {
+      workspaceId: session.workspace.id,
+      plan: session.workspace.plan,
+      pricing: { moduleId: 'video', pricingAction: 'generation', providerKind: 'mock', runtimeMode: 'web' },
+    });
+    if (started.ok === false) {
+      setGenerationError(started.message);
+      setIsGenerating(false);
+      return;
+    }
+    const job = started.job;
     logAuditEvent({
       action: 'generation_job_start',
       moduleId: 'video',
@@ -62,7 +75,7 @@ export function VideoCreationView() {
     }, { session });
 
     try {
-      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
+      await updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
       const asset = createWorkspaceAsset({
         name: `video-${Date.now()}.mp4`,
         type: 'video',
@@ -113,7 +126,7 @@ export function VideoCreationView() {
       setResult(GENERATED_VIDEO_URL);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Video provider failed before returning an output.';
-      failGenerationJob(job.id, {
+      await failGenerationJob(job.id, {
         error: message,
         metadata: {
           activeModel,

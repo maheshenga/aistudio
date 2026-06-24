@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, ArrowUp, X, Command } from 'lucide-react';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { updateGenerationJob } from '../lib/data/generationJobRepository';
+import { buildBillableGenerationPricing, startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { toast } from './Toast';
@@ -34,7 +35,7 @@ export function QuickPromptFAB() {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const prompt = input.trim();
     if (!prompt || isSubmitting) return;
@@ -43,7 +44,7 @@ export function QuickPromptFAB() {
     let jobId: string | null = null;
     try {
       const responseText = buildQuickPromptReply(prompt);
-      const job = createGenerationJob({
+      const started = await startBillableGenerationJob({
         title: 'Quick Prompt - Gemini Flash',
         prompt,
         status: 'running',
@@ -55,7 +56,16 @@ export function QuickPromptFAB() {
         metadata: {
           surface: 'quick_prompt_fab',
         },
-      }, repositoryContext);
+      }, repositoryContext, {
+        workspaceId: session.workspace.id,
+        plan: session.workspace.plan,
+        pricing: buildBillableGenerationPricing('chat'),
+      });
+      if (started.ok === false) {
+        toast(started.message, 'error');
+        return;
+      }
+      const job = started.job;
       jobId = job.id;
       logAuditEvent({
         action: 'ai_command',
@@ -77,7 +87,7 @@ export function QuickPromptFAB() {
           surface: 'quick_prompt_fab',
         },
       }, { session });
-      updateGenerationJob(job.id, {
+      await updateGenerationJob(job.id, {
         status: 'succeeded',
         progress: 100,
         metadata: {
@@ -129,7 +139,7 @@ export function QuickPromptFAB() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Quick prompt failed';
       if (jobId) {
-        updateGenerationJob(jobId, { status: 'failed', progress: 100, error: message }, repositoryContext);
+        await updateGenerationJob(jobId, { status: 'failed', progress: 100, error: message }, repositoryContext);
         logAuditEvent({
           action: 'generation_job_failed',
           moduleId: 'dashboard',

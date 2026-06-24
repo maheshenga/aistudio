@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ImagePlus, Eraser, Scissors, Replace, Maximize, Sparkles, Maximize2, Download, Undo, Redo, ZoomIn, ZoomOut, UploadCloud, Move, Palette, MousePointer2, Settings2, Hand, Wand2, Lightbulb, Image as ImageIcon, Brush, Type, Layers, Sticker, History } from 'lucide-react';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import { createGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { updateGenerationJob } from '../lib/data/generationJobRepository';
+import { buildBillableGenerationPricing, startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
@@ -141,7 +142,7 @@ export function ImageEditorView() {
     }
   };
 
-  const handleApplyTool = () => {
+  const handleApplyTool = async () => {
     if (!hasImage || isProcessing) return;
     const tool = TOOLS.find(t => t.id === activeTool);
     if (!tool) return;
@@ -149,7 +150,7 @@ export function ImageEditorView() {
     let jobId: string | null = null;
     setIsProcessing(true);
     try {
-      const job = createGenerationJob({
+      const started = await startBillableGenerationJob({
         title: `Image edit - ${tool.name}`,
         prompt: resolvedPrompt,
         status: 'running',
@@ -166,7 +167,16 @@ export function ImageEditorView() {
           bgMode,
           bgColor,
         },
-      }, repositoryContext);
+      }, repositoryContext, {
+        workspaceId: session.workspace.id,
+        plan: session.workspace.plan,
+        pricing: buildBillableGenerationPricing('ai_image_edit'),
+      });
+      if (started.ok === false) {
+        showToast(started.message);
+        return;
+      }
+      const job = started.job;
       jobId = job.id;
       logAuditEvent({
         action: 'generation_job_start',
@@ -183,7 +193,7 @@ export function ImageEditorView() {
         },
       }, { session });
 
-      updateGenerationJob(job.id, {
+      await updateGenerationJob(job.id, {
         status: 'succeeded',
         progress: 100,
         metadata: {
@@ -257,7 +267,7 @@ export function ImageEditorView() {
     } catch (error) {
       const message = error instanceof Error ? error.message : '图像编辑任务失败';
       if (jobId) {
-        updateGenerationJob(jobId, { status: 'failed', progress: 100, error: message }, repositoryContext);
+        await updateGenerationJob(jobId, { status: 'failed', progress: 100, error: message }, repositoryContext);
         logAuditEvent({
           action: 'generation_job_failed',
           moduleId: 'ai_image_edit',

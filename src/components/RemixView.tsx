@@ -7,7 +7,8 @@ import {
   Scissors, Heart, MessageCircle, Star, Forward, X, ScanLine
 } from 'lucide-react';
 import { useSaasSession } from '../saas/SaasAuthContext';
-import { createGenerationJob, failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { failGenerationJob, updateGenerationJob } from '../lib/data/generationJobRepository';
+import { buildBillableGenerationPricing, startBillableGenerationJob } from '../lib/billing/billableGeneration';
 import { createWorkspaceAsset, recordWorkspaceAssetExport } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
@@ -114,8 +115,8 @@ function RemixSmart() {
   const [subtitleText, setSubtitleText] = useState('');
   const [previewStatus, setPreviewStatus] = useState<string | null>(null);
 
-  const handlePreviewRemix = () => {
-    const job = createGenerationJob({
+  const handlePreviewRemix = async () => {
+    const started = await startBillableGenerationJob({
       title: 'Smart remix preview - short video',
       prompt: `Smart remix preview for ${activeShotTitle}`,
       status: 'running',
@@ -128,7 +129,16 @@ function RemixSmart() {
         strategy: 'manual_sampling',
         estimatedDurationSeconds: 9,
       },
-    }, repositoryContext);
+    }, repositoryContext, {
+      workspaceId: session.workspace.id,
+      plan: session.workspace.plan,
+      pricing: buildBillableGenerationPricing('remix_smart'),
+    });
+    if (started.ok === false) {
+      setPreviewStatus(started.message);
+      return;
+    }
+    const job = started.job;
     logAuditEvent({
       action: 'generation_job_start',
       moduleId: 'remix_smart',
@@ -141,7 +151,7 @@ function RemixSmart() {
     }, { session });
 
     try {
-      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
+      await updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
       const asset = createWorkspaceAsset({
       name: `smart-remix-preview-${Date.now()}.mp4`,
       type: 'video',
@@ -217,7 +227,7 @@ function RemixSmart() {
       setPreviewStatus('Smart remix preview saved to workspace assets');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Remix provider failed before returning a preview.';
-      failGenerationJob(job.id, {
+      await failGenerationJob(job.id, {
         error: message,
         metadata: {
           activeShotTitle,
@@ -1207,9 +1217,9 @@ function RemixViral() {
   const [sourceUrl, setSourceUrl] = useState('');
   const [analysisStatus, setAnalysisStatus] = useState<string | null>(null);
 
-  const handleAnalyzeViralClone = () => {
+  const handleAnalyzeViralClone = async () => {
     const targetUrl = sourceUrl.trim() || 'https://example.com/viral-short-video';
-    const job = createGenerationJob({
+    const started = await startBillableGenerationJob({
       title: 'Viral clone structure analysis',
       prompt: `Analyze viral short video structure from ${targetUrl}`,
       status: 'running',
@@ -1221,7 +1231,16 @@ function RemixViral() {
         sourceUrl: targetUrl,
         workflow: 'remix_viral_clone_analysis',
       },
-    }, repositoryContext);
+    }, repositoryContext, {
+      workspaceId: session.workspace.id,
+      plan: session.workspace.plan,
+      pricing: buildBillableGenerationPricing('remix_viral'),
+    });
+    if (started.ok === false) {
+      setAnalysisStatus(started.message);
+      return;
+    }
+    const job = started.job;
     logAuditEvent({
       action: 'generation_job_start',
       moduleId: 'remix_viral',
@@ -1234,7 +1253,7 @@ function RemixViral() {
     }, { session });
 
     try {
-      updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
+      await updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, repositoryContext);
       const asset = createWorkspaceAsset({
       name: `viral-clone-structure-${Date.now()}.md`,
       type: 'text',
@@ -1333,7 +1352,7 @@ function RemixViral() {
       setAnalysisStatus('Viral clone analysis saved and production task created.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Viral clone provider failed before returning analysis.';
-      failGenerationJob(job.id, {
+      await failGenerationJob(job.id, {
         error: message,
         metadata: {
           sourceUrl: targetUrl,

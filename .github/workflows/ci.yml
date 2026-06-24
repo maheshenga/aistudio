@@ -34,6 +34,9 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - name: Browser smoke (requires build)
+        run: npm run test:browser-smoke
+
   # ── Backend: Prisma migrate + Jest e2e against a real Postgres ──
   backend:
     name: Backend API (e2e)
