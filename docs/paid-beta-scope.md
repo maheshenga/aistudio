@@ -152,7 +152,7 @@ Module: **全局导演台** (`director_desk`)
 
 | Module | Operator | Date | Result | Notes |
 |---|---|---|---|---|
-| `image` | | | pass / fail | |
+| `image` | user + agent | 2026-06-24 | pass | Staging UI asset `image-*.jpg` + API smoke |
 | `video` | | | pass / fail | |
 | `remix_smart` | | | pass / fail | |
 | `director_desk` | | | pass / fail | |
