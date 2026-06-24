@@ -1,10 +1,10 @@
 # Commercial MVP P0 Batch 1 Release Evidence
 
-Status: automated P0 gate passed; pending business release sign-off
-Owner: Commercial MVP workspace owner
-Date: 2026-06-10
-Build: local working tree on `cf7dcbd` plus P0 Batch 1 changes
-Branch: `codex/p0-commercial-control-plane`
+Status: automated P0 gate passed; staging verified; pending business release sign-off  
+Owner: Commercial MVP workspace owner  
+Date: 2026-06-24 (progress snapshot)  
+Build: `main` @ `593b378`  
+Branch: `main`
 
 ## Release Scope
 
@@ -99,7 +99,7 @@ Complete this section after re-running the release gate on the target build (bra
 Target build:
 
 - Branch: `main` (merged 2026-06-24 from `fix/credit-retry-fund-loss`)
-- Commit: `60304e8`
+- Commit: `593b378`
 - Environment: local Docker staging (`http://localhost:8081` + API `:4000`)
 
 ### P0 scope checklist
@@ -153,3 +153,32 @@ Notes: P0 automated + staging API/UI smoke complete on main @ ______. P1-R02 pri
 - [x] Deploy staging with `docs/deployment.md` (Docker stack running on `:8081` / `:4000`, 2026-06-24)
 - [ ] Notify team of paid-beta scope — see [paid-beta-scope.md](./paid-beta-scope.md)
 - [ ] Schedule provider smoke (P1-R03) and pricing review (P1-R02)
+
+## MVP Progress Snapshot (2026-06-24)
+
+Engineering assessment for paid-beta staging on `main` @ `593b378`.
+
+| Layer | ~Complete | Notes |
+|-------|-----------|--------|
+| P0 control plane | **95%** | Automated gates + staging pass; **formal approver sign-off pending** |
+| P1 paid-beta revenue | **85%** | Creation/marketing/remix/director chains wired; mock-render API certified |
+| Self-hosted deploy | **90%** | Docker compose + smoke scripts; JWT + module-priced credits verified |
+| Registry honesty | **91%** | **61 / 67** visible modules `implemented`; 6 mock (canvas, keywords, avatar×4) |
+| Commercial billing | **80%** | API/UI pricing matrix aligned; **finance unit-price sign-off open** (P1-R02) |
+| Live external provider | **40%** | P1-R03 contract + staging API pass; real Multica/render provider deferred |
+
+**Paid-beta staging:** engineering recommends **go** for a limited cohort on HTTP mode.
+
+**Production card billing blockers:** P0 approver name/date; P1-R02 finance confirmation of `COMMERCIAL_USAGE_PRICING` unit credits.
+
+**Mock / out of cohort scope:** `ai_canvas`, `copywriting_keywords`, `avatar_home`, `avatar_create`, `avatar_voice`, `avatar_space`.
+
+**Key verification commands:**
+
+```powershell
+npm run test:p0-release
+npm run test:staging-api-smoke
+npm run test:staging-callback-smoke
+npm run test:pricing-matrix-sync
+cd apps/api && npm test
+```

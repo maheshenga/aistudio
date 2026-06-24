@@ -1,7 +1,7 @@
 # Paid-Beta Scope And Readiness
 
 Updated: 2026-06-24  
-Target build: `main` @ `22af2ed` (merged from `fix/credit-retry-fund-loss`)
+Target build: `main` @ `593b378`
 
 ## Purpose
 
@@ -24,7 +24,7 @@ Paid-beta staging **must** run with HTTP backend, not browser-only localStorage:
 | `VITE_DATA_API_URL` | `http://localhost:4000` | Browser-reachable API URL |
 | `CORS_ORIGINS` | include web origin, e.g. `http://localhost:8081` | Must match how users open the app |
 | Auth | JWT register/login | Session persists on reload (user verified 2026-06-24) |
-| Credits | API hold/capture/refund | Verified: job create -5 hold, succeed captures |
+| Credits | API hold/capture/refund | Module-priced holds verified (e.g. `image` −8, `video` −24); see `test:staging-api-smoke` |
 
 Start stack:
 
