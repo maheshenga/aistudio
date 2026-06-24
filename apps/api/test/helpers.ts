@@ -1,13 +1,15 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/common/prisma/prisma.service';
 import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
 import * as bcrypt from 'bcrypt';
 
 export async function bootstrapTestApp(): Promise<{ app: INestApplication; prisma: PrismaService }> {
   process.env.DATABASE_URL = process.env.DATABASE_URL_TEST;
+  process.env.THROTTLE_LIMIT ??= '10000';
+  process.env.THROTTLE_AUTH_LIMIT ??= '1000';
+  const { AppModule } = await import('../src/app.module');
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   const app = moduleRef.createNestApplication();
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));

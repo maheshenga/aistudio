@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD, APP_FILTER } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { EncryptionModule } from './common/encryption/encryption.module';
 import { AuthModule } from './auth/auth.module';
@@ -33,11 +34,24 @@ import { AuthGuard } from './common/auth/auth.guard';
 import { RolesGuard } from './common/rbac/roles.guard';
 import { RbacModule } from './common/rbac/rbac.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import {
+  AppThrottlerGuard,
+  DEFAULT_THROTTLE_LIMIT,
+  DEFAULT_THROTTLE_TTL_MS,
+} from './common/throttle/app-throttler.guard';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), PrismaModule, EncryptionModule, RbacModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule, BillingModule, CustomerModule, CampaignModule, AnnouncementModule, AgencyModule, RiskModule, MediaModule, KeywordModule, TicketModule, PaymentModule, TaxEventModule, TaskModule, FinancialModule, SettingsModule, ApiKeyModule, WebhookModule],
+  imports: [
+    ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot([{
+      name: 'default',
+      ttl: DEFAULT_THROTTLE_TTL_MS,
+      limit: DEFAULT_THROTTLE_LIMIT,
+    }]),
+    PrismaModule, EncryptionModule, RbacModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule, BillingModule, CustomerModule, CampaignModule, AnnouncementModule, AgencyModule, RiskModule, MediaModule, KeywordModule, TicketModule, PaymentModule, TaxEventModule, TaskModule, FinancialModule, SettingsModule, ApiKeyModule, WebhookModule],
   providers: [
-    // 执行顺序：AuthGuard(401 未登录) → TenantGuard(403 非成员, 注入 req.member) → RolesGuard(403 权限不足)
+    { provide: APP_GUARD, useClass: AppThrottlerGuard },
+    // 执行顺序：ThrottlerGuard(429) → AuthGuard(401) → TenantGuard(403) → RolesGuard(403)
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: TenantGuard },
     { provide: APP_GUARD, useClass: RolesGuard },

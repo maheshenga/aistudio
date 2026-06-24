@@ -20,6 +20,7 @@ import {
 import {
   createWorkspaceApiKey,
   exportWorkspaceApiKeyRows,
+  hydrateWorkspaceApiKeys,
   loadWorkspaceApiKeys,
   revokeWorkspaceApiKey,
   rotateWorkspaceApiKey,
@@ -29,6 +30,7 @@ import {
   createWorkspaceWebhookEndpoint,
   deleteWorkspaceWebhookEndpoint,
   exportWorkspaceWebhookEndpointRows,
+  hydrateWorkspaceWebhookEndpoints,
   loadWorkspaceWebhookEndpoints,
   updateWorkspaceWebhookEndpoint,
   type WorkspaceWebhookEndpoint,
@@ -146,6 +148,7 @@ export function ApiKeysView() {
     };
 
     refreshKeys();
+    void hydrateWorkspaceApiKeys(apiKeyContext);
     window.addEventListener('workspace_api_keys_updated', handleApiKeysUpdated);
     return () => window.removeEventListener('workspace_api_keys_updated', handleApiKeysUpdated);
   }, [apiKeyContext, session.workspace.id]);
@@ -159,6 +162,7 @@ export function ApiKeysView() {
     };
 
     refreshWebhooks();
+    void hydrateWorkspaceWebhookEndpoints(webhookContext);
     window.addEventListener('workspace_webhooks_updated', handleWebhooksUpdated);
     return () => window.removeEventListener('workspace_webhooks_updated', handleWebhooksUpdated);
   }, [session.workspace.id, webhookContext]);

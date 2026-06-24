@@ -19,13 +19,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message = Array.isArray(r?.message) ? r.message.join('; ') : (r?.message ?? exception.message);
       code = status === 400 ? 'validation_error' : status === 401 ? 'unauthenticated'
            : status === 403 ? 'permission_denied' : status === 404 ? 'not_found'
-           : status === 409 ? 'conflict' : 'unknown_error';
+           : status === 409 ? 'conflict' : status === 429 ? 'rate_limited'
+           : 'unknown_error';
+      if (status === 429 && !metadata) {
+        metadata = { retryAfterMs: 60_000 };
+      }
     } else if (exception instanceof Prisma.PrismaClientKnownRequestError) {
       if (exception.code === 'P2025') { status = 404; code = 'not_found'; message = 'Resource not found'; }
       else if (exception.code === 'P2002') { status = 409; code = 'conflict'; message = 'Resource already exists'; }
     }
 
     if (status >= 500) this.logger.error(exception instanceof Error ? exception.stack : String(exception));
+    if (status === 429) {
+      const retryAfterMs = typeof metadata?.retryAfterMs === 'number' ? metadata.retryAfterMs : 60_000;
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+    }
     res.status(status).json({ error: { code, message, ...(metadata ? { metadata } : {}) } });
   }
 }

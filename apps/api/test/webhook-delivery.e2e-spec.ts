@@ -95,6 +95,12 @@ describe('Webhook delivery (e2e)', () => {
     const delivered = await prisma.webhookDelivery.findUnique({ where: { id: pending[0].id } });
     expect(delivered?.status).toBe('delivered');
     expect(delivered?.httpStatus).toBe(200);
+
+    const listed = await auth(request(app.getHttpServer())
+      .get(`/workspaces/${workspaceId}/webhooks/${endpoint!.id}/deliveries`)).expect(200);
+    expect(listed.body.value).toHaveLength(1);
+    expect(listed.body.value[0].eventType).toBe('generation.completed');
+    expect(listed.body.value[0].status).toBe('delivered');
   });
 
   it('enqueues generation.failed and delivers payload with error', async () => {

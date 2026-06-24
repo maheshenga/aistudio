@@ -1,7 +1,7 @@
 export type ErrorCode =
   | 'backend_unconfigured' | 'network_error' | 'permission_denied'
   | 'parse_error' | 'validation_error' | 'not_found' | 'conflict'
-  | 'unauthenticated' | 'insufficient_credits' | 'unknown_error';
+  | 'unauthenticated' | 'insufficient_credits' | 'rate_limited' | 'unknown_error';
 
 export class DomainError extends Error {
   constructor(
@@ -18,3 +18,5 @@ export const unauthenticated = (m = 'Authentication required') => new DomainErro
 export const permissionDenied = (m = 'Permission denied') => new DomainError('permission_denied', m, 403);
 export const insufficientCredits = (m = 'Insufficient credits', metadata?: Record<string, unknown>) =>
   new DomainError('insufficient_credits', m, 402, metadata);
+export const rateLimited = (retryAfterMs = 60_000, metadata?: Record<string, unknown>) =>
+  new DomainError('rate_limited', 'Rate limit exceeded', 429, { retryAfterMs, ...metadata });

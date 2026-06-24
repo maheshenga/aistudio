@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto';
 import { Prisma, type GenerationJob } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { EncryptionService } from '../common/encryption/encryption.service';
+import { notFound } from '../common/errors';
 
 const RETRY_DELAYS_MS = [30_000, 120_000, 600_000, 3_600_000, 21_600_000];
 const DELIVERY_TIMEOUT_MS = Number(process.env.WEBHOOK_DELIVERY_TIMEOUT_MS ?? 10_000);
@@ -102,6 +103,32 @@ export class WebhookDeliveryService {
       }
     }
     return processed;
+  }
+
+  async listForEndpoint(workspaceId: string, endpointId: string, limit = 20) {
+    const endpoint = await this.prisma.webhookEndpoint.findFirst({ where: { id: endpointId, workspaceId } });
+    if (!endpoint) throw notFound('Webhook endpoint not found');
+
+    const rows = await this.prisma.webhookDelivery.findMany({
+      where: { workspaceId, endpointId },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(limit, 100),
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      endpointId: row.endpointId,
+      eventType: row.eventType,
+      eventId: row.eventId,
+      status: row.status,
+      attempt: row.attempt,
+      maxAttempts: row.maxAttempts,
+      httpStatus: row.httpStatus,
+      error: row.error,
+      nextRetryAt: row.nextRetryAt.getTime(),
+      deliveredAt: row.deliveredAt?.getTime() ?? null,
+      createdAt: row.createdAt.getTime(),
+    }));
   }
 
   async deliverOne(deliveryId: string): Promise<void> {

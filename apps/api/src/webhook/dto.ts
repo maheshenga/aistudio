@@ -30,3 +30,7 @@ export class ListWebhookQuery {
   @IsOptional() @IsIn(['asc', 'desc']) order?: 'asc' | 'desc';
   @IsOptional() @IsIn(STATUSES as unknown as string[]) status?: string;
 }
+
+export class ListWebhookDeliveryQuery {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
+}
