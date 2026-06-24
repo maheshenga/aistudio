@@ -3,7 +3,7 @@
 Status: **P0 go signed** (2026-06-24); paid-beta staging authorized; P1-R02 unit-price sign-off still open  
 Owner: Commercial MVP workspace owner  
 Date: 2026-06-24 (progress snapshot)  
-Build: `main` @ `a0456fe` (tag `v0.1.0-paid-beta-staging`)  
+Build: `main` @ `6a28f87` (tag `v0.1.0-paid-beta-staging`)  
 Branch: `main`
 
 ## Release Scope
@@ -92,7 +92,7 @@ Complete this section after re-running the release gate on the target build (bra
 | Staging compose smoke | `docker compose --env-file .env.deploy up -d --build` then register → job → reload | pass (login persists on reload; generation job hold 5 + capture on succeed) | 2026-06-24 | agent + user verification |
 | Staging API automated smoke | `npm run test:staging-api-smoke` | pass (hold/capture/refund + refresh) | 2026-06-24 | agent verification (re-run pass) |
 | Staging callback smoke (P1-R03) | `npm run test:staging-callback-smoke` | pass (video/remix/director hold/capture/refund/idempotent) | 2026-06-24 | agent verification |
-| Pricing matrix API/UI sync | `npm run test:pricing-matrix-sync` | pass | 2026-06-24 | agent verification |
+| Staging smokes re-run | `staging-api-smoke` + `staging-callback-smoke` + `pricing-matrix-sync` | pass | 2026-06-24 | agent verification (post-notices) |
 | Staging UI image module smoke | Login → 商用级图像生成 → asset on dashboard | pass (`image-*.jpg` asset visible; JWT session persists) | 2026-06-24 | user + agent verification |
 | Git cleanliness | `git diff --check` | pass | 2026-06-24 | agent verification |
 
@@ -154,10 +154,13 @@ Notes: P0 automated + staging API/UI smoke complete on main @ a0456fe (tag v0.1.
 - [x] Notify team of paid-beta scope — notice ready: [paid-beta-cohort-notice-2026-06-24.md](./paid-beta-cohort-notice-2026-06-24.md) (2026-06-24)
 - [x] Schedule pricing review (P1-R02) — notice ready: [paid-beta-finance-notice-2026-06-24.md](./paid-beta-finance-notice-2026-06-24.md) (2026-06-24)
 - [ ] Schedule provider smoke (P1-R03) live external provider
+- [ ] Publish GitHub Release page — see [RELEASE-v0.1.0-paid-beta-staging.md](./RELEASE-v0.1.0-paid-beta-staging.md) (`gh auth login` required)
+
+Master checklist: [paid-beta-release-checklist.md](./paid-beta-release-checklist.md)
 
 ## MVP Progress Snapshot (2026-06-24)
 
-Engineering assessment for paid-beta staging on `main` @ `593b378`.
+Engineering assessment for paid-beta staging on `main` @ `6a28f87`.
 
 | Layer | ~Complete | Notes |
 |-------|-----------|--------|
