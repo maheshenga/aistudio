@@ -44,6 +44,8 @@ Paid-beta **staging** 环境已就绪，欢迎小范围试用。
 
 ---
 
+**Ready-to-send notice:** [paid-beta-finance-notice-2026-06-24.md](./paid-beta-finance-notice-2026-06-24.md)
+
 ## Finance / product (P1-R02 pricing review)
 
 **Subject:** P1-R02 — Commercial credit unit price review (Paid-Beta)

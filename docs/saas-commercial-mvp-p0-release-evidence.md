@@ -143,7 +143,7 @@ Notes: P0 automated + staging API/UI smoke complete on main @ a0456fe (tag v0.1.
 
 | ID | Item | Owner | Status |
 |---|---|---|---|
-| P1-R02 | Lock billing credit estimates vs commercial pricing | Product / Finance | API aligned with matrix (2026-06-24); unit price sign-off open — [p1-r02-pricing-review.md](./p1-r02-pricing-review.md) |
+| P1-R02 | Lock billing credit estimates vs commercial pricing | Product / Finance | review notice sent 2026-06-24 — [paid-beta-finance-notice-2026-06-24.md](./paid-beta-finance-notice-2026-06-24.md); sign-off open |
 | P1-R03 | Real provider callback smoke (video/remix/director) | Engineering | contract + staging API pass (`test:provider-callback`, `test:staging-callback-smoke`, 2026-06-24); live external provider open — see [paid-beta-scope.md](./paid-beta-scope.md) |
 
 ### Post sign-off actions
@@ -152,7 +152,8 @@ Notes: P0 automated + staging API/UI smoke complete on main @ a0456fe (tag v0.1.
 - [x] Tag release: `v0.1.0-paid-beta-staging` (2026-06-24)
 - [x] Deploy staging with `docs/deployment.md` (Docker stack running on `:8081` / `:4000`, 2026-06-24)
 - [x] Notify team of paid-beta scope — notice ready: [paid-beta-cohort-notice-2026-06-24.md](./paid-beta-cohort-notice-2026-06-24.md) (2026-06-24)
-- [ ] Schedule provider smoke (P1-R03) and pricing review (P1-R02)
+- [x] Schedule pricing review (P1-R02) — notice ready: [paid-beta-finance-notice-2026-06-24.md](./paid-beta-finance-notice-2026-06-24.md) (2026-06-24)
+- [ ] Schedule provider smoke (P1-R03) live external provider
 
 ## MVP Progress Snapshot (2026-06-24)
 
