@@ -149,4 +149,5 @@ cat backup.sql | docker compose exec -T db psql -U postgres aistudio
 
 - **api 反复重启**:多半是 `JWT_SECRET`/`FIELD_ENCRYPTION_KEY` 未设或 `FIELD_ENCRYPTION_KEY` 非 64-hex。看 `docker compose logs api`。
 - **前端能开但请求失败/CORS 报错**:检查 `PUBLIC_API_URL`(是否浏览器可达)与 `CORS_ORIGINS`(是否包含前端来源);改 `PUBLIC_API_URL` 后必须 `--build` 重建 web。
-- **迁移失败**:确认 db 已 healthy;手动 `docker compose exec api npx prisma migrate deploy` 看详细错误。
+- **Docker build behind Clash:** set shell proxy before build, e.g. `HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 docker compose --env-file .env.deploy build`.
+- **Host port 8080 busy:** set `WEB_PORT=8081` in `.env.deploy` and add `http://localhost:8081` to `CORS_ORIGINS`, then recreate `api` and `web`.
