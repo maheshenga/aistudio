@@ -1,6 +1,6 @@
 # 立即发送（Phase 0 下一步）
 
-**工程基线：** `main` @ `b20c4b6`  
+**工程基线：** `main` @ `07e6cbb`（含 k3s 清单；未 push 时本地 `git log -1`）  
 **日期：** 2026-06-26
 
 > Staging API smoke 必须在 **本机 Docker** 运行；CI/Agent 环境若无 Docker，请只跑 `npm run test:p0-release` 与 `npm run test:provider-callback`。

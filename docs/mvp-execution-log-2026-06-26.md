@@ -18,6 +18,7 @@ Date: 2026-06-26
 | `npm run test:staging-verify` | 脚本已加（pricing-matrix + staging smokes）；需 API :4000 |
 | P1 工程快照 + Issue 关闭备注 | [remaining-issues](./saas-commercial-mvp-remaining-issues.md) 表；[github-p1-close-comments](./github-p1-close-comments.md) |
 | READY-TO-SEND 基线 | `b20c4b6` |
+| k3s 部署包 | `deploy/k3s` + `k3s-deploy.ps1` / `k3s-verify.ps1` / `k3s-import-wsl.sh`（`07e6cbb`） |
 
 ## 阻塞 / 待环境
 

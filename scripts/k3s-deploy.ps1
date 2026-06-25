@@ -28,10 +28,12 @@ if (-not (Test-Path $EnvFile)) {
   exit 1
 }
 
-function Get-EnvValue($name) {
+function Get-EnvValue($name, [string]$default = "") {
   $line = Get-Content $EnvFile | Where-Object { $_ -match "^\s*$name=" } | Select-Object -First 1
-  if (-not $line) { return "" }
-  ($line -split "=", 2)[1].Trim()
+  if (-not $line) { return $default }
+  $v = ($line -split "=", 2)[1].Trim()
+  if (-not $v) { return $default }
+  return $v
 }
 
 $jwt = Get-EnvValue "JWT_SECRET"
@@ -74,9 +76,9 @@ type: Opaque
 stringData:
   JWT_SECRET: $jwt
   FIELD_ENCRYPTION_KEY: $enc
-  JWT_ACCESS_TTL: "$(Get-EnvValue 'JWT_ACCESS_TTL')"
-  JWT_REFRESH_TTL_DAYS: "$(Get-EnvValue 'JWT_REFRESH_TTL_DAYS')"
-  ORCHESTRATION_RECONCILE_ENABLED: "$(Get-EnvValue 'ORCHESTRATION_RECONCILE_ENABLED')"
+  JWT_ACCESS_TTL: "$(Get-EnvValue 'JWT_ACCESS_TTL' '15m')"
+  JWT_REFRESH_TTL_DAYS: "$(Get-EnvValue 'JWT_REFRESH_TTL_DAYS' '30')"
+  ORCHESTRATION_RECONCILE_ENABLED: "$(Get-EnvValue 'ORCHESTRATION_RECONCILE_ENABLED' 'false')"
   MULTICA_API_URL: "$(Get-EnvValue 'MULTICA_API_URL')"
   MULTICA_API_TOKEN: "$(Get-EnvValue 'MULTICA_API_TOKEN')"
   CORS_ORIGINS: $cors

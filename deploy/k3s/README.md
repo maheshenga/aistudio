@@ -55,8 +55,11 @@ k3s uses **containerd**, not Docker daemon inside the cluster.
 
 1. `docker build` on your workstation (scripts/k3s-build-images.ps1).
 2. **Import** into k3s:
-   - Linux: `docker save aistudio/api:latest | sudo k3s ctr images import -`
+   - Linux / WSL k3s: `bash scripts/k3s-import-wsl.sh` (set `PUBLIC_API_URL` if not localhost:4000)
+   - Or: `docker save aistudio/api:latest | sudo k3s ctr images import -`
    - Or push to a registry and set `image:` + `imagePullPolicy: Always` in yaml.
+
+**Windows Docker + WSL k3s (common):** build in WSL with Docker Desktop integration, then `k3s-import-wsl.sh`. From Windows PowerShell deploy manifests only: `.\scripts\k3s-deploy.ps1 -SkipBuild`.
 
 Deployments use `imagePullPolicy: IfNotPresent` and tags `aistudio/api:latest`, `aistudio/web:latest`.
 

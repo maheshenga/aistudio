@@ -57,6 +57,15 @@ Copy-Item .env.deploy.example .env.deploy
 
 详见 [deploy/k3s/README.md](../deploy/k3s/README.md)。
 
+**WSL 里跑 k3s、Windows 上 Docker：** 在 WSL 仓库根目录：
+
+```bash
+export PUBLIC_API_URL=http://$(hostname -I | awk '{print $1}'):30400   # 或你的节点 IP
+bash scripts/k3s-import-wsl.sh
+```
+
+Windows 再执行：`.\scripts\k3s-deploy.ps1 -SkipBuild`
+
 | 方式 | 说明 |
 |------|------|
 | **k3s 全栈** | 上列脚本；镜像需 `docker build` 后 `k3s ctr images import`（见 README） |

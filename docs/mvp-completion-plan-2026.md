@@ -22,7 +22,7 @@ Baseline: `main`, P0 signed 2026-06-24, tag `v0.1.0-paid-beta-staging`
 
 ### Gate G1
 
-- [ ] `npm run test:staging-verify` pass（或 `.\scripts\staging-verify.ps1`；需 Docker API）
+- [ ] `npm run test:staging-verify` pass（Compose：`staging-verify.ps1`；k3s：`k3s-verify.ps1` → [deploy/k3s/README.md](../deploy/k3s/README.md)）
 - [x] `npm run test:pricing-matrix-sync` pass
 - [ ] Cohort 通知已发（人工）
 
