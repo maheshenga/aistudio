@@ -28,22 +28,13 @@
 
 ---
 
-## 3. Staging（本机 PowerShell）
-
-**Docker Compose：**
+## 3. Staging（k3s，推荐）
 
 ```powershell
-.\scripts\staging-verify.ps1
+.\scripts\k3s-staging.ps1
 ```
 
-**k3s：**
-
-```powershell
-.\scripts\k3s-deploy.ps1
-.\scripts\k3s-verify.ps1 -ApiUrl "http://127.0.0.1:30400"
-```
-
-或（API 已起）：`npm run test:staging-verify`
+详见 [staging-k3s.md](./staging-k3s.md)。Compose 备选：`.\scripts\staging-verify.ps1`
 
 或见 [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)。  
 本机 **Clash / k3s**：见 [local-env-clash-k3s.md](./local-env-clash-k3s.md)。

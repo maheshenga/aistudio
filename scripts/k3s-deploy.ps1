@@ -44,10 +44,10 @@ $pgPass = Get-EnvValue "POSTGRES_PASSWORD"
 $pgDb = Get-EnvValue "POSTGRES_DB"
 if (-not $pgDb) { $pgDb = "aistudio" }
 $cors = Get-EnvValue "CORS_ORIGINS"
-if (-not $cors) { $cors = "http://localhost:8080" }
+if (-not $cors) { $cors = "http://127.0.0.1:30080" }
 $publicUrl = $PublicApiUrl
 if (-not $publicUrl) { $publicUrl = Get-EnvValue "PUBLIC_API_URL" }
-if (-not $publicUrl) { $publicUrl = "http://localhost:4000" }
+if (-not $publicUrl) { $publicUrl = "http://127.0.0.1:30400" }
 
 if (-not $jwt -or -not $enc -or -not $pgPass) {
   Write-Host "JWT_SECRET, FIELD_ENCRYPTION_KEY, POSTGRES_PASSWORD required in $EnvFile" -ForegroundColor Yellow
@@ -104,6 +104,5 @@ kubectl rollout status deployment/api -n aistudio --timeout=180s
 kubectl rollout status deployment/web -n aistudio --timeout=120s
 
 Write-Host ""
-Write-Host "NodePort (default): API http://<node-ip>:30400  Web http://<node-ip>:30080" -ForegroundColor Green
-Write-Host "Smoke: `$env:STAGING_API_URL='http://localhost:4000'; npm run test:staging-verify" -ForegroundColor Green
-Write-Host "If using NodePort only, set STAGING_API_URL to http://<node-ip>:30400" -ForegroundColor Yellow
+Write-Host "NodePort: API $publicUrl (port 30400)  Web http://<node>:30080" -ForegroundColor Green
+Write-Host "Smoke: .\scripts\k3s-verify.ps1 -ApiUrl `"$publicUrl`"" -ForegroundColor Green

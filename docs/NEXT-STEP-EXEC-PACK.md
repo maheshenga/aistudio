@@ -5,32 +5,18 @@
 
 ---
 
-## 序 2 — Staging（你本机 PowerShell，二选一）
-
-### k3s
+## 序 2 — Staging on k3s（G1，推荐）
 
 ```powershell
 cd E:\code\aistudio
-# 确保 .env.deploy 已填密钥；CORS 含 Web 来源，例 http://127.0.0.1:30080
+.\scripts\k3s-staging.ps1
 ```
 
-WSL（若 k3s 在 WSL）：
+k3s 在 WSL：`.\scripts\k3s-staging.ps1 -WslImport`
 
-```bash
-cd /mnt/e/code/aistudio   # 按你的盘符
-export PUBLIC_API_URL=http://127.0.0.1:30400
-bash scripts/k3s-import-wsl.sh
-```
+说明：[staging-k3s.md](./staging-k3s.md)
 
-Windows：
-
-```powershell
-.\scripts\k3s-deploy.ps1 -SkipBuild   # 若 WSL 已 build+import
-# 或全量：.\scripts\k3s-deploy.ps1
-.\scripts\k3s-verify.ps1 -ApiUrl "http://127.0.0.1:30400"
-```
-
-### Docker Compose
+### 备选：Docker Compose
 
 ```powershell
 .\scripts\staging-verify.ps1
