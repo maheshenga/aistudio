@@ -1,9 +1,8 @@
 # 立即发送（Phase 0 下一步）
 
-**工程基线：** `main` @ `07e6cbb`（含 k3s 清单；未 push 时本地 `git log -1`）  
-**日期：** 2026-06-26
+**工程基线：** `main` @ `fa498bc`（已 push）
 
-> Staging API smoke 必须在 **本机 Docker** 运行；CI/Agent 环境若无 Docker，请只跑 `npm run test:p0-release` 与 `npm run test:provider-callback`。
+**下一步清单：** [NEXT-STEP-EXEC-PACK.md](./NEXT-STEP-EXEC-PACK.md)
 
 ---
 
@@ -47,8 +46,7 @@
 或（API 已起）：`npm run test:staging-verify`
 
 或见 [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)。  
-本机 **Clash / k3s**：见 [local-env-clash-k3s.md](./local-env-clash-k3s.md)。  
-待 push：`git push origin main`（至 `277e31c` 含 k3s）。
+本机 **Clash / k3s**：见 [local-env-clash-k3s.md](./local-env-clash-k3s.md)。
 
 **按优先级：** [mvp-priority-queue-2026-06-26.md](./mvp-priority-queue-2026-06-26.md)
 
@@ -75,5 +73,5 @@ gh release create v0.1.0-paid-beta-staging `
 
 - [ ] Cohort 已发
 - [ ] Finance 已转
-- [ ] `staging-verify.ps1` pass
+- [ ] `staging-verify` 或 `k3s-verify` pass
 - [ ] GitHub Release 已建

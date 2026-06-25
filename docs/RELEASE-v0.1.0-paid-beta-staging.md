@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-24  
 **Tag:** `v0.1.0-paid-beta-staging`  
-**Branch:** `main` @ `c22a2c7`
+**Branch:** `main` @ `fa498bc`
 
 ## Summary
 
@@ -28,14 +28,13 @@ Default ports: web **8081**, api **4000**. See [deployment.md](./deployment.md).
 ## Verify
 
 ```powershell
-npm run test:staging-api-smoke
-npm run test:staging-callback-smoke
-npm run test:pricing-matrix-sync
+npm run test:staging-verify
+# k3s: deploy/k3s/README.md
 ```
 
 ## In scope
 
-See [paid-beta-scope.md](./paid-beta-scope.md) — 61/67 modules implemented; mock: `ai_canvas`, `copywriting_keywords`, avatar×4.
+See [paid-beta-scope.md](./paid-beta-scope.md) — **62/67** modules implemented; mock preview: `ai_canvas`, avatar×4 (`ModulePreviewBanner`).
 
 ## Known limitations
 

@@ -6,8 +6,8 @@
 
 | 序 | 动作 | 负责 | 状态 |
 |----|------|------|------|
-| **0** | `git push origin main`（Clash 代理见 [local-env-clash-k3s.md](./local-env-clash-k3s.md)） | 工程 | 本地 4 commits 待推 |
-| **1** | 工程回归：`npm run test:p0-release` | 工程 | 本机/CI |
+| **0** | `git push origin main` | 工程 | **done** → `fa498bc` |
+| **1** | 工程回归：`npm run test:p0-release` | 工程 | **pass**（2026-06-26） |
 | **2** | Staging 栈 + smoke | 工程/运维 | **阻塞 G1** |
 | | Compose：`.\scripts\staging-verify.ps1` | | |
 | | k3s：`k3s-import-wsl.sh` + `k3s-deploy.ps1` + `k3s-verify.ps1` | | |
@@ -42,4 +42,4 @@ Staging 必须在有 API 的环境跑：`npm run test:staging-verify`。
 
 ## 单页操作
 
-[READY-TO-SEND-next-steps.md](./READY-TO-SEND-next-steps.md)
+[READY-TO-SEND-next-steps.md](./READY-TO-SEND-next-steps.md) · [NEXT-STEP-EXEC-PACK.md](./NEXT-STEP-EXEC-PACK.md)

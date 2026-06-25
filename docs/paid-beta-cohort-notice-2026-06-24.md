@@ -1,7 +1,7 @@
 # Paid-Beta Staging Cohort Notice (ready to send)
 
 **Send date:** 2026-06-24  
-**Release:** `v0.1.0-paid-beta-staging` (`main` @ `28b6e0e`)  
+**Release:** `v0.1.0-paid-beta-staging` (`main` @ `fa498bc`)  
 **P0 sign-off:** go — Maheshenga, 2026-06-24
 
 ---
@@ -20,8 +20,10 @@ AI Studio **Paid-Beta Staging** 现已开放小范围内测（P0 已签字通过
 
 | 服务 | 地址（当前 staging） |
 |------|----------------------|
-| Web 工作台 | http://localhost:8081 |
+| Web 工作台 | http://localhost:8080 或 8081（见 `WEB_PORT`） |
 | API | http://localhost:4000 |
+
+**k3s NodePort：** Web `:30080`，API `:30400`（见 `deploy/k3s/README.md`）。
 
 > 若部署在 VPS，请将 `localhost` 替换为实际域名/IP，并确保 `CORS_ORIGINS` 包含 Web 来源。
 
@@ -67,12 +69,9 @@ AI Studio **Paid-Beta Staging** 现已开放小范围内测（P0 已签字通过
 ## 运维备忘（仅管理员）
 
 ```powershell
-# 启动 staging
-docker compose --env-file .env.deploy up -d --build
-
-# 冒烟
-npm run test:staging-api-smoke
-npm run test:staging-callback-smoke
+.\scripts\staging-verify.ps1
+# 或 k3s：.\scripts\k3s-verify.ps1
+npm run test:staging-verify
 ```
 
 当前验证端口：`WEB_PORT=8081`，`API_PORT=4000`。
