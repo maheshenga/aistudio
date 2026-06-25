@@ -46,19 +46,23 @@ Copy-Item .env.deploy.example .env.deploy
 
 若 Web 用 3000 开发端口、API 仍 4000：保证 `CORS_ORIGINS` 含 `http://localhost:3000`；`PUBLIC_API_URL=http://localhost:4000`。
 
-## 3. k3s（可选，需自行映射）
+## 3. k3s（本机集群）
 
-当前 **没有** 官方 Helm/K8s 清单；`docker-compose.yml` 定义三服务：`db` / `api` / `web`。
+官方清单与脚本：
 
-可选做法：
+```powershell
+.\scripts\k3s-deploy.ps1      # 读 .env.deploy，build 镜像，kubectl apply
+.\scripts\k3s-verify.ps1      # NodePort 30400 或改 -ApiUrl
+```
+
+详见 [deploy/k3s/README.md](../deploy/k3s/README.md)。
 
 | 方式 | 说明 |
 |------|------|
-| **A. 仅 k3s 跑 DB** | 在 k3s 起 PostgreSQL，把 `DATABASE_URL` 指到集群 Service；本机或集群内跑 `apps/api`（`npm run` / 镜像）。 |
-| **B. kompose** | `kompose convert -f docker-compose.yml` 生成 YAML 后按 k3s 改 image、Secret、Ingress。 |
-| **C. 混合** | API+Web 仍用 `docker compose` 做 paid-beta smoke；生产再上 k3s。 |
+| **k3s 全栈** | 上列脚本；镜像需 `docker build` 后 `k3s ctr images import`（见 README） |
+| **Compose 试跑** | `.\scripts\staging-verify.ps1`（Gate G1 等价） |
 
-paid-beta **Gate G1** 只要求本机可访问 `http://localhost:4000` 且 `npm run test:staging-verify` pass，不要求必须 k3s。
+paid-beta **Gate G1** 只要求 API 可达且 `npm run test:staging-verify` pass。
 
 ## 4. k3s 与 Docker 关系
 

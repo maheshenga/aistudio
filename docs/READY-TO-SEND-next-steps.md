@@ -31,11 +31,20 @@
 
 ## 3. Staging（本机 PowerShell）
 
+**Docker Compose：**
+
 ```powershell
 .\scripts\staging-verify.ps1
-# 或（已起 API 时）：
-npm run test:staging-verify
 ```
+
+**k3s：**
+
+```powershell
+.\scripts\k3s-deploy.ps1
+.\scripts\k3s-verify.ps1 -ApiUrl "http://127.0.0.1:30400"
+```
+
+或（API 已起）：`npm run test:staging-verify`
 
 或见 [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)。  
 本机 **Clash / k3s**：见 [local-env-clash-k3s.md](./local-env-clash-k3s.md)。  

@@ -65,6 +65,8 @@ curl -i http://localhost:4000/          # API 健康探测
 # 浏览器打开 http://<host>:8080
 ```
 
+**k3s（本机单节点）：** [deploy/k3s/README.md](../deploy/k3s/README.md) — `.\scripts\k3s-deploy.ps1` / `k3s-verify.ps1`。
+
 自动化 API 冒烟(注册、credit hold/capture/refund、generation job 生命周期):
 
 ```powershell
