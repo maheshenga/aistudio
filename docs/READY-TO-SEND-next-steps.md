@@ -48,7 +48,9 @@
 
 或见 [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)。  
 本机 **Clash / k3s**：见 [local-env-clash-k3s.md](./local-env-clash-k3s.md)。  
-待 push：`git push origin main`（提交 `ceac7ba`）。
+待 push：`git push origin main`（至 `277e31c` 含 k3s）。
+
+**按优先级：** [mvp-priority-queue-2026-06-26.md](./mvp-priority-queue-2026-06-26.md)
 
 ---
 

@@ -27,10 +27,16 @@ docker compose --env-file .env.deploy ps
 ## G1 Smoke（API 运行后）
 
 ```powershell
+npm run test:staging-verify
+# 或分步：
 npm run test:pricing-matrix-sync
 npm run test:staging-api-smoke
 npm run test:staging-callback-smoke
 ```
+
+**k3s：** `.\scripts\k3s-verify.ps1` — [deploy/k3s/README.md](../deploy/k3s/README.md)
+
+**优先级总表：** [mvp-priority-queue-2026-06-26.md](./mvp-priority-queue-2026-06-26.md)
 
 ## 0.5 GitHub Release
 

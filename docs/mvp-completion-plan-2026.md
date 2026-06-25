@@ -69,4 +69,5 @@ Baseline: `main`, P0 signed 2026-06-24, tag `v0.1.0-paid-beta-staging`
 - [paid-beta-scope.md](./paid-beta-scope.md)
 - [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)
 - [READY-TO-SEND-next-steps.md](./READY-TO-SEND-next-steps.md)
+- [mvp-priority-queue-2026-06-26.md](./mvp-priority-queue-2026-06-26.md)
 - [github-p1-close-comments.md](./github-p1-close-comments.md)
