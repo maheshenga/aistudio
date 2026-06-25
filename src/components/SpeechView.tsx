@@ -268,9 +268,22 @@ export function SpeechView() {
           <button onClick={() => setShowConsentPrompt(false)} className="flex-1 border border-[var(--border-color)] text-gray-700 font-bold py-2.5 rounded-[var(--radius-lg)] text-sm hover:bg-gray-50">取消</button>
           <button
             onClick={() => {
+              logAuditEvent({
+                action: 'speech_voice_consent',
+                moduleId: 'speech',
+                targetType: 'generation_job',
+                targetId: 'pending',
+                metadata: {
+                  voice: activeVoice.name,
+                  voiceId: activeVoice.id,
+                  provider: activeVoice.provider,
+                  consentReason: activeVoice.consentReason,
+                  consentRequired: true,
+                },
+              }, { session });
               setConsentConfirmed(true);
               setShowConsentPrompt(false);
-              handleGenerate();
+              void handleGenerate();
             }}
             className="flex-1 bg-[var(--color-primary)] hover:bg-blue-700 text-white font-bold py-2.5 rounded-[var(--radius-lg)] text-sm"
           >

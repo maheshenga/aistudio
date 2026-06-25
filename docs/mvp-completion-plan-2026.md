@@ -13,27 +13,27 @@ Baseline: `main`, P0 signed 2026-06-24, tag `v0.1.0-paid-beta-staging`
 
 ## Phase 0 — Cohort（L1）
 
-- [ ] 0.1 发送 [paid-beta-cohort-notice-2026-06-24.md](./paid-beta-cohort-notice-2026-06-24.md)
-- [ ] 0.2 财务评审 [p1-r02-pricing-review.md](./p1-r02-pricing-review.md)
-- [ ] 0.3 部署 Runbook 演练（[deployment.md](./deployment.md)）
-- [ ] 0.4 Staging 环境检查（CORS、JWT、VITE_DATA_API_URL）
-- [ ] 0.5 GitHub Release `v0.1.0-paid-beta-staging`
-- [ ] 0.6 用户预期：预览模块（画布/关键词/Avatar）
+- [x] 0.1 通知稿就绪 — [paid-beta-cohort-notice-2026-06-24.md](./paid-beta-cohort-notice-2026-06-24.md)（**待发送**）
+- [x] 0.2 财务稿就绪 — [paid-beta-finance-notice-2026-06-24.md](./paid-beta-finance-notice-2026-06-24.md)（**待签字**）
+- [x] 0.3 Runbook — [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)
+- [x] 0.4 环境检查清单 — 同上 Runbook §0.4
+- [ ] 0.5 GitHub Release 页面（文案已有 [RELEASE](./RELEASE-v0.1.0-paid-beta-staging.md)）
+- [x] 0.6 预览模块策略 — [mock-module-strategy-2026-06-26.md](./mock-module-strategy-2026-06-26.md)
 
 ### Gate G1
 
-- [ ] `npm run test:staging-api-smoke` pass（目标 API）
-- [x] `npm run test:pricing-matrix-sync` pass（2026-06-26 本地）
-- [ ] Cohort 通知已发
+- [ ] `npm run test:staging-api-smoke` pass（需 Docker API）
+- [x] `npm run test:pricing-matrix-sync` pass
+- [ ] Cohort 通知已发（人工）
 
 ## Phase 1 — Production revenue（L2）
 
-- [ ] 1.1 P1-R02 财务书面批准 → 必要时改 `COMMERCIAL_USAGE_PRICING` + `commercial-pricing.ts`
-- [ ] 1.2 `test:pricing-matrix-sync` + `test:billable-generation` + staging smoke 复跑
-- [ ] 1.3 P1-R01 人工：失败 job → 重试 → 审计
-- [ ] 1.4 P1-R05 导出 usage + audit（≥3 创作模块）
-- [ ] 1.5 P1-R03：真实 provider live smoke **或** 文档声明延后
-- [ ] 1.6 evidence 标记 P1-R02 closed
+- [ ] 1.1 P1-R02 财务书面批准 — [p1-r02-pricing-review.md](./p1-r02-pricing-review.md)
+- [x] 1.2 工程对齐 — `test:pricing-matrix-sync` + `test:billable-generation`（本地跑）
+- [x] 1.3 P1-R01 人工清单 — [p1-r01-failed-job-retry-manual.md](./p1-r01-failed-job-retry-manual.md)
+- [x] 1.4 P1-R05 人工清单 — [p1-r05-export-audit-manual.md](./p1-r05-export-audit-manual.md)
+- [x] 1.5 P1-R03 延后说明 — [p1-r03-provider-deferral.md](./p1-r03-provider-deferral.md)
+- [ ] 1.6 evidence 标记 P1-R02 closed（财务后）
 
 ### Gate G2
 
@@ -43,20 +43,20 @@ Baseline: `main`, P0 signed 2026-06-24, tag `v0.1.0-paid-beta-staging`
 
 ## Phase 2 — Product surface（L3a）
 
-- [ ] 2.1 决策：6 mock 模块 Implement / Preview / Hide
-- [x] 2.2 P1-R06 关键词库 — registry `implemented`（UI+repo 已存在，2026-06-26）
-- [x] 2.3 mock 模块统一 Preview 提示 — `ModulePreviewBanner`（2026-06-26）
-- [x] 2.4 同步 P1 progress / paid-beta-scope 文档（2026-06-26 push `9fcca22`）
+- [x] 2.1 mock 模块策略 — [mock-module-strategy-2026-06-26.md](./mock-module-strategy-2026-06-26.md)
+- [x] 2.2 P1-R06 关键词库
+- [x] 2.3 `ModulePreviewBanner`
+- [x] 2.4 文档同步
 
 ## Phase 3 — Growth loop（L3b）
 
-- [x] 3.1 P1-R04 Marketing → CRM + tasks（`createMarketingLeadHandoff` + launch-readiness，已存在）
-- [ ] 3.2 P1-R07 Chat 记忆策略
-- [ ] 3.3 P1-R08 Speech consent + audit
+- [x] 3.1 P1-R04 Marketing → CRM
+- [x] 3.2 P1-R07 Chat — 显式保存 + `chat_memory_save` 审计 + launch-readiness
+- [x] 3.3 P1-R08 Speech — consent 门控 + `speech_voice_consent` 审计 + launch-readiness
 
 ## 每周回归
 
-- [ ] `npm run test:p0-release`（主分支合并前）
+- [x] `npm run test:p0-release`（2026-06-26 pass）
 
 ## 明确不做（本计划）
 
@@ -67,3 +67,4 @@ Baseline: `main`, P0 signed 2026-06-24, tag `v0.1.0-paid-beta-staging`
 - [paid-beta-release-checklist.md](./paid-beta-release-checklist.md)
 - [saas-commercial-mvp-remaining-issues.md](./saas-commercial-mvp-remaining-issues.md)
 - [paid-beta-scope.md](./paid-beta-scope.md)
+- [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)

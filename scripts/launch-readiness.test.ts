@@ -1057,6 +1057,12 @@ assert.equal(
   false,
   'SpeechView should not use timer-based speech synthesis placeholders',
 );
+assert.ok(
+  speechSource.includes('consentRequired') &&
+    speechSource.includes('speech_voice_consent') &&
+    speechSource.includes('consentConfirmed'),
+  'SpeechView should gate consent-sensitive voices and audit speech_voice_consent',
+);
 
 const chatSource = readFileSync('src/components/ChatView.tsx', 'utf8');
 assert.ok(
@@ -1075,6 +1081,13 @@ assert.ok(
     chatSource.includes("moduleId: 'chat'") &&
     chatSource.includes("type: 'text'"),
   'ChatView should persist assistant reply jobs, text assets, usage, and audit lifecycle events',
+);
+assert.ok(
+  chatSource.includes('handleSaveChatOutput') &&
+    chatSource.includes('chat_memory_save') &&
+    chatSource.includes('saveTarget') &&
+    chatSource.includes('memoryEnabled'),
+  'ChatView should expose explicit chat memory save policy (asset note / task) with chat_memory_save audit',
 );
 const chatSendHandler = chatSource.slice(
   chatSource.indexOf('const handleSend'),

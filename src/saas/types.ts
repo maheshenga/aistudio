@@ -129,6 +129,8 @@ export type AuditAction =
   | 'copywriting_keyword_create'
   | 'copywriting_keyword_update'
   | 'copywriting_keyword_archive'
+  | 'chat_memory_save'
+  | 'speech_voice_consent'
   | 'marketing_lead_create'
   | 'marketing_followup_task_create'
   | 'crm_customer_export'

@@ -298,6 +298,18 @@ export function ChatView() {
         },
       }, jobContext);
       logAuditEvent({
+        action: 'chat_memory_save',
+        moduleId: 'chat',
+        targetType: 'asset',
+        targetId: asset.id,
+        metadata: {
+          saveTarget: 'asset_note',
+          agent: activeAgent.id,
+          sourceMessageId: messageId,
+          promptSummary,
+        },
+      }, { session });
+      logAuditEvent({
         action: 'asset_create',
         moduleId: 'chat',
         targetType: 'asset',
@@ -328,6 +340,18 @@ export function ChatView() {
           savedAt: Date.now(),
         },
       }, jobContext);
+      logAuditEvent({
+        action: 'chat_memory_save',
+        moduleId: 'chat',
+        targetType: 'task',
+        targetId: task.id,
+        metadata: {
+          saveTarget: 'task',
+          agent: activeAgent.id,
+          sourceMessageId: messageId,
+          promptSummary,
+        },
+      }, { session });
       logAuditEvent({
         action: 'task_create',
         moduleId: 'chat',

@@ -1,7 +1,7 @@
 # Paid-Beta Staging Cohort Notice (ready to send)
 
 **Send date:** 2026-06-24  
-**Release:** `v0.1.0-paid-beta-staging` (`main` @ `b4f65c9`)  
+**Release:** `v0.1.0-paid-beta-staging` (`main` @ `28b6e0e`)  
 **P0 sign-off:** go — Maheshenga, 2026-06-24
 
 ---
@@ -34,14 +34,13 @@ AI Studio **Paid-Beta Staging** 现已开放小范围内测（P0 已签字通过
 ### 本次内测可用功能
 
 - **控制面：** 指挥概览、任务、资产、项目、Billing、Settings、Admin、审计日志等
-- **创作 / 营收：** 电商主图/视频、图像/视频引擎、文案、Chat、Speech、混剪、营销（爆店码/碰一碰/官网）、导演台、设计工作流等
+- **创作 / 营收：** 电商主图/视频、图像/视频引擎、文案、**关键词库**、Chat、Speech、混剪、营销（爆店码/碰一碰/官网）、导演台、设计工作流等
 - **计费：** 真实 API hold/capture（例：图像生成 8 点、视频 24 点）
 
 ### 请勿依赖 / 仅预览
 
 - 无限模态 AI 画布（`ai_canvas`）
-- 文案关键词库（`copywriting_keywords`）
-- Avatar 分身套件（4 个模块，mock）
+- Avatar 分身套件（4 个模块，mock；界面会显示预览横幅）
 
 ### 已知限制（请知悉）
 

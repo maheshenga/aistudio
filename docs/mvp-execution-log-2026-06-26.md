@@ -14,6 +14,7 @@ Date: 2026-06-26
 | `git push origin main` | **done** → `9fcca22` on GitHub |
 | P1-R04 营销→CRM | 代码+`test:launch-readiness` 已覆盖，计划勾选 3.1 |
 | `test:launch-readiness` | **pass**（2026-06-26 文档同步后） |
+| 按优先级全量工程项 | P1-R07/R08 审计+契约；Phase0/1 Runbook；cohort 文案；`test:p0-release` **pass** |
 
 ## 阻塞 / 待环境
 
