@@ -1,21 +1,24 @@
 # Paid-Beta Release Checklist
 
-Updated: 2026-06-24 · `main` @ `c22a2c7`
+Updated: 2026-06-26 · `main` @ `5f0c227`
 
 ## Done
 
 | # | Item | Evidence |
 |---|------|----------|
-| 1 | P0 automated gates | `test:p0-release` pass (2026-06-24) |
+| 1 | P0 automated gates | `test:p0-release` pass (2026-06-26) |
 | 2 | API e2e | 36 suites / 170 tests |
-| 3 | Staging Docker deploy | `:8081` / `:4000` |
+| 3 | Staging Docker deploy | `:8081` / `:4000` (historical); use `scripts/staging-verify.ps1` |
 | 4 | P0 formal go | Maheshenga, 2026-06-24 — [evidence](./saas-commercial-mvp-p0-release-evidence.md) |
 | 5 | Git tag | `v0.1.0-paid-beta-staging` |
 | 6 | API/UI pricing alignment | [p1-r02](./p1-r02-pricing-review.md) + `test:pricing-matrix-sync` |
-| 7 | Staging smokes (re-run pass) | `staging-api-smoke`, `staging-callback-smoke` |
+| 7 | Staging smokes (re-run pass) | `staging-api-smoke`, `staging-callback-smoke` (on live API) |
 | 8 | Cohort notice drafted | [paid-beta-cohort-notice-2026-06-24.md](./paid-beta-cohort-notice-2026-06-24.md) |
 | 9 | Finance notice drafted | [paid-beta-finance-notice-2026-06-24.md](./paid-beta-finance-notice-2026-06-24.md) |
 | 10 | Release notes | [RELEASE-v0.1.0-paid-beta-staging.md](./RELEASE-v0.1.0-paid-beta-staging.md) |
+| 11 | MVP ops + send pack | [READY-TO-SEND-next-steps.md](./READY-TO-SEND-next-steps.md), [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md) |
+| 12 | P1-R03 callback contract | `test:provider-callback` pass (2026-06-26) |
+| 13 | P1-R07/R08 + preview | `5f0c227` |
 
 ## Pending (non-blocking for staging cohort)
 
@@ -41,4 +44,4 @@ Updated: 2026-06-24 · `main` @ `c22a2c7`
 | P0 control plane | **100%** (signed) |
 | Paid-beta staging | **~90%** (await finance + optional GH release page) |
 | Production billing | **~75%** (P1-R02) |
-| Registry | **91%** (61/67) |
+| Registry | **93%** (62/67) |

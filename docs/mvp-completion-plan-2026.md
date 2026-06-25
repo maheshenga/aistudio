@@ -13,7 +13,7 @@ Baseline: `main`, P0 signed 2026-06-24, tag `v0.1.0-paid-beta-staging`
 
 ## Phase 0 — Cohort（L1）
 
-- [x] 0.1 通知稿就绪 — [paid-beta-cohort-notice-2026-06-24.md](./paid-beta-cohort-notice-2026-06-24.md)（**待发送**）
+- [x] 0.1 通知稿就绪 — [paid-beta-cohort-notice-2026-06-24.md](./paid-beta-cohort-notice-2026-06-24.md)（**待发送** → [READY-TO-SEND-next-steps.md](./READY-TO-SEND-next-steps.md)）
 - [x] 0.2 财务稿就绪 — [paid-beta-finance-notice-2026-06-24.md](./paid-beta-finance-notice-2026-06-24.md)（**待签字**）
 - [x] 0.3 Runbook — [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)
 - [x] 0.4 环境检查清单 — 同上 Runbook §0.4
