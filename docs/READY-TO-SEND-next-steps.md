@@ -1,7 +1,9 @@
 # 立即发送（Phase 0 下一步）
 
-**工程基线：** `main` @ `5f0c227`  
+**工程基线：** `main` @ `b20c4b6`  
 **日期：** 2026-06-26
+
+> Staging API smoke 必须在 **本机 Docker** 运行；CI/Agent 环境若无 Docker，请只跑 `npm run test:p0-release` 与 `npm run test:provider-callback`。
 
 ---
 
@@ -30,10 +32,9 @@
 ## 3. Staging（本机 PowerShell）
 
 ```powershell
-cp .env.deploy.example .env.deploy
-# 填写 JWT_SECRET、FIELD_ENCRYPTION_KEY、POSTGRES_PASSWORD
-# 若 Web 用 8081：WEB_PORT=8081 且 CORS_ORIGINS=http://localhost:8081
 .\scripts\staging-verify.ps1
+# 或（已起 API 时）：
+npm run test:staging-verify
 ```
 
 或见 [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)。

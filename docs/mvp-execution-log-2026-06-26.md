@@ -15,6 +15,9 @@ Date: 2026-06-26
 | P1-R04 营销→CRM | 代码+`test:launch-readiness` 已覆盖，计划勾选 3.1 |
 | `test:launch-readiness` | **pass**（2026-06-26 文档同步后） |
 | 按优先级全量工程项 | P1-R07/R08 审计+契约；Phase0/1 Runbook；cohort 文案；`test:p0-release` **pass** |
+| `npm run test:staging-verify` | 脚本已加（pricing-matrix + staging smokes）；需 API :4000 |
+| P1 工程快照 + Issue 关闭备注 | [remaining-issues](./saas-commercial-mvp-remaining-issues.md) 表；[github-p1-close-comments](./github-p1-close-comments.md) |
+| READY-TO-SEND 基线 | `b20c4b6` |
 
 ## 阻塞 / 待环境
 
@@ -27,9 +30,9 @@ Date: 2026-06-26
 ```powershell
 cp .env.deploy.example .env.deploy
 # 填写 JWT_SECRET、FIELD_ENCRYPTION_KEY、POSTGRES_PASSWORD
-docker compose --env-file .env.deploy up -d --build
-npm run test:staging-api-smoke
-npm run test:staging-callback-smoke
+.\scripts\staging-verify.ps1
+# 或 API 已起：
+npm run test:staging-verify
 ```
 
 可选：`STAGING_API_URL=http://127.0.0.1:4000 npm run test:staging-api-smoke`（若脚本支持环境变量）
@@ -39,10 +42,10 @@ npm run test:staging-callback-smoke
 1. 发送 cohort 通知  
 2. 财务 P1-R02 评审签字  
 3. GitHub Release 页面  
-4. 6 个 mock 模块策略会  
+4. mock 策略已文档化 — 见 [mock-module-strategy-2026-06-26.md](./mock-module-strategy-2026-06-26.md)  
 
-## 建议下一批工程
+## 建议下一批（人工 / 环境）
 
-- P1-R06 关键词库（若产品选 Implement）  
-- `ModulePreviewBanner`（mock 模块预览提示）  
-- evidence 文档追加本执行记录链接  
+- 发送 cohort + 转 finance → [READY-TO-SEND-next-steps.md](./READY-TO-SEND-next-steps.md)  
+- Staging `staging-verify.ps1` pass 后 P1-R01/R05 人工签字  
+- GitHub issue 关闭文案 → [github-p1-close-comments.md](./github-p1-close-comments.md)

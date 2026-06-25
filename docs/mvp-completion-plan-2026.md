@@ -22,7 +22,7 @@ Baseline: `main`, P0 signed 2026-06-24, tag `v0.1.0-paid-beta-staging`
 
 ### Gate G1
 
-- [ ] `npm run test:staging-api-smoke` pass（需 Docker API）
+- [ ] `npm run test:staging-verify` pass（或 `.\scripts\staging-verify.ps1`；需 Docker API）
 - [x] `npm run test:pricing-matrix-sync` pass
 - [ ] Cohort 通知已发（人工）
 
@@ -68,3 +68,5 @@ Baseline: `main`, P0 signed 2026-06-24, tag `v0.1.0-paid-beta-staging`
 - [saas-commercial-mvp-remaining-issues.md](./saas-commercial-mvp-remaining-issues.md)
 - [paid-beta-scope.md](./paid-beta-scope.md)
 - [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)
+- [READY-TO-SEND-next-steps.md](./READY-TO-SEND-next-steps.md)
+- [github-p1-close-comments.md](./github-p1-close-comments.md)

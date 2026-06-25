@@ -12,6 +12,21 @@ P0 completion source: `docs/saas-commercial-mvp-p0-batch-1-completion.md`
 
 Scope: remaining non-canvas work after P0 control-plane completion. This list groups unfinished work into P1 hardening, P2 Business Edition, and P3 platform expansion. `ai_canvas` remains excluded as an independent canvas project. Hidden compatibility routes such as `e_white_bg` and `marketing_diy` remain out of scope unless promoted by a separate product decision.
 
+## Engineering status snapshot (2026-06-26 · `main` @ `b20c4b6`)
+
+| ID | Engineering | Still open |
+|---|---|---|
+| P1-R04 | Done (`MarketingView` handoff + launch-readiness) | — |
+| P1-R06 | Done (keyword CRUD + registry `implemented`) | — |
+| P1-R07 | Done (`chat_memory_save` + explicit save UI) | optional product copy review |
+| P1-R08 | Done (`speech_voice_consent` + consent gate) | optional legal review |
+| P1-R01 | Done (recovery panel + `generation_job_retry`) | [manual sign-off](./p1-r01-failed-job-retry-manual.md) |
+| P1-R05 | Done (`recordWorkspaceAssetExport` on P1 modules) | [manual sign-off](./p1-r05-export-audit-manual.md) |
+| P1-R03 | Contract + staging callback smokes | [live external provider](./p1-r03-provider-deferral.md) |
+| P1-R02 | API/UI matrix sync | **finance sign-off** [p1-r02-pricing-review.md](./p1-r02-pricing-review.md) |
+
+Next human steps: [READY-TO-SEND-next-steps.md](./READY-TO-SEND-next-steps.md).
+
 ## Execution Summary
 
 P0 is implemented and locally verified. P1 revenue workflows are locally complete: all 8 issues have full repository-backed implementation, billing integration, audit coverage, and passing test gates (launch-readiness, saas-foundation, provider-callback-handler). Production certification still requires real provider smoke testing and product/finance pricing review. P2 modules need complete repository-backed business loops. P3 modules remain gated until permission, billing, security, API, and audit contracts are strong enough for external use.
