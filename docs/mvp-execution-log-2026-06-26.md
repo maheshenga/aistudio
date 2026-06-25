@@ -11,7 +11,9 @@ Date: 2026-06-26
 | Gate G1 定价同步 | 已在计划中勾选 |
 | P1-R06 / 关键词库 | registry `copywriting_keywords` → **implemented**（62/67） |
 | Preview 横幅 | [ModulePreviewBanner.tsx](../src/components/ModulePreviewBanner.tsx) + App 主/分屏 |
-| `lint` + `test:product-registry` + `test:keyword-repo` | **pass** |
+| `git push origin main` | **done** → `9fcca22` on GitHub |
+| P1-R04 营销→CRM | 代码+`test:launch-readiness` 已覆盖，计划勾选 3.1 |
+| `test:launch-readiness` | **pass**（2026-06-26 文档同步后） |
 
 ## 阻塞 / 待环境
 

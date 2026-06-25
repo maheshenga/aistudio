@@ -46,11 +46,11 @@ Baseline: `main`, P0 signed 2026-06-24, tag `v0.1.0-paid-beta-staging`
 - [ ] 2.1 决策：6 mock 模块 Implement / Preview / Hide
 - [x] 2.2 P1-R06 关键词库 — registry `implemented`（UI+repo 已存在，2026-06-26）
 - [x] 2.3 mock 模块统一 Preview 提示 — `ModulePreviewBanner`（2026-06-26）
-- [ ] 2.4 同步 P1 progress / paid-beta-scope 文档
+- [x] 2.4 同步 P1 progress / paid-beta-scope 文档（2026-06-26 push `9fcca22`）
 
 ## Phase 3 — Growth loop（L3b）
 
-- [ ] 3.1 P1-R04 Marketing → CRM + tasks
+- [x] 3.1 P1-R04 Marketing → CRM + tasks（`createMarketingLeadHandoff` + launch-readiness，已存在）
 - [ ] 3.2 P1-R07 Chat 记忆策略
 - [ ] 3.3 P1-R08 Speech consent + audit
 

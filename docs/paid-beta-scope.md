@@ -65,7 +65,7 @@ Webhook outbox, delivery history, HMAC signing, test send — available when API
 | Module(s) | Readiness | Reason |
 |---|---|---|
 | `ai_canvas` | mock (default) | No persisted creation pipeline |
-| `copywriting_keywords` | mock (default) | Keyword library CRUD incomplete (P1-R06) |
+| `copywriting_keywords` | implemented | Workspace keyword library CRUD (P1-R06) |
 | `avatar_home`, `avatar_create`, `avatar_voice`, `avatar_space` | mock (default) | Deferred to P2; consent workflow missing |
 | Live Desktop Multica certification | optional mode | Contract tests pass; live device not in this release |
 | Live self-hosted Multica cluster | optional mode | Same as above |
