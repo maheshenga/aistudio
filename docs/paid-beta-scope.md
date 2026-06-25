@@ -54,7 +54,7 @@ Per [saas-commercial-mvp-p1-revenue-progress.md](./saas-commercial-mvp-p1-revenu
 | Director | `director_desk` |
 | Design workflows | `design_logo`, `design_packaging`, `design_ads`, `design_interior`, `design_fashion` |
 
-Registry: **61 / 67** visible features marked `implemented` (`scripts/product-registry.test.ts`).
+Registry: **62 / 67** visible features marked `implemented` (`scripts/product-registry.test.ts`; `copywriting_keywords` promoted 2026-06-26).
 
 ### P3 developer surface (staging)
 

@@ -177,7 +177,7 @@ export const productFeatureRegistry: ProductFeatureRecord[] = [
   ...domain(4, '主理人：文案营销', [
     { id: 'copywriting_create', label: '文案创作', icon: 'PenTool', readiness: 'implemented', componentKey: 'CopywritingView:create' },
     { id: 'copywriting_tools', label: '创作工具', icon: 'Wrench', readiness: 'implemented', componentKey: 'CopywritingView:tools' },
-    { id: 'copywriting_keywords', label: '关键词库', icon: 'BookType', componentKey: 'CopywritingView:keywords' },
+    { id: 'copywriting_keywords', label: '关键词库', icon: 'BookType', readiness: 'implemented', componentKey: 'CopywritingView:keywords' },
   ]),
   ...domain(5, '主理人：视频工业', [
     { id: 'remix_home', label: '混剪首页', icon: 'Home', readiness: 'implemented', componentKey: 'RemixView:home' },

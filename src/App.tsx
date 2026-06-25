@@ -75,6 +75,7 @@ import { useModuleTimeTracker } from './hooks/useModuleTimeTracker';
 import { usePreloadPinnedModules } from './hooks/usePreloadPinnedModules';
 import { ChevronRight, Pin, X, Network } from 'lucide-react';
 import { PerformanceMonitor } from './components/PerformanceMonitor';
+import { ModulePreviewBanner } from './components/ModulePreviewBanner';
 
 import { useDeveloperMode } from './hooks/useDeveloperMode';
 import { useLayoutAuditor } from './hooks/useLayoutAuditor';
@@ -819,9 +820,10 @@ export default function App() {
                       transition: { duration: 0.25 }
                     }
                   }}
-                  className="h-full overflow-y-auto"
+                  className="h-full overflow-y-auto flex flex-col"
                 >
-                  {renderContent(activeModule)}
+                  <ModulePreviewBanner moduleId={activeModule} />
+                  <div className="flex-1 min-h-0">{renderContent(activeModule)}</div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -858,9 +860,10 @@ export default function App() {
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 1.02 }}
                     transition={{ duration: 0.3 }}
-                    className="h-full overflow-y-auto"
+                    className="h-full overflow-y-auto flex flex-col"
                   >
-                    {renderContent(secondaryModule)}
+                    <ModulePreviewBanner moduleId={secondaryModule} />
+                    <div className="flex-1 min-h-0">{renderContent(secondaryModule)}</div>
                   </motion.div>
                 </AnimatePresence>
               </motion.div>
