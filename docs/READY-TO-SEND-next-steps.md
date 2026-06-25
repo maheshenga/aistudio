@@ -37,7 +37,9 @@
 npm run test:staging-verify
 ```
 
-或见 [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)。
+或见 [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)。  
+本机 **Clash / k3s**：见 [local-env-clash-k3s.md](./local-env-clash-k3s.md)。  
+待 push：`git push origin main`（提交 `ceac7ba`）。
 
 ---
 
