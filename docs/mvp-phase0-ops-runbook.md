@@ -34,8 +34,6 @@ npm run test:staging-api-smoke
 npm run test:staging-callback-smoke
 ```
 
-**k3s：** `.\scripts\k3s-verify.ps1` — [deploy/k3s/README.md](../deploy/k3s/README.md)
-
 **优先级总表：** [mvp-priority-queue-2026-06-26.md](./mvp-priority-queue-2026-06-26.md)
 
 ## 0.5 GitHub Release

@@ -28,16 +28,13 @@
 
 ---
 
-## 3. Staging（k3s，推荐）
+## 3. Staging（Docker Compose）
 
 ```powershell
-.\scripts\k3s-staging.ps1
+.\scripts\staging-verify.ps1
 ```
 
-详见 [staging-k3s.md](./staging-k3s.md)。Compose 备选：`.\scripts\staging-verify.ps1`
-
-或见 [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)。  
-本机 **Clash / k3s**：见 [local-env-clash-k3s.md](./local-env-clash-k3s.md)。
+见 [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)、[local-env-clash.md](./local-env-clash.md)。
 
 **按优先级：** [mvp-priority-queue-2026-06-26.md](./mvp-priority-queue-2026-06-26.md)
 
@@ -64,5 +61,5 @@ gh release create v0.1.0-paid-beta-staging `
 
 - [ ] Cohort 已发
 - [ ] Finance 已转
-- [ ] `staging-verify` 或 `k3s-verify` pass
+- [ ] `staging-verify.ps1` pass
 - [ ] GitHub Release 已建

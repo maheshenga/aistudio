@@ -11,4 +11,3 @@ coverage/
 .env*
 !.env.example
 !.env.deploy.example
-deploy/k3s/secret.generated.yaml

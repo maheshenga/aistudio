@@ -29,7 +29,6 @@ Default ports: web **8081**, api **4000**. See [deployment.md](./deployment.md).
 
 ```powershell
 npm run test:staging-verify
-# k3s: deploy/k3s/README.md
 ```
 
 ## In scope
