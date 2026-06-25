@@ -4,7 +4,8 @@
   Start paid-beta staging stack and run API smokes (Windows).
 
 .PREREQUISITE
-  Docker Desktop running; repo root as cwd.
+  Docker Desktop + WSL2 integration, or docker in PATH; repo root as cwd.
+  WSL-only: bash scripts/staging-verify-wsl.sh
 
 .EXAMPLE
   .\scripts\staging-verify.ps1

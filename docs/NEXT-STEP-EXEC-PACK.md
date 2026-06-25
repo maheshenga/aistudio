@@ -13,7 +13,7 @@ Copy-Item .env.deploy.example .env.deploy   # 首次
 .\scripts\staging-verify.ps1
 ```
 
-见 [deployment.md](./deployment.md)、[mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)。
+WSL2：`./scripts/staging-verify-wsl.sh`（见 [local-env-clash.md](./local-env-clash.md)）
 
 通过后：在 [READY-TO-SEND-next-steps.md](./READY-TO-SEND-next-steps.md) 勾选 staging。
 
