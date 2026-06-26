@@ -20,12 +20,13 @@ Date: 2026-06-26
 | READY-TO-SEND 基线 | `b20c4b6` |
 | `npm run test:p0-release` | **pass**（2026-06-26） |
 | k3s 部署 | **已移除**；Staging 仅 Docker Compose |
+| Staging G1（WSL compose） | **pass** — `test:staging-verify` @ localhost:4000（2026-06-26） |
 
 ## 阻塞 / 待环境
 
 | 项 | 结果 | 下一步 |
 |----|------|--------|
-| `npm run test:staging-api-smoke` | **fail** — `ECONNREFUSED` @ `http://localhost:4000` | 启动 API 栈后重跑 |
+| `npm run test:staging-api-smoke` | **pass**（compose 栈运行后） |
 
 ### 启动 staging 栈（本机）
 

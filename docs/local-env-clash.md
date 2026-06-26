@@ -46,7 +46,7 @@ npm run test:staging-verify
 | `docker: command not found`（WSL） | 打开 Docker Desktop，勾选该 WSL 发行版集成 |
 | `ECONNREFUSED :4000` | `docker compose ps` 看 api 是否 healthy；多等 30s 或 `docker compose logs api` |
 | CORS | `CORS_ORIGINS` 必须含 Web 的 origin（含端口） |
-| WSL 提示 localhost/NAT | 一般不影响；API 仍用 `http://127.0.0.1:4000` 做 smoke |
+| 拉镜像 `auth.docker.io` 超时 | WSL：`export HTTP_PROXY=http://$(ip route|awk '/default/{print $3}'):7897`（Clash 开 **Allow LAN**） |
 
 ## Clash → Git push（Windows）
 

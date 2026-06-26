@@ -17,6 +17,13 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+# Optional: Docker Hub via Windows Clash (WSL can't reach registry without proxy)
+GW="$(ip route show default 2>/dev/null | awk '{print $3}')"
+if [[ -z "${HTTP_PROXY:-}" && -n "$GW" ]]; then
+  export HTTP_PROXY="http://${GW}:7897"
+  export HTTPS_PROXY="http://${GW}:7897"
+fi
+
 BUILD_FLAG=(--build)
 if [[ "${SKIP_BUILD:-}" == "1" ]]; then
   BUILD_FLAG=()
