@@ -35,9 +35,9 @@ npm run test:staging-verify
 | 服务 | 地址 |
 |------|------|
 | API | http://localhost:4000 |
-| Web | http://localhost:8080（或 `.env.deploy` 的 `WEB_PORT`） |
+| Web | **http://localhost:8081**（若 `.env.deploy` 为 `WEB_PORT=8081`；默认示例为 8080） |
 
-端口由 Docker Desktop 转发到 Windows `localhost`，浏览器在 Windows 打开即可。
+打不开见 [staging-browser-access.md](./staging-browser-access.md)（端口、Clash 直连 localhost）。
 
 ### 常见问题
 
