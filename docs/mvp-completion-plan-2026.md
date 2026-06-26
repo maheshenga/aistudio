@@ -22,7 +22,7 @@ Baseline: `main`, P0 signed 2026-06-24, tag `v0.1.0-paid-beta-staging`
 
 ### Gate G1
 
-- [ ] `npm run test:staging-verify` pass（`.\scripts\staging-verify.ps1`）
+- [x] `npm run test:staging-verify` pass（`.\scripts\staging-verify.ps1`；2026-06-26 执行记录）
 - [x] `npm run test:pricing-matrix-sync` pass
 - [ ] Cohort 通知已发（人工）
 
@@ -70,4 +70,4 @@ Baseline: `main`, P0 signed 2026-06-24, tag `v0.1.0-paid-beta-staging`
 - [mvp-phase0-ops-runbook.md](./mvp-phase0-ops-runbook.md)
 - [READY-TO-SEND-next-steps.md](./READY-TO-SEND-next-steps.md)
 - [mvp-priority-queue-2026-06-26.md](./mvp-priority-queue-2026-06-26.md)
-- [github-p1-close-comments.md](./github-p1-close-comments.md)
+- [mvp-progress-analysis-2026-06-26.md](./mvp-progress-analysis-2026-06-26.md)

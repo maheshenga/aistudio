@@ -8,7 +8,7 @@
 |----|------|------|------|
 | **0** | `git push origin main` | 工程 | **done** → `fa498bc` |
 | **1** | 工程回归：`npm run test:p0-release` | 工程 | **pass**（2026-06-26） |
-| **2** | Staging：`.\scripts\staging-verify.ps1` | 工程/运维 | **阻塞 G1** |
+| **2** | Staging：`.\scripts\staging-verify.ps1` | 工程 | **pass** 2026-06-26；运维保活 `staging-up.ps1` |
 | **3** | 发 **Cohort** | 产品/运营 | 人工 |
 | **4** | 转 **Finance** + P1-R02 表 | 财务 | 人工 |
 | **5** | GitHub Release（可选） | 工程 | `gh release create ...` |
