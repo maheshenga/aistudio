@@ -50,7 +50,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"require('http').get('http://127.0.0.1:4000/', (r) => process.exit(0)).on('error', () => process.exit(1))\"",
+          "node -e \"require('http').get('http://127.0.0.1:4000/health', (r) => { let b=''; r.on('data', (c) => b+=c); r.on('end', () => process.exit(r.statusCode === 200 ? 0 : 1)); }).on('error', () => process.exit(1))\"",
         ]
       interval: 10s
       timeout: 5s

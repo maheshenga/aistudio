@@ -55,10 +55,10 @@ Docker Desktop 会把端口转到 Windows。在 **Windows** 浏览器打开：
 
 ```powershell
 Invoke-WebRequest -Uri http://127.0.0.1:8081/ -UseBasicParsing | Select-Object StatusCode
-Invoke-WebRequest -Uri http://127.0.0.1:4000/ -UseBasicParsing -SkipHttpErrorCheck | Select-Object StatusCode
+Invoke-WebRequest -Uri http://127.0.0.1:4000/health -UseBasicParsing | Select-Object StatusCode
 ```
 
-Web 期望 **200**；API 根路径 **404** 即表示 API 已监听。
+Web 期望 **200**；API **`/health`** 期望 **200**（含 DB 探活）。根路径 `/` 仍为 **404**。
 
 ### 6. 仍失败：重启栈
 

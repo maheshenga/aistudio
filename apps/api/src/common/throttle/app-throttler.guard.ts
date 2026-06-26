@@ -11,7 +11,7 @@ export class AppThrottlerGuard extends ThrottlerGuard {
   protected async shouldSkip(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<{ url?: string }>();
     const path = req.url?.split('?')[0] ?? '';
-    if (path.startsWith('/auth/')) return true;
+    if (path.startsWith('/auth/') || path === '/health') return true;
     return super.shouldSkip(context);
   }
 }

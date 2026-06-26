@@ -152,7 +152,7 @@ UI startBillableGenerationJob
 |----|------|
 | **外部 provider 接入** | `providerKind`、orchestration `linkExternal` 有；**无** 统一「厂商 adapter 注册表」与生产 render 配置 |
 | **Orchestration reconcile** | `ORCHESTRATION_RECONCILE_ENABLED` 默认 false；reconciliation service 存在但未作 paid-beta 默认开 |
-| **Health 端点** | 无专用 `/health`（compose healthcheck 打 `/` → 404 仍可通过 TCP/进程） |
+| **Health 端点** | `GET /health`（DB ping + 200）；compose healthcheck 已对齐 |
 | **P3 面** | webhook **已实现** outbox；public API 商业化、plugin gate、risk 发布闸门在 **remaining-issues P3** |
 
 ---
@@ -186,7 +186,7 @@ UI startBillableGenerationJob
 
 1. **统一 provider 抽象：** API 侧 callback ingress + 配置化 `providerKind` → 厂商 adapter（接 R03 真机）。
 2. **Web 创作路径：** 按模块将 `startBillableGenerationJob` 后接 **真实 genai/Multica** 或明确「仅 staging mock」配置开关。
-3. **`/health` + compose 探活** 改为 200，减少 api 重启误判。
+3. ~~**`/health` + compose 探活**~~ — 已实现 `GET /health` + compose healthcheck。
 4. **Auth：** HTTP 模式下禁用 demo session 种子；接真实 register/login 仅 API（前端已具备 client）。
 5. **Avatar P2 或 canvas 剥离：** 二选一产品决策后补 registry + job 环或移出导航。
 6. **CI 制品：** 可选 GitHub Actions build compose images（不涉及人工签字）。
