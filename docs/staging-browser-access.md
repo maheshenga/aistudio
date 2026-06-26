@@ -1,5 +1,19 @@
 # Staging 浏览器访问
 
+## 「localhost 拒绝了我们的连接请求」
+
+几乎总是下面之一：
+
+| 原因 | 处理 |
+|------|------|
+| **Docker Desktop 没开** | 托盘启动 Docker Desktop，等到 **Running**，再执行 `.\scripts\staging-up.ps1` |
+| **栈没起来** | PowerShell：`.\scripts\staging-up.ps1`（会读 `.env.deploy` 的 `WEB_PORT`） |
+| **端口写错** | 你当前是 **8081**，不是 8080 → `http://127.0.0.1:8081` |
+| **Clash 代理 localhost** | Clash：**绕过** `localhost,127.0.0.1`，或关「系统代理」后刷新 |
+| **用了 https** | 必须用 **http://** ，没有 TLS |
+
+优先试：**http://127.0.0.1:8081**（比 `localhost` 少踩 IPv6 坑）。
+
 ## 正确地址（看 `.env.deploy`）
 
 | 服务 | 本机默认 | 你当前配置 |
