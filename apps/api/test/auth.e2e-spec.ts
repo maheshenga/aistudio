@@ -74,4 +74,28 @@ describe('Auth (e2e)', () => {
       process.env.REGISTRATION_ALLOWLIST = prevList;
     }
   });
+
+  it('AUTH-06: account locks after repeated failed logins', async () => {
+    const prevThreshold = process.env.AUTH_LOCKOUT_THRESHOLD;
+    process.env.AUTH_LOCKOUT_THRESHOLD = '3';
+    try {
+      await request(http()).post('/auth/register').send({ email: 'lock@test.dev', password: 'password123', name: 'L' }).expect(201);
+      // 3 wrong attempts trip the lockout
+      for (let i = 0; i < 3; i++) {
+        await request(http()).post('/auth/login').send({ email: 'lock@test.dev', password: 'wrongpass' }).expect(401);
+      }
+      // now even the correct password is rejected while locked
+      const locked = await request(http()).post('/auth/login').send({ email: 'lock@test.dev', password: 'password123' }).expect(401);
+      expect(locked.body.error.message).toMatch(/locked/i);
+    } finally {
+      process.env.AUTH_LOCKOUT_THRESHOLD = prevThreshold;
+    }
+  });
+
+  it('AUTH-06: password policy rejects weak passwords', async () => {
+    // too short
+    await request(http()).post('/auth/register').send({ email: 'weak1@test.dev', password: 'ab1', name: 'W' }).expect(400);
+    // no digit
+    await request(http()).post('/auth/register').send({ email: 'weak2@test.dev', password: 'onlyletters', name: 'W' }).expect(400);
+  });
 });

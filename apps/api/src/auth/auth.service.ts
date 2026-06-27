@@ -48,8 +48,30 @@ export class AuthService {
 
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (!user || !(await this.passwords.verify(dto.password, user.passwordHash))) {
+    if (!user) throw unauthenticated('Invalid email or password');
+
+    // AUTH-06: per-account lockout after repeated failures.
+    if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+      throw unauthenticated('Account temporarily locked due to repeated failed logins. Try again later.');
+    }
+
+    const valid = await this.passwords.verify(dto.password, user.passwordHash);
+    if (!valid) {
+      const threshold = Number(process.env.AUTH_LOCKOUT_THRESHOLD ?? 5);
+      const lockMs = Number(process.env.AUTH_LOCKOUT_MS ?? 15 * 60 * 1000);
+      const nextCount = user.failedLoginCount + 1;
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          failedLoginCount: nextCount,
+          lockedUntil: nextCount >= threshold ? new Date(Date.now() + lockMs) : null,
+        },
+      });
       throw unauthenticated('Invalid email or password');
+    }
+
+    if (user.failedLoginCount !== 0 || user.lockedUntil) {
+      await this.prisma.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null } });
     }
     return this.issueFor(user.id, dto.client ?? 'web', user);
   }
