@@ -54,14 +54,20 @@ export class StripeWebhookController {
     if (amount <= 0) return { value: { received: true, ignored: true } };
 
     // grant() is idempotent on (workspaceId, idempotencyKey); the Stripe event id
-    // guarantees a redelivery is a no-op rather than a double credit.
-    const before = (await this.credit.getBalance(workspaceId)).balance;
-    await this.prisma.$transaction((tx) =>
-      this.credit.grant(tx, workspaceId, amount, 'stripe_purchase', `stripe:${eventId}`, 'stripe_event', eventId),
-    );
-    const after = (await this.credit.getBalance(workspaceId)).balance;
+    // guarantees a redelivery is a no-op rather than a double credit. Detect a
+    // redelivery by checking for the ledger row directly (balance-diffing is
+    // unreliable because getBalance also applies the monthly grant).
+    const idempotencyKey = `stripe:${eventId}`;
+    const existing = await this.prisma.creditLedger.findUnique({
+      where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey } },
+    });
+    if (existing) return { value: { received: true, deduped: true } };
 
-    return { value: { received: true, granted: amount, deduped: after === before } };
+    await this.prisma.$transaction((tx) =>
+      this.credit.grant(tx, workspaceId, amount, 'stripe_purchase', idempotencyKey, 'stripe_event', eventId),
+    );
+
+    return { value: { received: true, granted: amount } };
   }
 
   private extractPriceId(object: Record<string, unknown>): string | null {

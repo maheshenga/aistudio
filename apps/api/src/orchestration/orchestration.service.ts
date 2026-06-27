@@ -83,13 +83,22 @@ export class OrchestrationService {
   ): Promise<void> {
     const adapter = this.registry.resolve(job.providerKind);
     if (!adapter) return;
+    // DispatchDto carries the prompt/moduleId inside `input` (the job row only
+    // persists `type`), so derive them for the provider context.
+    const input = (dto.input ?? {}) as Record<string, unknown>;
+    const derivedPrompt = job.prompt
+      ?? (typeof input.prompt === 'string' ? input.prompt : null)
+      ?? (typeof input.text === 'string' ? input.text : null);
+    const derivedModuleId = job.moduleId
+      ?? (typeof input.moduleId === 'string' ? input.moduleId : null)
+      ?? job.type;
     try {
       const result = await adapter.submit({
         id: job.id,
         workspaceId,
         type: job.type,
-        moduleId: job.moduleId,
-        prompt: job.prompt,
+        moduleId: derivedModuleId,
+        prompt: derivedPrompt,
         input: dto.input,
         providerKind: job.providerKind,
       });

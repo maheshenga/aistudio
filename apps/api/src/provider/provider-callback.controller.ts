@@ -1,7 +1,6 @@
 import { Body, Controller, Headers, Param, Post, Req } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
-import { Prisma } from '@prisma/client';
 import { Public } from '../common/tenant/public.decorator';
 import { notFound, permissionDenied, validationError } from '../common/errors';
 import { PrismaService } from '../common/prisma/prisma.service';
@@ -50,20 +49,8 @@ export class ProviderCallbackController {
 
     const mapped = adapter.mapCallback(body);
 
-    // R03-4: dedup at-least-once deliveries before doing any finalize work.
-    try {
-      await this.prisma.providerCallbackEvent.create({
-        data: { providerKind, externalTaskId, externalEventId, status: mapped.status },
-      });
-    } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        return { value: { ok: true, deduped: true } };
-      }
-      throw e;
-    }
-
     if (mapped.status === 'pending' || mapped.status === 'running') {
-      // Non-terminal progress callback: update progress, do not finalize.
+      // Non-terminal progress callback: idempotent status update, no finalize/dedup.
       const job = await this.prisma.generationJob.findFirst({ where: { externalTaskId } });
       if (job && !['succeeded', 'failed', 'cancelled'].includes(job.status)) {
         await this.prisma.generationJob.update({
@@ -77,14 +64,17 @@ export class ProviderCallbackController {
     const job = await this.prisma.generationJob.findFirst({ where: { externalTaskId } });
     if (!job) throw notFound('No generation job for that external task');
 
-    await this.finalizer.finalize({
+    // R03-4: dedup is claimed INSIDE the finalize transaction, so a finalize
+    // failure rolls back the dedup row and a vendor retry can re-process.
+    const result = await this.finalizer.finalize({
       jobId: job.id,
       terminal: mapped.status,
       artifacts: mapped.artifacts,
       error: mapped.error,
       source: providerKind,
+      dedup: { providerKind, externalTaskId, externalEventId },
     });
 
-    return { value: { ok: true } };
+    return { value: { ok: true, deduped: result.deduped } };
   }
 }

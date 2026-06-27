@@ -32,15 +32,43 @@ export class JobFinalizationService {
     error?: string;
     source: string;
     now?: Date;
-  }): Promise<void> {
+    /**
+     * Optional dedup record written in the SAME transaction as the finalize.
+     * Used by the inbound callback path so a finalize failure rolls back the
+     * dedup row too — a vendor retry can then re-process instead of being
+     * permanently deduped against a finalize that never committed. Returns
+     * `false` from finalize() when the dedup row already existed (idempotent).
+     */
+    dedup?: { providerKind: string; externalTaskId: string; externalEventId: string };
+  }): Promise<{ finalized: boolean; deduped: boolean }> {
     const { jobId, terminal, source } = params;
     const artifacts = params.artifacts ?? [];
     const now = params.now ?? new Date();
 
-    await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
+      // R03-4: claim the dedup row first, inside the transaction. A unique
+      // violation means this event was already finalized → no-op.
+      if (params.dedup) {
+        try {
+          await tx.providerCallbackEvent.create({
+            data: {
+              providerKind: params.dedup.providerKind,
+              externalTaskId: params.dedup.externalTaskId,
+              externalEventId: params.dedup.externalEventId,
+              status: terminal,
+            },
+          });
+        } catch (e) {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+            return { finalized: false, deduped: true };
+          }
+          throw e;
+        }
+      }
+
       const fresh = await tx.generationJob.findUnique({ where: { id: jobId } });
       // Terminal idempotency: a job finalized by either path is never re-finalized.
-      if (!fresh || ['succeeded', 'failed', 'cancelled'].includes(fresh.status)) return;
+      if (!fresh || ['succeeded', 'failed', 'cancelled'].includes(fresh.status)) return { finalized: false, deduped: false };
 
       await tx.generationJob.update({
         where: { id: jobId },
@@ -118,6 +146,7 @@ export class JobFinalizationService {
 
       const finalized = await tx.generationJob.findUnique({ where: { id: jobId } });
       if (finalized) await this.webhooks.enqueueForTerminalJob(tx, finalized);
+      return { finalized: true, deduped: false };
     });
   }
 }
