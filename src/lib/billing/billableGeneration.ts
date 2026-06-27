@@ -40,6 +40,8 @@ export function formatCreditUnavailableMessage(): string {
 }
 
 export function estimateBillableGenerationCredits(pricing: RequestedGenerationCreditInput): number {
+  // AIGEN-2: mock output is never billed (mirrors API generationCredits()).
+  if (pricing.providerKind === 'mock') return 0;
   return estimateRequestedGenerationCredits(pricing);
 }
 
@@ -63,6 +65,14 @@ export async function startBillableGenerationJob(
   billing: BillableGenerationBillingContext,
 ): Promise<BillableGenerationStartResult> {
   const requestedCredits = estimateBillableGenerationCredits(billing.pricing);
+
+  // AIGEN-2: zero-credit (mock) jobs skip preflight and quota guards entirely —
+  // nothing is held or captured, so there is no balance to check. The job is
+  // still created so the asset/usage/audit flow runs for the preview.
+  if (requestedCredits <= 0) {
+    const job = await createGenerationJob(input, context);
+    return { ok: true, job, requestedCredits: 0, remainingCredits: null };
+  }
 
   if (isCreditBackendConfigured()) {
     const preflight = await preflightCredits({ workspaceId: billing.workspaceId, requiredCredits: requestedCredits });

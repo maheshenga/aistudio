@@ -68,8 +68,12 @@ async function run() {
   );
 
   const ctx = { workspaceId: 'ws1', storage: createMemoryStorage() };
-  const pricing = { moduleId: 'image' as const, pricingAction: 'generation' as const, providerKind: 'mock' as const, runtimeMode: 'web' as const };
+  const pricing = { moduleId: 'image' as const, pricingAction: 'generation' as const, providerKind: 'multica' as const, runtimeMode: 'self_hosted_multica' as const };
   assert.equal(estimateBillableGenerationCredits(pricing) > 0, true);
+
+  // AIGEN-2: mock output is never billed — estimate is 0 regardless of module.
+  const mockPricing = { moduleId: 'image' as const, pricingAction: 'generation' as const, providerKind: 'mock' as const, runtimeMode: 'web' as const };
+  assert.equal(estimateBillableGenerationCredits(mockPricing), 0);
 
   __setCreditApiClientForTest(balanceApi(3));
   __setGenerationJobApiClientForTest({ configured: false, get: async () => ({ ok: true, value: [] }) as any, post: async () => ({ ok: true, value: {} }) as any, patch: async () => ({ ok: true, value: {} }) as any, del: async () => ({ ok: true, value: {} }) as any } as ApiClient);
@@ -77,8 +81,8 @@ async function run() {
     title: 'Image',
     prompt: 'cat',
     status: 'running',
-    providerKind: 'mock',
-    runtimeMode: 'web',
+    providerKind: 'multica',
+    runtimeMode: 'self_hosted_multica',
     moduleId: 'image',
     progress: 0,
   }, ctx, { workspaceId: 'ws1', plan: 'free', pricing });
@@ -88,14 +92,27 @@ async function run() {
     assert.match(blocked.message, /算力额度不足/);
   }
 
+  // AIGEN-2: a mock job is NOT blocked even on a near-zero balance, and holds nothing.
+  const mockStarted = await startBillableGenerationJob({
+    title: 'Image',
+    prompt: 'cat',
+    status: 'running',
+    providerKind: 'mock',
+    runtimeMode: 'web',
+    moduleId: 'image',
+    progress: 0,
+  }, ctx, { workspaceId: 'ws1', plan: 'free', pricing: mockPricing });
+  assert.equal(mockStarted.ok, true);
+  if (mockStarted.ok) assert.equal(mockStarted.requestedCredits, 0);
+
   __setCreditApiClientForTest(passingApi());
   __setGenerationJobApiClientForTest(passingApi());
   const started = await startBillableGenerationJob({
     title: 'Image',
     prompt: 'cat',
     status: 'running',
-    providerKind: 'mock',
-    runtimeMode: 'web',
+    providerKind: 'multica',
+    runtimeMode: 'self_hosted_multica',
     moduleId: 'image',
     progress: 0,
   }, ctx, { workspaceId: 'ws1', plan: 'free', pricing });
@@ -108,8 +125,8 @@ async function run() {
     title: 'Image',
     prompt: 'cat',
     status: 'running',
-    providerKind: 'mock',
-    runtimeMode: 'web',
+    providerKind: 'multica',
+    runtimeMode: 'self_hosted_multica',
     moduleId: 'image',
     progress: 0,
   }, ctx, { workspaceId: 'ws1', plan: 'free', pricing });

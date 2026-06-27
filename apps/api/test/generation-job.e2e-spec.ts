@@ -95,12 +95,49 @@ describe('GenerationJob (e2e)', () => {
 
     const created = await auth(request(app.getHttpServer())
       .post(`/workspaces/${workspaceId}/generation-jobs`)
-      .send({ type: 'generation', moduleId: 'image', providerKind: 'mock', runtimeMode: 'web', status: 'pending' })).expect(201);
+      .send({ type: 'generation', moduleId: 'image', providerKind: 'gemini', runtimeMode: 'web', status: 'pending' })).expect(201);
     const id = created.body.value.id;
     expect((await credit.getBalance(workspaceId)).balance).toBe(before - 8);
 
     await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${id}/status`).send({ status: 'running' })).expect(200);
     await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${id}/status`).send({ status: 'succeeded' })).expect(200);
     expect((await credit.getBalance(workspaceId)).balance).toBe(before - 8);
+  });
+
+  it('AIGEN-2: mock output is free — create holds 0, succeed captures 0', async () => {
+    const { workspaceId, accessToken } = await registerUser(app, 'gjmock@test.dev');
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${accessToken}`);
+    const credit = app.get(CreditService);
+    const before = (await credit.getBalance(workspaceId)).balance;
+
+    const created = await auth(request(app.getHttpServer())
+      .post(`/workspaces/${workspaceId}/generation-jobs`)
+      .send({ type: 'generation', moduleId: 'image', providerKind: 'mock', runtimeMode: 'web', status: 'pending' })).expect(201);
+    const id = created.body.value.id;
+    // mock holds nothing
+    expect((await credit.getBalance(workspaceId)).balance).toBe(before);
+    expect(created.body.value.heldCredits).toBe(0);
+
+    await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${id}/status`).send({ status: 'running' })).expect(200);
+    await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${id}/status`).send({ status: 'succeeded' })).expect(200);
+    expect((await credit.getBalance(workspaceId)).balance).toBe(before);
+  });
+
+  it('BILL-04: unitCount multiplies the module price at hold time', async () => {
+    const { workspaceId, accessToken } = await registerUser(app, 'gjunit@test.dev');
+    const auth = (r: request.Test) => r.set('Authorization', `Bearer ${accessToken}`);
+    const credit = app.get(CreditService);
+    const before = (await credit.getBalance(workspaceId)).balance;
+
+    // image = 8 credits/unit; 3 units → 24 held.
+    const created = await auth(request(app.getHttpServer())
+      .post(`/workspaces/${workspaceId}/generation-jobs`)
+      .send({ type: 'generation', moduleId: 'image', providerKind: 'gemini', runtimeMode: 'web', unitCount: 3, status: 'pending' })).expect(201);
+    expect(created.body.value.heldCredits).toBe(24);
+    expect((await credit.getBalance(workspaceId)).balance).toBe(before - 24);
+
+    // fail → refund exactly the 24 held (BILL-06).
+    await auth(request(app.getHttpServer()).patch(`/workspaces/${workspaceId}/generation-jobs/${created.body.value.id}/status`).send({ status: 'failed', error: 'x' })).expect(200);
+    expect((await credit.getBalance(workspaceId)).balance).toBe(before);
   });
 });

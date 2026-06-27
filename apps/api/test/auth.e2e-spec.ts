@@ -56,4 +56,22 @@ describe('Auth (e2e)', () => {
   it('me without token returns 401', async () => {
     await request(http()).get('/auth/me').expect(401);
   });
+
+  it('AUTH-03: registration is blocked (403) when closed and email not allowlisted', async () => {
+    const prevOpen = process.env.REGISTRATION_OPEN;
+    const prevList = process.env.REGISTRATION_ALLOWLIST;
+    process.env.REGISTRATION_OPEN = 'false';
+    process.env.REGISTRATION_ALLOWLIST = '@allowed.dev';
+    try {
+      // not on the allowlist → 403
+      await request(http()).post('/auth/register')
+        .send({ email: 'outsider@evil.com', password: 'password123', name: 'Out' }).expect(403);
+      // on the allowlisted domain → 201
+      await request(http()).post('/auth/register')
+        .send({ email: 'insider@allowed.dev', password: 'password123', name: 'In' }).expect(201);
+    } finally {
+      process.env.REGISTRATION_OPEN = prevOpen;
+      process.env.REGISTRATION_ALLOWLIST = prevList;
+    }
+  });
 });

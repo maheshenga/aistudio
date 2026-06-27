@@ -19,7 +19,7 @@ function startVite(): ChildProcessWithoutNullStreams {
     ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
     {
       cwd: process.cwd(),
-      env: { ...process.env, BROWSER: 'none' },
+      env: { ...process.env, BROWSER: 'none', VITE_E2E_AUTH_BYPASS: 'true' },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );

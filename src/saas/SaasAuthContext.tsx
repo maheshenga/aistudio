@@ -13,7 +13,19 @@ import {
   type AuthUser,
 } from '../lib/data/authApi';
 import { appAuthTokens } from './authTokenStore';
+import { loadAuthSession } from './localAuthSession';
 import type { AuthSession, WorkspaceRole } from './types';
+
+/**
+ * AUTH-07/08: E2E-only auth bypass. Real production auth is JWT-via-API ONLY
+ * (apiLogin/apiRegister below). This flag is never set in production builds; it
+ * exists so the local-backend browser smoke (which runs vite with no API) can
+ * adopt a pre-seeded `aistudio_auth_session` fixture instead of calling the API.
+ * Guarded by an explicit env var so a normal `npm run dev` is unaffected.
+ */
+const E2E_AUTH_BYPASS = (() => {
+  try { return (import.meta as any).env?.VITE_E2E_AUTH_BYPASS === 'true'; } catch { return false; }
+})();
 
 interface SaasAuthContextValue {
   session: AuthSession | null;
@@ -75,6 +87,14 @@ export function SaasAuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // AUTH-07: E2E bypass — adopt a pre-seeded local session without the API.
+      if (E2E_AUTH_BYPASS) {
+        const seeded = loadAuthSession();
+        if (seeded) {
+          if (!cancelled) { setSession(seeded); setInitializing(false); }
+          return;
+        }
+      }
       const refresh = appAuthTokens.getRefresh();
       if (!refresh) {
         if (!cancelled) setInitializing(false);

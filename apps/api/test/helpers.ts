@@ -9,6 +9,8 @@ export async function bootstrapTestApp(): Promise<{ app: INestApplication; prism
   process.env.DATABASE_URL = process.env.DATABASE_URL_TEST;
   process.env.THROTTLE_LIMIT ??= '10000';
   process.env.THROTTLE_AUTH_LIMIT ??= '1000';
+  // AUTH-03: tests register freely; open registration in the test process.
+  process.env.REGISTRATION_OPEN ??= 'true';
   const { AppModule } = await import('../src/app.module');
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   const app = moduleRef.createNestApplication();

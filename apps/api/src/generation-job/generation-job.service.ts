@@ -44,12 +44,13 @@ export class GenerationJobService {
   }
 
   create(workspaceId: string, dto: CreateJobDto) {
-    const { runtimeTaskId, input, metadata, status, ...rest } = dto;
+    const { runtimeTaskId, input, metadata, status, unitCount, ...rest } = dto;
     const amount = generationCredits({
       moduleId: dto.moduleId ?? null,
       type: dto.type ?? null,
       runtimeMode: dto.runtimeMode ?? null,
       providerKind: dto.providerKind ?? null,
+      unitCount: unitCount ?? null,
     });
 
     return this.prisma.$transaction(async (tx) => {
@@ -58,12 +59,15 @@ export class GenerationJobService {
         ...rest,
         workspaceId,
         status: status ?? 'pending',
+        heldCredits: amount,
         ...(input ? { input: input as Prisma.InputJsonValue } : {}),
         ...(metadata ? { externalRef: metadata as Prisma.InputJsonValue } : {}),
         ...(runtimeTaskId ? { externalTaskId: runtimeTaskId } : {}),
       };
       const job = await tx.generationJob.create({ data });
-      await this.credit.hold(tx, workspaceId, job.id, amount, job.attempt);
+      if (amount > 0) {
+        await this.credit.hold(tx, workspaceId, job.id, amount, job.attempt);
+      }
       return job;
     });
   }
@@ -88,11 +92,15 @@ export class GenerationJobService {
       });
 
       if (TERMINAL.has(dto.status)) {
-        const amount = generationCredits(job);
-        if (dto.status === 'succeeded') {
-          await this.credit.capture(tx, workspaceId, id, job.attempt);
-        } else {
-          await this.credit.refund(tx, workspaceId, id, amount, job.attempt);
+        // BILL-06: refund the amount actually held (persisted on the row), not a
+        // recomputed value that can drift if pricing changes between hold and refund.
+        // heldCredits===0 means a mock/free job — nothing was held, so skip the ledger.
+        if (job.heldCredits > 0) {
+          if (dto.status === 'succeeded') {
+            await this.credit.capture(tx, workspaceId, id, job.attempt);
+          } else {
+            await this.credit.refund(tx, workspaceId, id, job.heldCredits, job.attempt);
+          }
         }
         await this.webhooks.enqueueForTerminalJob(tx, updated);
       }

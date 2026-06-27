@@ -13,6 +13,14 @@ function getDefaultStorage(): StorageLike | null {
   return localStorage;
 }
 
+/**
+ * AUTH-08: TEST/E2E FIXTURE ONLY — not part of the production auth path.
+ * Production auth is JWT-via-API (see src/saas/SaasAuthContext.tsx). These
+ * helpers back (a) the standalone repository/contract tests and (b) the
+ * VITE_E2E_AUTH_BYPASS browser smoke, which seeds AUTH_SESSION_STORAGE_KEY so
+ * the local-backend (no-API) build can render the authenticated shell.
+ * Do NOT call these from application code.
+ */
 export function createDemoAuthSession(options: { now?: number } = {}): AuthSession {
   const now = options.now ?? Date.now();
 

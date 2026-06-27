@@ -191,9 +191,21 @@ async function assertPermissionAndStandaloneSmoke(page) {
 }
 
 async function login(page) {
-  const loginButton = page.getByRole('button', { name: /使用 Demo 工作区登录/ });
-  await loginButton.waitFor({ timeout: 15000 });
-  await loginButton.click();
+  // AUTH-07: production auth is JWT-via-API only; the local-backend smoke has no
+  // API, so seed the E2E session fixture (VITE_E2E_AUTH_BYPASS adopts it on boot)
+  // and reload into the authenticated app shell.
+  await page.evaluate(() => {
+    const now = Date.now();
+    const session = {
+      user: { id: 'user_demo_maheshenga', email: 'maheshenga@example.com', name: 'Maheshenga', avatarLabel: 'M' },
+      workspace: { id: 'workspace_demo_maheshenga', name: 'Maheshenga AI 工作空间', slug: 'maheshenga-ai', plan: 'pro', createdAt: now },
+      membership: { id: 'membership_demo_owner', userId: 'user_demo_maheshenga', workspaceId: 'workspace_demo_maheshenga', role: 'owner', joinedAt: now },
+      issuedAt: now,
+      lastActiveAt: now,
+    };
+    localStorage.setItem('aistudio_auth_session', JSON.stringify(session));
+  });
+  await page.reload();
   await page.getByRole('button', { name: /Agent Dispatcher/ }).waitFor({ timeout: 15000 });
 }
 

@@ -103,6 +103,7 @@ model GenerationJob {
   startedAt      DateTime?
   finishedAt     DateTime?
   attempt        Int       @default(1)
+  heldCredits    Int       @default(0)
 
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   assets      Asset[]

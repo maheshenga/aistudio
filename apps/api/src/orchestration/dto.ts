@@ -1,4 +1,4 @@
-import { IsObject, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsInt, IsObject, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 
 export class DispatchDto {
   @IsString() @MinLength(1) type!: string;
@@ -7,6 +7,7 @@ export class DispatchDto {
   @IsOptional() @IsString() projectId?: string;
   @IsOptional() @IsString() agentId?: string;
   @IsOptional() @IsString() providerKind?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(1000) unitCount?: number;
 }
 
 export class LinkExternalDto {

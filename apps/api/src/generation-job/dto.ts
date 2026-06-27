@@ -10,6 +10,7 @@ export class CreateJobDto {
   @IsOptional() @IsString() runtimeTaskId?: string;
   @IsOptional() @IsString() runtimeMode?: string;
   @IsOptional() @IsString() providerKind?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(1000) unitCount?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100) progress?: number;
   @IsOptional() @IsObject() input?: Record<string, unknown>;
   @IsOptional() @IsObject() metadata?: Record<string, unknown>;

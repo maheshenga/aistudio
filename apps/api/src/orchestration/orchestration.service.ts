@@ -35,6 +35,7 @@ export class OrchestrationService {
       type: dto.type,
       runtimeMode: dto.runtimeMode,
       providerKind: dto.providerKind ?? null,
+      unitCount: dto.unitCount ?? null,
     });
     return this.prisma.$transaction(async (tx) => {
       await this.credit.ensureMonthlyGrant(tx, workspaceId);
@@ -44,9 +45,12 @@ export class OrchestrationService {
           status: 'pending', runtimeMode: dto.runtimeMode,
           projectId: dto.projectId ?? null, agentId: dto.agentId ?? null,
           providerKind: dto.providerKind ?? null,
+          heldCredits: amount,
         },
       });
-      await this.credit.hold(tx, workspaceId, job.id, amount, job.attempt);
+      if (amount > 0) {
+        await this.credit.hold(tx, workspaceId, job.id, amount, job.attempt);
+      }
       await tx.auditLog.create({
         data: {
           workspaceId, action: 'task_dispatched', userId: actor.userId, actorRole: actor.role,
@@ -72,13 +76,16 @@ export class OrchestrationService {
   async cancel(workspaceId: string, id: string, actor: Actor) {
     const job = await this.getJob(workspaceId, id);
     if (TERMINAL.has(job.status)) throw validationError('Job already in a terminal state');
-    const amount = generationCredits(job);
+    // BILL-06: refund exactly what was held for this attempt, not a recomputed value.
+    const amount = job.heldCredits;
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.generationJob.update({
         where: { id },
         data: { status: 'cancelled', finishedAt: new Date() },
       });
-      await this.credit.refund(tx, workspaceId, id, amount, job.attempt);
+      if (amount > 0) {
+        await this.credit.refund(tx, workspaceId, id, amount, job.attempt);
+      }
       await tx.auditLog.create({
         data: {
           workspaceId, action: 'task_cancelled', userId: actor.userId, actorRole: actor.role,
@@ -93,6 +100,8 @@ export class OrchestrationService {
   async retry(workspaceId: string, id: string, actor: Actor) {
     const job = await this.getJob(workspaceId, id);
     if (!TERMINAL.has(job.status)) throw validationError('Only terminal jobs can be retried');
+    // Re-price the new attempt from the job's own attributes (heldCredits records the
+    // prior attempt's hold; a fresh hold is computed for the new attempt).
     const amount = generationCredits(job);
     const nextAttempt = job.attempt + 1;
     // 必须在同一事务里为新一轮重新冻结额度:余额不足则整体回滚,job 状态不被破坏。
@@ -101,12 +110,14 @@ export class OrchestrationService {
       const updated = await tx.generationJob.update({
         where: { id },
         data: {
-          status: 'pending', attempt: nextAttempt,
+          status: 'pending', attempt: nextAttempt, heldCredits: amount,
           externalTaskId: null, externalRef: Prisma.DbNull,
           progress: null, currentStep: null, error: null, startedAt: null, finishedAt: null,
         },
       });
-      await this.credit.hold(tx, workspaceId, id, amount, nextAttempt);
+      if (amount > 0) {
+        await this.credit.hold(tx, workspaceId, id, amount, nextAttempt);
+      }
       await tx.auditLog.create({
         data: {
           workspaceId, action: 'generation_job_retry', userId: actor.userId, actorRole: actor.role,

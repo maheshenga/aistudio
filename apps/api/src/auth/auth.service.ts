@@ -3,15 +3,38 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
 import { RegisterDto, LoginDto } from './dto';
-import { conflict, unauthenticated } from '../common/errors';
+import { conflict, unauthenticated, permissionDenied } from '../common/errors';
 
 type UserShape = { id: string; email: string; name: string; avatarLabel: string | null };
+
+/**
+ * AUTH-03: gate self-registration for the closed cohort.
+ * REGISTRATION_OPEN=true  → anyone may register (dev/local default behavior).
+ * Otherwise REGISTRATION_ALLOWLIST is a comma-separated list of allowed emails
+ * (e.g. "a@x.com") and/or domains (e.g. "@acme.com"); only matching emails register.
+ * An empty allowlist with REGISTRATION_OPEN!=true means registration is closed.
+ */
+export function isRegistrationAllowed(email: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if ((env.REGISTRATION_OPEN ?? '').toLowerCase() === 'true') return true;
+  const normalized = email.trim().toLowerCase();
+  const entries = (env.REGISTRATION_ALLOWLIST ?? '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  if (entries.length === 0) return false;
+  return entries.some((entry) =>
+    entry.startsWith('@') ? normalized.endsWith(entry) : normalized === entry,
+  );
+}
 
 @Injectable()
 export class AuthService {
   constructor(private prisma: PrismaService, private passwords: PasswordService, private tokens: TokenService) {}
 
   async register(dto: RegisterDto) {
+    if (!isRegistrationAllowed(dto.email)) {
+      throw permissionDenied('Registration is invite-only. Contact your administrator for access.');
+    }
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) throw conflict('Email already registered');
     const passwordHash = await this.passwords.hash(dto.password);
