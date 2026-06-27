@@ -1,6 +1,6 @@
 export type RuntimeMode = 'web' | 'desktop_multica' | 'self_hosted_multica';
 
-export type RuntimeProviderKind = 'mock' | 'multica';
+export type RuntimeProviderKind = 'mock' | 'multica' | 'gemini' | 'render';
 
 export type RuntimeHealth =
   | 'available'

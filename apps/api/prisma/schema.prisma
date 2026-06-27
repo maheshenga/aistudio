@@ -113,6 +113,19 @@ model GenerationJob {
   @@index([externalTaskId])
 }
 
+// R03-4: idempotency store for inbound provider callbacks (at-least-once delivery).
+model ProviderCallbackEvent {
+  id             String   @id @default(cuid())
+  providerKind   String
+  externalTaskId String
+  externalEventId String
+  status         String
+  createdAt      DateTime @default(now())
+
+  @@unique([providerKind, externalEventId])
+  @@index([externalTaskId])
+}
+
 model Asset {
   id              String   @id @default(cuid())
   workspaceId     String

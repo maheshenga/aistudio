@@ -48,6 +48,10 @@ services:
       ORCHESTRATION_MAX_JOB_AGE_MS: ${ORCHESTRATION_MAX_JOB_AGE_MS:-3600000}
       MULTICA_API_URL: ${MULTICA_API_URL:-}
       MULTICA_API_TOKEN: ${MULTICA_API_TOKEN:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      PROVIDER_RENDER_API_URL: ${PROVIDER_RENDER_API_URL:-}
+      PROVIDER_RENDER_TOKEN: ${PROVIDER_RENDER_TOKEN:-}
+      PROVIDER_RENDER_SECRET: ${PROVIDER_RENDER_SECRET:-}
     ports:
       - "${API_PORT:-4000}:4000"
     healthcheck:
@@ -67,6 +71,9 @@ services:
       args:
         VITE_DATA_BACKEND: http
         VITE_DATA_API_URL: ${PUBLIC_API_URL:-http://localhost:4000}
+        # AIGEN-3: 'mock' (default) keeps creative output mock + unbilled.
+        # Set to 'gemini' / 'render' to flip the app to real generation.
+        VITE_GENERATION_PROVIDER: ${VITE_GENERATION_PROVIDER:-mock}
     restart: unless-stopped
     depends_on:
       api:

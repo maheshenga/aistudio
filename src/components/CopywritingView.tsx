@@ -3,7 +3,8 @@ import { PenTool, Wrench, BookType, Sparkles, Plus, Search, Tag, Copy, Share, Da
 import { useSessionAutoSave } from '../hooks/useSessionAutoSave';
 import { useSaasSession } from '../saas/SaasAuthContext';
 import { updateGenerationJob } from '../lib/data/generationJobRepository';
-import { startBillableGenerationJob } from '../lib/billing/billableGeneration';
+import { startBillableGenerationJob, resolveGenerationProviderKind } from '../lib/billing/billableGeneration';
+import { generateText } from '../lib/billing/generationContent';
 import { createWorkspaceAsset, recordWorkspaceAssetExport, type WorkspaceAsset } from '../lib/data/assetRepository';
 import { logAuditEvent } from '../lib/data/auditLogRepository';
 import { createPricedWorkspaceUsageEvent } from '../lib/data/usageRepository';
@@ -62,7 +63,7 @@ function CopywritingCreate() {
       title: `Copywriting - ${activeType}`,
       prompt: prompt.trim() || activeType,
       status: 'running',
-      providerKind: 'mock',
+      providerKind: resolveGenerationProviderKind(),
       runtimeMode: 'web',
       moduleId: 'copywriting_create',
       progress: 0,
@@ -74,7 +75,7 @@ function CopywritingCreate() {
     }, jobContext, {
       workspaceId: session.workspace.id,
       plan: session.workspace.plan,
-      pricing: { moduleId: 'copywriting_create', pricingAction: 'generation', providerKind: 'mock', runtimeMode: 'web' },
+      pricing: { moduleId: 'copywriting_create', pricingAction: 'generation', providerKind: resolveGenerationProviderKind(), runtimeMode: 'web' },
     });
     if (started.ok === false) {
       setGenerationError(started.message);
@@ -94,9 +95,20 @@ function CopywritingCreate() {
       },
     }, { session });
 
-    const generatedCopy = activeType === '电商产品详情'
+    const mockCopy = activeType === '电商产品详情'
       ? `🔥 爆款电商详情页策划案\n\n【模块一：首屏吸睛 (头图区)】\n视觉建议：大特写展示产品质感，配以加粗标题“定义全新体验”。\n文案：不只是[商品名]，更是生活方式的升级。一键开启，享受真正的静谧空间。\n\n【模块二：直击痛点 (痛点区)】\n文案：你还在忍受这些困扰吗？（配以嘈杂环境、电量焦虑、佩戴不适的图文比对）。是时候对妥协说不了！\n\n【模块三：硬核卖点 (参数区)】\n文案：四大核心科技，重塑行业标杆。\n1. 行业领先技术：实力摆在这里，不惧对比。\n2. 极致续航表现：告别电量焦虑，随时在线。\n3. 人体工学设计：久戴不痛，宛若无物。\n\n【模块四：权威背书与买家秀】\n文案：口碑见证，超过 100,000+ 用户的共同选择...`
       : `🔥 熬夜狂欢后的护肤救星来啦！✨\n\n经常加班熬夜的打工人，是不是总觉得脸部暗沉、细纹悄悄爬上眼角？😱 今天给大家按头安利这款【夜间修护视黄醇精华】！\n\n✅ 核心卖点划重点：\n1️⃣ **温和不刺激**：专为敏感肌研发的微囊包裹技术，不用建立耐受也能轻松上脸！\n2️⃣ **抗老淡纹**：高浓度纯净视黄醇，直击干纹细纹，让肌肤重回弹润嘭嘭肌。💦\n3️⃣ **水润修护**：复配神经酰胺与玻尿酸，抗老同时不忘修护肌肤屏障。\n\n💡 使用感受：\n质地像牛奶一样丝滑，上脸嗖的一下就吸收了，一点也不油腻！隔天起床皮肤真的亮了一个度，透出那种健康的光泽感，绝绝子！😭\n\n🛒 还在等什么？趁着活动赶紧囤起来，做办公室里最亮的崽！💃\n\n#抗初老 #视黄醇精华 #熬夜党必备 #温和抗老 #好物分享 #平价精华`;
+
+    // AIGEN-1/AIGEN-3: real generation when a provider is configured; the mock
+    // template is the safe fallback (and what 'mock' mode always returns).
+    const generated = await generateText({
+      workspaceId: session.workspace.id,
+      moduleId: 'copywriting_create',
+      prompt: prompt.trim() || activeType,
+      mockFallback: mockCopy,
+      metadata: { activeType, activeLength, activeTone },
+    });
+    const generatedCopy = generated.text;
 
     await updateGenerationJob(job.id, { status: 'succeeded', progress: 100 }, jobContext);
     const asset = createWorkspaceAsset({
@@ -122,7 +134,7 @@ function CopywritingCreate() {
       kind: 'generation',
       targetType: 'generation_job',
       targetId: job.id,
-      providerKind: 'mock',
+      providerKind: resolveGenerationProviderKind(),
       runtimeMode: 'web',
       metadata: {
         assetId: asset.id,

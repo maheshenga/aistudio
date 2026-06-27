@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-A React 19 + Vite + TypeScript SaaS workbench ("AI Studio" / multi-Agent workspace) bundling content creation, e-commerce assets, CRM, store ops, finance/tax, team, and agent-dispatch modules into one panel. Originated as an AI Studio applet; uses `@google/genai` for Gemini calls. UI is Tailwind v4 (via `@tailwindcss/vite`), `motion`, `recharts`/`d3`, and `lucide-react`.
+A React 19 + Vite + TypeScript SaaS workbench ("AI Studio" / multi-Agent workspace) bundling content creation, e-commerce assets, CRM, store ops, finance/tax, team, and agent-dispatch modules into one panel. Originated as an AI Studio applet. UI is Tailwind v4 (via `@tailwindcss/vite`), `motion`, `recharts`/`d3`, and `lucide-react`.
+
+**Generation is mock by default.** The creative pipeline returns placeholder/template output and is NOT billed (`providerKind: 'mock'` → 0 credits). Real inference goes through the API provider seam (`apps/api/src/provider/`): set `VITE_GENERATION_PROVIDER` (frontend) + `GEMINI_API_KEY` / `PROVIDER_<KIND>_*` (API) to flip a workspace to real output (see `docs/secret-rotation.md` and `.env.example`). Only `CopywritingView` is wired to real text so far (reference for the `generateText` pattern); the rest of the creative surface is the documented migration tail.
 
 ## Commands
 
@@ -39,7 +41,7 @@ Each `scripts/*.test.ts` runs directly under `tsx` and uses `node:assert/strict`
 
 **Agent runtime (dual/triple mode)** — `src/runtime/` abstracts where agents actually run. `runtimeMode.ts` resolves one of `web` (mock provider), `desktop_multica` (desktop bridge detected), or `self_hosted_multica` (Multica API/WS endpoints configured). Strategy comes from workspace settings (`auto` by default) and env (`VITE_MULTICA_*`). `AgentRuntimeContext.tsx` provides the active provider; `webMockAgentRuntimeProvider.ts` vs `multicaAgentRuntimeProvider.ts` implement the contract, with `multicaMappers.ts`/`multicaApiClient.ts` bridging to the external Multica API. `runtimeContract.test.ts` and the `multica-*` tests pin this contract.
 
-**Auth** — `src/saas/SaasAuthContext.tsx` currently uses a local demo session (`localAuthSession.ts`); `.env.example` notes this boundary is meant to be swapped for Firebase/OAuth later without changing workspace-scoped repository contracts.
+**Auth** — `src/saas/SaasAuthContext.tsx` uses the real JWT API (`apiLogin`/`apiRegister`/`apiRefresh` in `authApi.ts`) against `apps/api/src/auth`. Registration is gated by an invite allowlist (`REGISTRATION_OPEN`/`REGISTRATION_ALLOWLIST`). The `createDemoAuthSession`/`loadAuthSession` helpers in `localAuthSession.ts` are TEST/E2E fixtures only (the browser smoke seeds a session behind `VITE_E2E_AUTH_BYPASS`); they are not part of the production auth path. Boot refuses placeholder/weak secrets (`secret-validation.ts`).
 
 ## Conventions & gotchas
 

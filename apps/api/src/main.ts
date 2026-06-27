@@ -7,7 +7,8 @@ import { assertSecretStrength } from './common/config/secret-validation';
 async function bootstrap() {
   // AUTH-01: refuse to boot on missing/placeholder/low-entropy secrets.
   assertSecretStrength();
-  const app = await NestFactory.create(AppModule);
+  // rawBody enables HMAC verification of inbound provider callbacks (R03-4).
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   // AUTH-02: trust the reverse proxy so req.ip reflects X-Forwarded-For. Without
   // this, the per-IP auth rate limiter sees only the proxy address and collapses
   // every client into one bucket. TRUST_PROXY hops default to 1 (single proxy).

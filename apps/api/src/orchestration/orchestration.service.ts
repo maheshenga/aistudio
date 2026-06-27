@@ -5,6 +5,8 @@ import { notFound, validationError } from '../common/errors';
 import { DispatchDto, LinkExternalDto } from './dto';
 import { CreditService } from '../billing/credit.service';
 import { generationCredits } from '../billing/credit-cost';
+import { ProviderRegistry } from '../provider/provider-registry';
+import { JobFinalizationService } from './job-finalization.service';
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 
@@ -12,7 +14,12 @@ interface Actor { userId: string; role?: string }
 
 @Injectable()
 export class OrchestrationService {
-  constructor(private prisma: PrismaService, private credit: CreditService) {}
+  constructor(
+    private prisma: PrismaService,
+    private credit: CreditService,
+    private registry: ProviderRegistry,
+    private finalizer: JobFinalizationService,
+  ) {}
 
   private async getJob(workspaceId: string, id: string) {
     const job = await this.prisma.generationJob.findFirst({ where: { id, workspaceId } });
@@ -37,9 +44,9 @@ export class OrchestrationService {
       providerKind: dto.providerKind ?? null,
       unitCount: dto.unitCount ?? null,
     });
-    return this.prisma.$transaction(async (tx) => {
+    const job = await this.prisma.$transaction(async (tx) => {
       await this.credit.ensureMonthlyGrant(tx, workspaceId);
-      const job = await tx.generationJob.create({
+      const created = await tx.generationJob.create({
         data: {
           workspaceId, type: dto.type, input: dto.input as Prisma.InputJsonValue,
           status: 'pending', runtimeMode: dto.runtimeMode,
@@ -49,17 +56,69 @@ export class OrchestrationService {
         },
       });
       if (amount > 0) {
-        await this.credit.hold(tx, workspaceId, job.id, amount, job.attempt);
+        await this.credit.hold(tx, workspaceId, created.id, amount, created.attempt);
       }
       await tx.auditLog.create({
         data: {
           workspaceId, action: 'task_dispatched', userId: actor.userId, actorRole: actor.role,
-          targetType: 'generation_job', targetId: job.id,
+          targetType: 'generation_job', targetId: created.id,
           metadata: { runtimeMode: dto.runtimeMode, heldCredits: amount } as Prisma.InputJsonValue,
         },
       });
-      return job;
+      return created;
     });
+
+    // R03-1: after the hold transaction commits, actually start work at the
+    // resolved provider. mock/unconfigured kinds resolve to null and keep the
+    // legacy no-op behavior (the job waits for an external link / mock flow).
+    await this.submitToProvider(workspaceId, job, dto);
+    return this.prisma.generationJob.findUnique({ where: { id: job.id } }) as Promise<typeof job>;
+  }
+
+  /** Kick off the resolved provider; compensate the credit hold on failure. */
+  private async submitToProvider(
+    workspaceId: string,
+    job: { id: string; type: string | null; moduleId: string | null; prompt: string | null; input: Prisma.JsonValue; providerKind: string | null },
+    dto: DispatchDto,
+  ): Promise<void> {
+    const adapter = this.registry.resolve(job.providerKind);
+    if (!adapter) return;
+    try {
+      const result = await adapter.submit({
+        id: job.id,
+        workspaceId,
+        type: job.type,
+        moduleId: job.moduleId,
+        prompt: job.prompt,
+        input: dto.input,
+        providerKind: job.providerKind,
+      });
+      if (result.externalTaskId) {
+        await this.prisma.generationJob.update({
+          where: { id: job.id },
+          data: { externalTaskId: result.externalTaskId, startedAt: new Date() },
+        });
+      }
+      // Synchronous adapters (e.g. Gemini text/image) return terminal output now.
+      if (result.immediate) {
+        await this.finalizer.finalize({
+          jobId: job.id,
+          terminal: result.immediate.status,
+          artifacts: result.immediate.artifacts,
+          error: result.immediate.error,
+          source: adapter.kind,
+        });
+      }
+    } catch (e) {
+      // Submission failed → fail+refund through the shared finalize so the hold
+      // is never stranded (compensates the credit hold taken above).
+      await this.finalizer.finalize({
+        jobId: job.id,
+        terminal: 'failed',
+        error: e instanceof Error ? e.message : String(e),
+        source: adapter.kind,
+      });
+    }
   }
 
   async linkExternal(workspaceId: string, id: string, dto: LinkExternalDto, actor: Actor) {

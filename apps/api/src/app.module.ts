@@ -13,6 +13,7 @@ import { AssetModule } from './asset/asset.module';
 import { UsageEventModule } from './usage-event/usage-event.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { OrchestrationModule } from './orchestration/orchestration.module';
+import { ProviderModule } from './provider/provider.module';
 import { BillingModule } from './billing/billing.module';
 import { CustomerModule } from './customer/customer.module';
 import { CampaignModule } from './campaign/campaign.module';
@@ -49,7 +50,7 @@ import {
       ttl: DEFAULT_THROTTLE_TTL_MS,
       limit: DEFAULT_THROTTLE_LIMIT,
     }]),
-    PrismaModule, EncryptionModule, RbacModule, HealthModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule, BillingModule, CustomerModule, CampaignModule, AnnouncementModule, AgencyModule, RiskModule, MediaModule, KeywordModule, TicketModule, PaymentModule, TaxEventModule, TaskModule, FinancialModule, SettingsModule, ApiKeyModule, WebhookModule],
+    PrismaModule, EncryptionModule, RbacModule, HealthModule, AuthModule, WorkspaceModule, ProjectModule, MemberModule, GenerationJobModule, AssetModule, UsageEventModule, AuditLogModule, OrchestrationModule, ProviderModule, BillingModule, CustomerModule, CampaignModule, AnnouncementModule, AgencyModule, RiskModule, MediaModule, KeywordModule, TicketModule, PaymentModule, TaxEventModule, TaskModule, FinancialModule, SettingsModule, ApiKeyModule, WebhookModule],
   providers: [
     { provide: APP_GUARD, useClass: AppThrottlerGuard },
     // 执行顺序：ThrottlerGuard(429) → AuthGuard(401) → TenantGuard(403) → RolesGuard(403)

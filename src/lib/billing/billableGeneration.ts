@@ -1,4 +1,5 @@
 import type { ModuleId } from '../../types';
+import type { RuntimeMode, RuntimeProviderKind } from '../../runtime/agentRuntimeTypes';
 import {
   canStartBillableGeneration,
   estimateRequestedGenerationCredits,
@@ -19,6 +20,24 @@ import { listWorkspaceUsageEvents, loadModuleUsage } from '../data/usageReposito
 import { preflightCredits } from './creditPreflight';
 
 export type BillableGenerationBlockReason = 'insufficient' | 'unavailable';
+
+/**
+ * AIGEN-3: the single mock→real switch. The whole app generates mock output
+ * (providerKind:'mock', never billed) until VITE_GENERATION_PROVIDER names a
+ * real provider kind ('gemini' | 'render' | 'multica'). A real kind routes the
+ * job to the API provider seam and re-enables billing for that job.
+ *
+ * Default is 'mock' so a normal build/dev stays safe; flipping the env var (or
+ * passing an explicit providerKind per call during a staged per-module rollout)
+ * is all that's required to go live.
+ */
+export function resolveGenerationProviderKind(): RuntimeProviderKind {
+  let configured: string | undefined;
+  try { configured = (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_GENERATION_PROVIDER; } catch { configured = undefined; }
+  const candidate = (configured ?? '').trim().toLowerCase();
+  if (candidate === 'gemini' || candidate === 'render' || candidate === 'multica') return candidate;
+  return 'mock';
+}
 
 export type BillableGenerationStartResult =
   | { ok: true; job: GenerationJob; requestedCredits: number; remainingCredits: number | null }
@@ -50,10 +69,12 @@ export function buildBillableGenerationPricing(
   pricingAction: RequestedGenerationCreditInput['pricingAction'] = 'generation',
   extras: Partial<Omit<RequestedGenerationCreditInput, 'moduleId' | 'pricingAction'>> = {},
 ): RequestedGenerationCreditInput {
+  // AIGEN-3: providerKind/runtimeMode resolve from config (mock by default).
+  // Callers may still override via `extras` for a staged per-module rollout.
   return {
     moduleId,
     pricingAction,
-    providerKind: 'mock',
+    providerKind: resolveGenerationProviderKind(),
     runtimeMode: 'web',
     ...extras,
   };

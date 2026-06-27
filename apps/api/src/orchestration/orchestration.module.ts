@@ -5,9 +5,10 @@ import { ReconciliationService } from './reconciliation.service';
 import { MULTICA_SERVER_CLIENT, createMulticaServerClient } from './multica-server-client';
 import { BillingModule } from '../billing/billing.module';
 import { WebhookModule } from '../webhook/webhook.module';
+import { ProviderModule } from '../provider/provider.module';
 
 @Module({
-  imports: [BillingModule, WebhookModule],
+  imports: [BillingModule, WebhookModule, ProviderModule],
   controllers: [OrchestrationController],
   providers: [
     OrchestrationService,
